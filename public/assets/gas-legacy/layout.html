@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<!-- ============================================================ -->
+<!-- FILE: layout.html (APP SHELL - DENGAN PERBAIKAN)             -->
+<!-- ============================================================ -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- CHART.JS -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <?!= include('style'); ?>
+    <style>
+      /* ============================================================
+         INLINE STYLE — HARUS KOMPATIBEL DENGAN DESIGN SYSTEM V2
+         PERBAIKAN: body dan #portal-container kini tidak membatasi scroll
+         ============================================================ */
+      :root {
+        --si-green: #1a4d2e;
+        --si-gold: #d4af37;
+        --bg-light: #f8f9fa;
+      }
+      body {
+        background-color: var(--bg-light);
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;   /* diubah dari height: 100vh */
+        overflow-y: auto;    /* diubah dari overflow: hidden */
+        margin: 0;
+        padding: 0;
+      }
+      #portal-container {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;   /* diubah dari height: 100% */
+        width: 100%;
+      }
+      header.portal-header {
+        background: #1a4d2e;
+        color: white;
+        padding: 0 30px;
+        height: 70px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 100;
+        flex-shrink: 0;
+      }
+      .brand-title {
+        font-family: 'Cinzel', serif;
+        font-size: 1.4rem;
+        letter-spacing: 1px;
+        color: #d4af37;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+      }
+      .brand-title .logo-img {
+        height: 45px;
+        width: auto;
+        object-fit: contain;
+        border-radius: 4px;
+      }
+      .brand-title .brand-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+      .brand-title .brand-text .main {
+        color: #d4af37;
+        font-weight: 700;
+      }
+      .brand-title .brand-text .sub {
+        font-size: 0.6rem;
+        color: rgba(255,255,255,0.6);
+        font-family: 'Inter', sans-serif;
+        letter-spacing: 1px;
+        font-weight: 300;
+      }
+      .login-app-link {
+        background: rgba(255,255,255,0.1);
+        padding: 8px 15px;
+        border-radius: 4px;
+        color: white;
+        text-decoration: none;
+        font-size: 0.85rem;
+        transition: 0.3s;
+        border: 1px solid transparent;
+        cursor: pointer;
+      }
+      .login-app-link:hover {
+        border-color: #d4af37;
+        color: #d4af37;
+      }
+      .portal-body {
+        display: flex;
+        flex: 1;
+        /* tidak ada overflow hidden, biarkan content menentukan tinggi */
+      }
+      .content-area {
+        flex: 1;
+        padding: 40px;
+        overflow-y: auto;   /* biarkan content scroll di dalam area jika diperlukan, tapi seharusnya tidak membatasi */
+        background: white;
+        position: relative;
+      }
+      .btn-back-home {
+        background: transparent;
+        border: 1px solid #ddd;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+        color: #666;
+        font-weight: 600;
+        margin-top: 20px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: 0.3s;
+      }
+      .btn-back-home:hover {
+        background: #eee;
+        color: #333;
+      }
+      @media (max-width: 768px) {
+        .portal-body {
+          flex-direction: column;
+        }
+        .sidebar-portal {
+          width: 100%;
+          height: auto;
+          padding: 10px;
+          flex-direction: row;
+          overflow-x: auto;
+        }
+        .content-area {
+          padding: 20px;
+        }
+        .brand-title .brand-text .sub {
+          display: none;
+        }
+        .brand-title .logo-img {
+          height: 32px;
+        }
+        .brand-title {
+          font-size: 1rem;
+        }
+      }
+
+      /* ===== STYLE MODAL PENDAFTARAN ===== */
+      .modal-pendaftaran { z-index: 99999; }
+      .modal-pendaftaran .modal-body {
+        max-width: 900px;
+        padding: 0;
+        border-radius: 16px;
+        overflow: hidden;
+        background: #f7f9f8;
+        max-height: 95vh;
+        height: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .modal-pendaftaran .modal-header {
+        background: #0F5132;
+        color: white;
+        padding: 20px 30px;
+        border-bottom: none;
+        margin-bottom: 0;
+        flex-shrink: 0;
+        border-radius: 16px 16px 0 0;
+      }
+      .modal-pendaftaran .modal-header h3 {
+        color: white;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin: 0;
+      }
+      .modal-pendaftaran .modal-header .close-btn {
+        color: white;
+        opacity: 0.8;
+        font-size: 1.8rem;
+      }
+      .modal-pendaftaran .modal-header .close-btn:hover { opacity: 1; color: #C8A951; }
+      .modal-pendaftaran .form-container-inner {
+        padding: 30px 35px 35px;
+        background: #ffffff;
+        overflow-y: auto;
+        flex: 1;
+        max-height: calc(95vh - 80px);
+      }
+      .modal-pendaftaran .header-koperasi {
+        text-align: center;
+        margin-bottom: 25px;
+        padding-bottom: 20px;
+        border-bottom: 2px solid #eaeaea;
+      }
+      .modal-pendaftaran .header-koperasi img {
+        height: 70px;
+        width: auto;
+        object-fit: contain;
+        margin-bottom: 8px;
+      }
+      .modal-pendaftaran .header-koperasi h3 {
+        color: #0F5132;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        margin-bottom: 3px;
+        font-size: 1.2rem;
+      }
+      .modal-pendaftaran .header-koperasi p {
+        color: #6c757d;
+        margin-bottom: 0;
+        font-size: 0.9rem;
+      }
+      .modal-pendaftaran .letter-box {
+        background-color: #f0f7f4;
+        border-left: 5px solid #0F5132;
+        padding: 20px 25px;
+        border-radius: 8px;
+        margin-bottom: 25px;
+        line-height: 1.6;
+        color: #2d3748;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+        font-size: 0.9rem;
+      }
+      .modal-pendaftaran .letter-box p { margin-bottom: 10px; }
+      .modal-pendaftaran .letter-box .table-simpanan {
+        max-width: 450px;
+        background: transparent;
+        margin-bottom: 12px;
+      }
+      .modal-pendaftaran .letter-box .table-simpanan td {
+        padding: 4px 8px 4px 0;
+        border: none;
+      }
+      .modal-pendaftaran .letter-box .table-simpanan .total-row {
+        border-top: 1px solid #cce3d6;
+        font-weight: 700;
+        color: #0F5132;
+      }
+      .modal-pendaftaran .alert-sukarela {
+        background-color: #fff3cd;
+        border-left: 5px solid #C8A951;
+        padding: 12px 18px;
+        border-radius: 6px;
+        margin: 10px 0 15px 0;
+        font-size: 0.9rem;
+      }
+      .modal-pendaftaran .alert-sukarela i { color: #C8A951; margin-right: 8px; }
+      .modal-pendaftaran .letter-box .fasilitas-list {
+        margin-bottom: 12px;
+        padding-left: 20px;
+      }
+      .modal-pendaftaran .letter-box .fasilitas-list li { margin-bottom: 2px; }
+      .modal-pendaftaran .section-title {
+        background: #0F5132;
+        color: white;
+        padding: 8px 15px;
+        border-radius: 6px;
+        margin-top: 28px;
+        margin-bottom: 18px;
+        font-weight: 600;
+        border-left: 5px solid #C8A951;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.95rem;
+      }
+      .modal-pendaftaran .section-title i { font-size: 1rem; }
+      .modal-pendaftaran .bank-info {
+        background-color: #fffdf5;
+        border: 2px dashed #C8A951;
+        padding: 16px 20px;
+        border-radius: 8px;
+        text-align: center;
+        height: 100%;
+      }
+      .modal-pendaftaran .bank-info.mandiri { border-color: #007bff; }
+      .modal-pendaftaran .bank-info h5 { font-weight: 600; margin-bottom: 2px; }
+      .modal-pendaftaran .bank-info h3 {
+        font-weight: 700;
+        margin-bottom: 2px;
+        font-size: 1.3rem;
+      }
+      .modal-pendaftaran .bank-info .bank-note {
+        font-size: 0.8rem;
+        margin-top: 6px;
+        margin-bottom: 0;
+        font-weight: 600;
+      }
+      .modal-pendaftaran .bank-info .bank-note i { margin-right: 4px; }
+      .modal-pendaftaran .form-label {
+        font-weight: 600;
+        color: #2c3e50;
+        font-size: 0.85rem;
+        margin-bottom: 4px;
+      }
+      .modal-pendaftaran .form-control,
+      .modal-pendaftaran .form-select {
+        border: 2px solid #ced4da;
+        border-radius: 6px;
+        padding: 8px 12px;
+        font-size: 0.9rem;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        background: #fff;
+      }
+      .modal-pendaftaran .form-control:focus,
+      .modal-pendaftaran .form-select:focus {
+        border-color: #0F5132;
+        box-shadow: 0 0 0 0.25rem rgba(15, 81, 50, 0.25);
+      }
+      .modal-pendaftaran .form-check-input {
+        border: 2px solid #ced4da;
+        margin-top: 0.15rem;
+        width: 1.1rem;
+        height: 1.1rem;
+      }
+      .modal-pendaftaran .form-check-input:checked {
+        background-color: #0F5132;
+        border-color: #0F5132;
+      }
+      .modal-pendaftaran .form-check-input:focus {
+        border-color: #0F5132;
+        box-shadow: 0 0 0 0.25rem rgba(15, 81, 50, 0.25);
+      }
+      .modal-pendaftaran .form-check-label {
+        font-size: 0.9rem;
+        padding-left: 4px;
+      }
+      .modal-pendaftaran .total-box {
+        background-color: #e8f5e9;
+        padding: 12px 18px;
+        border-radius: 8px;
+        border: 1px solid #1B5E20;
+        text-align: center;
+        margin: 15px 0 5px 0;
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+      .modal-pendaftaran .total-box span {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #0F5132;
+      }
+      .modal-pendaftaran .agreement-box {
+        background: #e9ecef;
+        border: 2px solid #adb5bd;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 18px 0 16px 0;
+      }
+      .modal-pendaftaran .agreement-box .form-check-label {
+        font-weight: 600;
+        color: #1e3a5f;
+        font-size: 0.9rem;
+      }
+      .modal-pendaftaran .btn-custom-primary {
+        background-color: #0F5132;
+        border-color: #0F5132;
+        color: white;
+        transition: all 0.3s ease;
+        padding: 14px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        border-radius: 8px;
+        width: 100%;
+        border: none;
+        cursor: pointer;
+      }
+      .modal-pendaftaran .btn-custom-primary:hover {
+        background-color: #1B5E20;
+        border-color: #1B5E20;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(15, 81, 50, 0.3);
+      }
+      .modal-pendaftaran #loadingPendaftaran {
+        display: none;
+        text-align: center;
+        margin-top: 20px;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 8px;
+      }
+      @media (max-width: 768px) {
+        .modal-pendaftaran .modal-body { margin: 10px; max-height: 98vh; border-radius: 12px; }
+        .modal-pendaftaran .form-container-inner { padding: 20px 18px; max-height: calc(98vh - 70px); }
+        .modal-pendaftaran .letter-box { padding: 15px 18px; font-size: 0.85rem; }
+        .modal-pendaftaran .letter-box .table-simpanan { max-width: 100%; }
+        .modal-pendaftaran .header-koperasi h3 { font-size: 1rem; }
+        .modal-pendaftaran .bank-info { margin-bottom: 12px; }
+        .modal-pendaftaran .modal-header { padding: 15px 20px; }
+        .modal-pendaftaran .modal-header h3 { font-size: 0.95rem; }
+        .modal-pendaftaran .section-title { font-size: 0.85rem; padding: 6px 12px; }
+      }
+      @media (max-width: 480px) {
+        .modal-pendaftaran .form-container-inner { padding: 15px 12px; }
+        .modal-pendaftaran .header-koperasi img { height: 50px; }
+        .modal-pendaftaran .header-koperasi h3 { font-size: 0.9rem; }
+      }
+
+      /* ===== TOAST ===== */
+      .toast-container-custom {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 99999;
+      }
+      .toast-custom {
+        min-width: 300px;
+        background: white;
+        border-left: 6px solid;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 16px 20px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        animation: slideInRight 0.4s ease;
+      }
+      .toast-custom.success { border-left-color: #0F5132; }
+      .toast-custom.error { border-left-color: #dc3545; }
+      .toast-custom.warning { border-left-color: #ffc107; }
+      .toast-custom i { font-size: 1.4rem; }
+      .toast-custom .toast-msg { flex: 1; font-weight: 500; }
+      .toast-custom .toast-close {
+        background: none;
+        border: none;
+        font-size: 1.2rem;
+        cursor: pointer;
+        color: #999;
+        padding: 0 4px;
+      }
+      .toast-custom .toast-close:hover { color: #333; }
+      @keyframes slideInRight {
+        from { transform: translateX(100px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+
+      /* ===== MODAL KONFIRMASI ===== */
+      #confirm-modal .modal-body {
+        max-width: 500px;
+        text-align: center;
+        padding: 30px;
+      }
+      #confirm-modal .modal-body .modal-header {
+        justify-content: center;
+        border-bottom: none;
+        margin-bottom: 10px;
+      }
+      #confirm-modal .modal-body .modal-header h3 {
+        color: var(--accent);
+        font-size: 1.3rem;
+      }
+      #confirm-modal .modal-body .modal-header h3 i {
+        margin-right: 10px;
+      }
+      #confirm-modal .modal-body #confirm-message {
+        font-size: 1rem;
+        color: var(--gray-700);
+        margin: 15px 0;
+        line-height: 1.7;
+      }
+      #confirm-modal .modal-body #confirm-message p:first-child {
+        font-weight: 600;
+        color: var(--primary);
+      }
+      #confirm-modal .modal-body #confirm-message p:last-child {
+        background: var(--gray-50);
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--gray-200);
+        font-size: 0.9rem;
+        color: var(--gray-600);
+      }
+      #confirm-modal .modal-footer {
+        justify-content: center;
+        gap: 12px;
+        margin-top: 20px;
+      }
+      #confirm-modal .modal-footer .btn-gold {
+        background: #d93025;
+        border-color: #d93025;
+      }
+      #confirm-modal .modal-footer .btn-gold:hover {
+        background: #b71c1c;
+        border-color: #b71c1c;
+      }
+
+      /* ===== FOOTER CORPORATE (AUTO RESPONSIVE) ===== */
+      .footer-corporate {
+        background: #111827;
+        color: rgba(255,255,255,0.85);
+        padding: 50px 40px 25px;
+        border-top: 4px solid #C8A64A;
+        flex-shrink: 0;
+        width: 100%;
+      }
+      .footer-corporate .footer-grid {
+        display: grid;
+        grid-template-columns: 1.5fr 1fr 1.5fr;
+        gap: 40px;
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+      .footer-corporate .footer-brand {
+        font-family: 'Playfair Display', 'Cinzel', serif;
+        font-size: 1.4rem;
+        color: #C8A64A;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .footer-corporate .footer-brand i { font-size: 1.6rem; }
+      .footer-corporate .footer-desc {
+        font-size: 0.9rem;
+        line-height: 1.8;
+        opacity: 0.7;
+        max-width: 360px;
+        margin-bottom: 16px;
+      }
+      .footer-corporate .footer-social {
+        display: flex;
+        gap: 14px;
+      }
+      .footer-corporate .footer-social a {
+        color: rgba(255,255,255,0.5);
+        font-size: 1.2rem;
+        transition: 0.3s;
+      }
+      .footer-corporate .footer-social a:hover {
+        color: #C8A64A;
+        transform: translateY(-3px);
+      }
+      .footer-corporate h5 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        color: #ffffff;
+        font-weight: 700;
+        margin-bottom: 16px;
+      }
+      .footer-corporate ul {
+        list-style: none;
+        padding: 0;
+      }
+      .footer-corporate ul li {
+        margin-bottom: 10px;
+      }
+      .footer-corporate ul li a {
+        color: rgba(255,255,255,0.6);
+        text-decoration: none;
+        font-size: 0.9rem;
+        transition: 0.3s;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .footer-corporate ul li a:hover {
+        color: #C8A64A;
+        transform: translateX(4px);
+      }
+      .footer-corporate .footer-contact-item {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 14px;
+        font-size: 0.9rem;
+        align-items: flex-start;
+      }
+      .footer-corporate .footer-contact-item i {
+        color: #C8A64A;
+        font-size: 1rem;
+        margin-top: 3px;
+        width: 20px;
+        text-align: center;
+      }
+      .footer-corporate .footer-contact-item .contact-text {
+        opacity: 0.85;
+        line-height: 1.6;
+      }
+      .footer-corporate .footer-map {
+        border-radius: 8px;
+        overflow: hidden;
+        margin-top: 12px;
+        height: 140px;
+        background: #2d3748;
+      }
+      .footer-corporate .footer-map iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      .footer-corporate .footer-bottom {
+        border-top: 1px solid rgba(255,255,255,0.06);
+        padding-top: 20px;
+        margin-top: 30px;
+        text-align: center;
+        font-size: 0.8rem;
+        opacity: 0.5;
+        max-width: 1280px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      @media (max-width: 992px) {
+        .footer-corporate .footer-grid { grid-template-columns: 1fr 1fr; gap: 30px; }
+      }
+      @media (max-width: 768px) {
+        .footer-corporate { padding: 30px 20px 20px; }
+        .footer-corporate .footer-grid { grid-template-columns: 1fr; gap: 25px; }
+        .footer-corporate .footer-map { height: 120px; }
+        .footer-corporate .footer-desc { max-width: 100%; }
+      }
+      @media (max-width: 480px) {
+        .footer-corporate { padding: 25px 15px 15px; }
+        .footer-corporate .footer-brand { font-size: 1.1rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="portal-container">
+      <header class="portal-header">
+        <div class="brand-title">
+          <img src="https://drive.google.com/thumbnail?id=10Q7Hsyb8pMlRGG_u7odwa-1PW5u7hx-X&sz=w200"
+               alt="Logo Koperasi Syarikat Islam Mandiri"
+               class="logo-img"
+               onerror="this.onerror=null; this.src='https://drive.google.com/uc?export=view&id=10Q7Hsyb8pMlRGG_u7odwa-1PW5u7hx-X';">
+          <div class="brand-text">
+            <span class="main">KOPERASI SYARIKAT ISLAM MANDIRI</span>
+            <span class="sub">SYARIAH • PROFESIONAL • BERKELANJUTAN</span>
+          </div>
+        </div>
+        <a href="javascript:void(0)" onclick="loadSystemApp()" class="login-app-link" style="padding:10px 20px; font-size:0.9rem;"><i class="fas fa-sign-in-alt"></i> Login Sistem</a>
+      </header>
+      <div class="portal-body">
+        <?!= include('sidebar'); ?>
+        <main class="content-area" id="main-content"></main>
+      </div>
+
+      <!-- ===== FOOTER CORPORATE (AUTO RESPONSIVE) ===== -->
+      <footer class="footer-corporate" id="footer">
+        <div class="footer-grid">
+          <!-- Kolom 1: Brand & Deskripsi -->
+          <div>
+            <div class="footer-brand">
+              <i class="fas fa-landmark"></i> KOPERASI SYARIKAT ISLAM MANDIRI
+            </div>
+            <p class="footer-desc">
+              Koperasi syariah modern berbasis sektor riil yang membangun ekosistem bisnis terintegrasi untuk kemandirian ekonomi umat dan ketahanan pangan nasional.
+            </p>
+            <div class="footer-social">
+              <a href="https://wa.me/6282148988520" target="_blank" aria-label="WhatsApp"><i class="fab fa-whatsapp"></i></a>
+              <a href="mailto:info@kopsim114.com" aria-label="Email"><i class="fas fa-envelope"></i></a>
+              <a href="#" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
+              <a href="#" aria-label="LinkedIn"><i class="fab fa-linkedin-in"></i></a>
+              <a href="#" aria-label="YouTube"><i class="fab fa-youtube"></i></a>
+            </div>
+          </div>
+
+          <!-- Kolom 2: Menu -->
+          <div>
+            <h5>Menu</h5>
+            <ul>
+              <li><a onclick="loadPage('home', document.querySelector('.nav-item'))"><i class="fas fa-home"></i> Beranda</a></li>
+              <li><a onclick="loadPage('manajemen', document.querySelectorAll('.nav-item')[1])"><i class="fas fa-building"></i> Manajemen</a></li>
+              <li><a onclick="loadPage('portofolio', document.querySelectorAll('.nav-item')[2])"><i class="fas fa-briefcase"></i> Portfolio</a></li>
+              <li><a onclick="loadPage('marketplace', document.querySelectorAll('.nav-item')[3])"><i class="fas fa-store"></i> Marketplace</a></li>
+              <li><a onclick="loadPage('sejarah', document.querySelectorAll('.nav-item')[4])"><i class="fas fa-history"></i> Sejarah</a></li>
+              <li><a onclick="loadSystemApp()"><i class="fas fa-file-contract"></i> Laporan Internal</a></li>
+            </ul>
+          </div>
+
+          <!-- Kolom 3: Kontak -->
+          <div>
+            <h5>Kontak</h5>
+            <div class="footer-contact-item">
+              <i class="fas fa-map-marker-alt"></i>
+              <div class="contact-text">
+                Jl. Taman Amir Hamzah No.6A, Pegangsaan, Kec. Menteng,<br>
+                Jakarta Pusat
+              </div>
+            </div>
+            <div class="footer-contact-item">
+              <i class="fas fa-phone"></i>
+              <div class="contact-text">021 - 23599354</div>
+            </div>
+            <div class="footer-contact-item">
+              <i class="fab fa-whatsapp"></i>
+              <div class="contact-text">082148988520</div>
+            </div>
+            <div class="footer-contact-item">
+              <i class="fas fa-envelope"></i>
+              <div class="contact-text">info@kopsim114.com</div>
+            </div>
+            <!-- Google Maps -->
+            <div class="footer-map">
+              <iframe
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3966.463351229051!2d106.83191157499998!3d-6.189788093728722!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x2e69f4e0b4c9b7d1%3A0x8f9f9c9f9f9f9f9f!2sJl.%20Taman%20Amir%20Hamzah%20No.6A%2C%20Pegangsaan%2C%20Kec.%20Menteng%2C%20Kota%20Jakarta%20Pusat%2C%20Daerah%20Khusus%20Ibukota%20Jakarta%2010320!5e0!3m2!1sid!2sid!4v1700000000000"
+                loading="lazy"
+                referrerpolicy="no-referrer-when-downgrade"
+                title="Lokasi Kantor Koperasi Syarikat Islam Mandiri"
+                allowfullscreen>
+              </iframe>
+            </div>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          &copy; 2026 Koperasi Syarikat Islam Mandiri. Seluruh hak cipta dilindungi. | Dibangun dengan <i class="fas fa-heart" style="color: #C8A64A;"></i> untuk kemandirian ekonomi umat.
+        </div>
+      </footer>
+    </div>
+
+    <!-- ===== MODAL KONFIRMASI ===== -->
+    <div id="confirm-modal" class="modal" style="display:none;">
+      <div class="modal-body">
+        <div class="modal-header">
+          <h3><i class="fas fa-exclamation-triangle" style="color:var(--accent);"></i> Konfirmasi</h3>
+          <button class="close-btn" onclick="closeConfirmModal()">&times;</button>
+        </div>
+        <div id="confirm-message"></div>
+        <div class="modal-footer">
+          <button class="btn-light" onclick="closeConfirmModal()">Batal</button>
+          <button class="btn-gold" id="confirm-yes-btn" style="background:#d93025;">Ya, Hapus!</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== TOAST CONTAINER ===== -->
+    <div class="toast-container-custom" id="toastContainerPendaftaran"></div>
+
+    <!-- ===== MODAL PENDAFTARAN ANGGOTA ===== -->
+    <div id="modal-pendaftaran" class="modal modal-pendaftaran" style="display:none;">
+      <div class="modal-body">
+        <div class="modal-header">
+          <h3><i class="fas fa-user-plus me-2"></i> Formulir Pendaftaran & Pemutakhiran Data Anggota</h3>
+          <button class="close-btn" onclick="closeModal('modal-pendaftaran')">&times;</button>
+        </div>
+        <div class="form-container-inner">
+
+          <div class="header-koperasi">
+            <img src="https://drive.google.com/thumbnail?id=10Q7Hsyb8pMlRGG_u7odwa-1PW5u7hx-X&sz=w200"
+                 alt="Logo Koperasi Syarikat Islam Mandiri"
+                 onerror="this.onerror=null; this.src='https://drive.google.com/uc?export=view&id=10Q7Hsyb8pMlRGG_u7odwa-1PW5u7hx-X';">
+            <h3>KOPERASI SYARIKAT ISLAM MANDIRI</h3>
+            <p class="text-muted mb-0">Formulir Pendaftaran & Pemutakhiran Data Anggota</p>
+          </div>
+
+          <div class="letter-box">
+            <p><strong>Assalamu'alaikum Warahmatullahi Wabarakatuh,</strong></p>
+            <p>Sehubungan dengan pemutakhiran data keanggotaan Koperasi Syarikat Islam Mandiri, maka setiap anggota lama maupun calon anggota baru diwajibkan melakukan pendaftaran melalui formulir ini.</p>
+
+            <p class="mb-2 fw-bold text-success">Kewajiban Simpanan Keanggotaan:</p>
+            <table class="table-simpanan">
+              <tr><td style="width:60%;">Simpanan Pokok</td><td style="width:40%;">: Rp 500.000</td></tr>
+              <tr><td>Simpanan Wajib <br><small class="text-muted">(Minimal pembayaran 3 thn: 2024–2026)</small></td><td>: Rp 360.000 <br><small class="text-muted">(Rp120.000 / tahun)</small></td></tr>
+              <tr class="total-row"><td class="fw-bold text-success">Total Minimal Pembayaran Awal</td><td class="fw-bold text-success">: Rp 860.000</td></tr>
+            </table>
+            <p class="small text-muted mb-3"><em>* Simpanan Sukarela dapat ditambahkan sesuai kemampuan anggota.</em></p>
+
+            <div class="alert-sukarela">
+              <i class="fas fa-hand-holding-heart fa-lg"></i>
+              <strong>🌱 Dukung Koperasi dengan Simpanan Sukarela!</strong><br>
+              Selain simpanan pokok dan wajib, Anda dapat menambah <strong>simpanan sukarela</strong> sesuai kemampuan.
+              Dana ini akan memperkuat permodalan koperasi untuk lebih baik kedepannya.<br>
+              <strong>🌱 Setor lebih, dapat manfaat lebih!</strong>
+            </div>
+
+            <p class="mb-2 fw-bold text-success">Fasilitas Anggota:</p>
+            <ul class="fasilitas-list">
+              <li>Kartu Anggota Digital</li>
+              <li>Akses laporan tahunan koperasi</li>
+              <li>Akses laporan simpanan anggota</li>
+            </ul>
+
+            <p class="mb-0"><strong>Billahi fii sabilil haq</strong></p>
+            <p class="mb-0"><strong>Wassalamu'alaikum Warahmatullahi Wabarakatuh.</strong></p>
+
+            <div class="mt-4">
+              <p class="fw-bold text-end">Hormat kami,</p>
+              <div style="display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; margin-top:10px;">
+                <div style="flex:1; min-width:150px; text-align:center; margin-bottom:15px;">
+                  <div style="height:100px; display:flex; align-items:center; justify-content:center; margin-bottom:8px;">
+                    <img src="https://drive.google.com/thumbnail?id=1X22fZvoBmea4bK3aXr6suhpX3kzVGhMV&sz=w150"
+                         alt="Tanda Tangan Nunung Suhudiah"
+                         style="max-height:80px; width:auto; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.1));"
+                         onerror="this.onerror=null; this.style.display='none';">
+                  </div>
+                  <div style="font-weight:bold; font-size:0.95rem;">Nunung Suhudiah, SE</div>
+                  <div style="font-size:0.8rem; color:#555;">Ketua Koperasi</div>
+                </div>
+                <div style="flex:1; min-width:150px; text-align:center; margin-bottom:15px;">
+                  <div style="height:100px; display:flex; align-items:center; justify-content:center; margin-bottom:8px;">
+                    <img src="https://drive.google.com/thumbnail?id=1oalvwlHd3i2GaApeTD-SZ0jEbuT5DLHx&sz=w150"
+                         alt="Tanda Tangan Yudhi Irsyadi"
+                         style="max-height:80px; width:auto; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.1));"
+                         onerror="this.onerror=null; this.style.display='none';">
+                  </div>
+                  <div style="font-weight:bold; font-size:0.95rem;">Yudhi Irsyadi, SE</div>
+                  <div style="font-size:0.8rem; color:#555;">Sekretaris Koperasi</div>
+                </div>
+                <div style="flex:1; min-width:150px; text-align:center; margin-bottom:15px;">
+                  <div style="height:100px; display:flex; align-items:center; justify-content:center; margin-bottom:8px;">
+                    <img src="https://drive.google.com/thumbnail?id=1RDFbZ2Jb3JY1lzLgFMd-88qqJfmjdzuL&sz=w150"
+                         alt="Tanda Tangan Hamdan Zoelva"
+                         style="max-height:80px; width:auto; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.1));"
+                         onerror="this.onerror=null; this.style.display='none';">
+                  </div>
+                  <div style="font-weight:bold; font-size:0.95rem;">Dr. Hamdan Zoelva, S.H., M.H.</div>
+                  <div style="font-size:0.8rem; color:#555;">Dewan Pengawas</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <form id="form-pendaftaran" onsubmit="submitPendaftaran(); return false;">
+
+            <div class="section-title"><i class="fas fa-user"></i> 1. Data Identitas</div>
+            <div class="mb-3">
+              <label class="form-label">Nama Lengkap (Sesuai KTP) <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" name="namaLengkap" id="reg-nama" placeholder="Nama lengkap sesuai KTP" required>
+            </div>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">NIK <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="nik" id="reg-nik" placeholder="16 digit NIK" pattern="\d{16}" minlength="16" maxlength="16" required>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Jenis Kelamin <span class="text-danger">*</span></label>
+                <select class="form-select" name="jenisKelamin" id="reg-jk" required>
+                  <option value="">Pilih...</option>
+                  <option value="Laki-laki">Laki-laki</option>
+                  <option value="Perempuan">Perempuan</option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Tempat Lahir <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="tempatLahir" id="reg-tempat-lahir" placeholder="Kota lahir" required>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Tanggal Lahir <span class="text-danger">*</span></label>
+                <input type="date" class="form-control" name="tanggalLahir" id="reg-tgl-lahir" required>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Alamat Lengkap <span class="text-danger">*</span></label>
+              <textarea class="form-control" name="alamat" id="reg-alamat" rows="2" placeholder="Alamat lengkap" required></textarea>
+            </div>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Kabupaten / Kota <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="kota" id="reg-kota" placeholder="Kabupaten / Kota" required>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Provinsi <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="provinsi" id="reg-provinsi" placeholder="Provinsi" required>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Upload Foto KTP <span class="text-danger">*</span></label>
+              <input type="file" class="form-control" id="reg-file-ktp" accept="image/*" required>
+              <small class="text-muted">Format: JPG, PNG. Maksimal 2MB.</small>
+            </div>
+
+            <div class="section-title"><i class="fas fa-address-book"></i> 2. Data Kontak & Keanggotaan</div>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">No. WhatsApp Aktif <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="whatsapp" id="reg-wa" placeholder="Contoh: 081234567890" pattern="\d{10,15}" required>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Email <span class="text-muted">(Opsional)</span></label>
+                <input type="email" class="form-control" name="email" id="reg-email" placeholder="email@domain.com">
+              </div>
+            </div>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Status Anggota <span class="text-danger">*</span></label>
+                <select class="form-select" name="statusAnggota" id="reg-status" required>
+                  <option value="">Pilih...</option>
+                  <option value="Anggota Baru">Anggota Baru</option>
+                  <option value="Anggota Lama">Anggota Lama (Daftar Ulang)</option>
+                </select>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Profesi / Bidang Usaha <span class="text-danger">*</span></label>
+                <select class="form-select" name="profesi" id="reg-profesi" required>
+                  <option value="">Pilih...</option>
+                  <option value="Petani">Petani</option>
+                  <option value="Nelayan">Nelayan</option>
+                  <option value="Pedagang">Pedagang</option>
+                  <option value="Pengusaha">Pengusaha</option>
+                  <option value="Karyawan">Karyawan</option>
+                  <option value="Lainnya">Lainnya</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="section-title"><i class="fas fa-wallet"></i> 3. Informasi Pembayaran</div>
+            <div class="row mb-4">
+              <div class="col-md-6">
+                <div class="bank-info p-3 h-100">
+                  <h5 class="text-primary">Bank BSI</h5>
+                  <h3 class="fw-bold mb-1" style="color:#0F5132;">3331239991</h3>
+                  <p class="mb-0 fw-bold">A/N : Koperasi Syarikat Islam Mandiri</p>
+                  <p class="mt-2 mb-0 small fw-bold" style="color:#0F5132;">
+                    <i class="fas fa-info-circle"></i> Untuk Pembayaran Simpanan Pokok & Simpanan Wajib
+                  </p>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="bank-info mandiri p-3 h-100" style="border-color:#007bff;">
+                  <h5 class="text-primary">Bank Mandiri</h5>
+                  <h3 class="fw-bold mb-1" style="color:#007bff;">1230050002809</h3>
+                  <p class="mb-0 fw-bold">A/N : Koperasi Syarikat Islam Mandiri</p>
+                  <p class="mt-2 mb-0 small fw-bold" style="color:#007bff;">
+                    <i class="fas fa-info-circle"></i> Untuk Pembayaran Simpanan Sukarela
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Pilih Jenis Simpanan <span class="text-danger">*</span></label>
+              <div class="form-check mb-2">
+                <input type="checkbox" class="form-check-input" id="sim1" value="Pokok" onchange="calculateTotalPendaftaran()">
+                <label class="form-check-label" for="sim1">Simpanan Pokok (Rp 500.000)</label>
+              </div>
+              <div class="form-check mb-2">
+                <input type="checkbox" class="form-check-input" id="sim2" value="Wajib" onchange="calculateTotalPendaftaran()">
+                <label class="form-check-label" for="sim2">Simpanan Wajib 3 Tahun (Rp 360.000)</label>
+              </div>
+              <div class="form-check mb-2">
+                <input type="checkbox" class="form-check-input" id="sim3" value="Sukarela" onchange="toggleSukarelaPendaftaran()">
+                <label class="form-check-label fw-bold" for="sim3" style="color:#C8A951;">
+                  🌟 Simpanan Sukarela <span class="text-muted fw-normal">(investasi masa depan, memperkuat koperasi kedepannya)</span>
+                </label>
+              </div>
+              <div id="sukarelaContainerPendaftaran" style="display:none; margin-top:10px; margin-left:25px;">
+                <div class="input-group w-75">
+                  <span class="input-group-text">Rp</span>
+                  <input type="number" class="form-control" id="sukarelaAmountPendaftaran" placeholder="Masukkan nominal" min="10000" onkeyup="calculateTotalPendaftaran()" onchange="calculateTotalPendaftaran()">
+                </div>
+                <small class="text-muted">Semakin besar, semakin banyak manfaat.</small>
+              </div>
+              <input type="hidden" name="jenisSimpanan" id="jenisSimpananHiddenPendaftaran">
+            </div>
+
+            <div class="total-box mb-2">
+              Total yang Harus Ditransfer:
+              <span id="totalDisplayPendaftaran">Rp 0</span>
+            </div>
+            <p class="small text-success fst-italic mb-4">
+              <i class="fas fa-info-circle"></i> Jumlah di atas sudah termasuk simpanan sukarela jika Anda mencentang dan mengisi nominal.
+            </p>
+
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Jumlah Transfer Aktual <span class="text-danger">*</span></label>
+                <div class="input-group">
+                  <span class="input-group-text">Rp</span>
+                  <input type="number" class="form-control" name="jumlahTransfer" id="reg-jumlah-transfer" min="860000" placeholder="Min. 860000" required>
+                </div>
+                <small class="text-muted">Masukkan angka sesuai bukti transfer.</small>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Tanggal Transfer <span class="text-danger">*</span></label>
+                <input type="date" class="form-control" name="tanggalTransfer" id="reg-tgl-transfer" required>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Upload Bukti Transfer <span class="text-danger">*</span></label>
+              <input type="file" class="form-control" id="reg-file-bukti" accept="image/*,application/pdf" multiple required>
+              <small class="text-muted">Format: JPG, PNG, PDF. Maksimal 5 file, masing-masing maksimal 2MB.</small>
+              <div id="fileBuktiErrorPendaftaran" class="text-danger small mt-1"></div>
+              <div id="file-bukti-list-pendaftaran" style="margin-top:8px; font-size:0.8rem; color:#666;"></div>
+            </div>
+
+            <hr class="mt-4 mb-4">
+
+            <div class="agreement-box">
+              <div class="form-check">
+                <input type="checkbox" class="form-check-input" id="setujuPendaftaran" required>
+                <label class="form-check-label fw-bold" for="setujuPendaftaran">
+                  Bismillah, saya menyatakan data ini benar, mematuhi AD/ART, bersedia menjadi anggota, dan mengizinkan data saya digunakan untuk administrasi Koperasi.
+                </label>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-custom-primary" id="btnSubmitPendaftaran">
+              <i class="fas fa-paper-plane me-2"></i> KIRIM PENDAFTARAN
+            </button>
+
+            <div id="loadingPendaftaran" style="display:none; text-align:center; margin-top:20px; padding:20px; background:#f8f9fa; border-radius:8px;">
+              <div class="spinner-border text-success" style="width:3rem; height:3rem; role:status;">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+              <h5 class="mt-3 text-success fw-bold">Sedang Memproses...</h5>
+              <p class="text-muted mb-0">Mohon tunggu, dokumen Anda sedang diunggah ke server aman kami.</p>
+            </div>
+
+            <div id="reg-status-message-pendaftaran" style="margin-top:15px; text-align:center; font-weight:600;"></div>
+
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="generator-canvas" style="display:none;"></canvas>
+
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="loader-overlay" style="display:none;">
+      <div class="login-card">
+        <div class="brand-logo"><i class="fas fa-landmark"></i></div>
+        <h2>SI MANDIRI</h2>
+        <p style="margin-bottom: 30px; color: #666;">Koperasi & Project Management System</p>
+        <form id="form-login">
+          <div class="input-group">
+            <label><i class="fas fa-user"></i> Username / ID</label>
+            <input type="text" id="user" placeholder="Masukkan Username" required>
+          </div>
+          <div class="input-group">
+            <label><i class="fas fa-lock"></i> Password</label>
+            <input type="password" id="pass" placeholder="Masukkan Password" required>
+          </div>
+          <button type="submit" class="btn-login">MASUK KE SISTEM <i class="fas fa-arrow-right"></i></button>
+          <button type="button" class="btn-back-home" style="width:100%; margin-top:15px; justify-content:center;" onclick="exitSystemApp()">
+             <i class="fas fa-home"></i> KEMBALI KE BERANDA
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="loader" class="loader-overlay" style="display:none; background: rgba(255,255,255,0.9);">
+      <div class="spinner"></div>
+      <p style="margin-top: 15px; color: #1a4d2e; font-weight: 600;" id="loader-text">Sedang Memproses...</p>
+    </div>
+
+    <!-- App Shell -->
+    <div class="wrapper app-shell" id="app-shell" style="display:none">
+      <nav class="sidebar" id="sidebar">
+        <div class="brand"><i class="fas fa-landmark"></i><span>SI MANDIRI</span></div>
+        <div class="user-profile">
+          <div class="avatar"><i class="fas fa-user-circle"></i></div>
+          <div class="info"><span id="user-display-name">User</span><small id="user-display-role">Role</small></div>
+        </div>
+        <ul class="nav-links">
+          <li onclick="showPage('home')" id="btn-home" class="role-admin role-director"><i class="fas fa-th-large"></i> Dashboard</li>
+          <li onclick="showPage('keuangan')" id="btn-keuangan" class="role-admin role-director"><i class="fas fa-wallet"></i> Keuangan</li>
+          <li onclick="showPage('anggota')" id="btn-anggota" class="role-admin role-director role-anggota"><i class="fas fa-users"></i> Keanggotaan</li>
+          <li class="has-submenu role-admin role-director role-project">
+            <div class="submenu-header" onclick="toggleSubmenu('project-submenu')">
+              <i class="fas fa-project-diagram"></i> Project <i class="fas fa-chevron-down submenu-arrow"></i>
+            </div>
+            <ul id="project-submenu" class="submenu"></ul>
+          </li>
+          <li class="has-submenu role-admin">
+            <div class="submenu-header" onclick="toggleSubmenu('masterdata-submenu')">
+              <i class="fas fa-database"></i> Master Data <i class="fas fa-chevron-down submenu-arrow"></i>
+            </div>
+            <ul id="masterdata-submenu" class="submenu">
+              <li onclick="showMasterData('areas')"><i class="fas fa-map-marker-alt"></i> Areas</li>
+              <li onclick="showMasterData('categories')"><i class="fas fa-tags"></i> Categories</li>
+              <li onclick="showMasterData('products')"><i class="fas fa-box"></i> Master Product</li>
+              <li onclick="showMasterData('prices')"><i class="fas fa-tag"></i> Master Price</li>
+              <!-- TAMBAHAN CUSTOMER & SUPPLIER -->
+              <li onclick="showMasterData('customer')"><i class="fas fa-user-friends"></i> Customer</li>
+              <li onclick="showMasterData('supplier')"><i class="fas fa-truck"></i> Supplier</li>
+            </ul>
+          </li>
+          <li class="has-submenu role-admin role-director">
+            <div class="submenu-header" onclick="toggleSubmenu('laporan-submenu')">
+              <i class="fas fa-chart-line"></i> Laporan Keuangan <i class="fas fa-chevron-down submenu-arrow"></i>
+            </div>
+            <ul id="laporan-submenu" class="submenu">
+              <li onclick="showReport('jurnal')"><i class="fas fa-book"></i> Jurnal Umum</li>
+              <li onclick="showReport('ledger')"><i class="fas fa-list-ul"></i> Buku Besar</li>
+              <li onclick="showReport('trial-balance')"><i class="fas fa-balance-scale"></i> Neraca Saldo</li>
+              <li onclick="showReport('profit-loss')"><i class="fas fa-chart-pie"></i> Laba Rugi</li>
+              <li onclick="showReport('balance-sheet')"><i class="fas fa-table"></i> Neraca</li>
+              <li onclick="showReport('cash-flow')"><i class="fas fa-money-bill-wave"></i> Arus Kas</li>
+              <li onclick="showReport('shu')"><i class="fas fa-hand-holding-usd"></i> SHU</li>
+              <li onclick="showReport('rekap-project')"><i class="fas fa-project-diagram"></i> Rekap Project</li>
+              <li onclick="showReport('rekap-cabang')"><i class="fas fa-store"></i> Rekap Cabang</li>
+              <li onclick="showReport('rekap-plantation')"><i class="fas fa-tree"></i> Rekap Plantation</li>
+              <li onclick="showReport('dashboard-keuangan')"><i class="fas fa-chart-bar"></i> Dashboard Keuangan</li>
+            </ul>
+          </li>
+          <li onclick="exitSystemApp()" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;"><i class="fas fa-home"></i> Kembali ke Portal</li>
+          <li onclick="logout()" class="logout-btn"><i class="fas fa-power-off"></i> Logout</li>
+        </ul>
+      </nav>
+
+      <main class="main-content">
+        <header class="page-header-green">
+          <button class="menu-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+          <h2 id="page-title">DASHBOARD SISTEM</h2>
+        </header>
+
+        <section id="page-home" class="page">
+          <h4 class="section-title">Ringkasan Keuangan Keseluruhan</h4><div class="grid-stats" id="dashboard-summary"></div>
+          <h4 class="section-title" style="margin-top:40px">Statistik Keanggotaan</h4><div class="grid-stats" id="dashboard-members"></div>
+        </section>
+
+        <section id="page-keuangan" class="page" style="display:none">
+          <div class="grid-stats mb-20" id="finance-summary"></div>
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <div class="tabs">
+                <button class="tab-btn active" onclick="switchFinTab('PUSAT')">PUSAT</button>
+                <button class="tab-btn" onclick="switchFinTab('CABANG')">CABANG</button>
+                <button class="tab-btn" onclick="switchFinTab('PROJECT')">PROJECT</button>
+              </div>
+              <button class="btn-gold role-admin" onclick="openTrxModal()"><i class="fas fa-plus-circle"></i> Transaksi Baru</button>
+            </div>
+            <div class="search-container"><i class="fas fa-search"></i><input type="text" id="search-trx" placeholder="Cari ID, Ket, atau Nominal..." onkeyup="filterTable('search-trx', 'tbl-trx')"></div>
+            <div class="table-res">
+              <table id="tbl-trx" class="table-green-head">
+                <thead><tr><th>ID</th><th>Tgl</th><th>Jenis</th><th>Kategori</th><th>Entity</th><th id="th-akun">Akun</th><th class="col-qty">QTY</th><th class="col-harga">Harga</th><th>Jumlah</th><th>Dokumen</th><th>Aksi</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-anggota" class="page" style="display:none">
+          <div id="member-personal-view" class="role-anggota" style="display:none;">
+             <h4 class="section-title">Ringkasan Simpanan Saya</h4><div class="grid-stats mb-20" id="personal-savings-summary"></div>
+             <h4 class="section-title">Biodata Pribadi</h4>
+             <div class="content-card mb-20"><div id="biodata-grid" class="info-grid"></div><div style="margin-top: 20px; display:flex; justify-content:flex-end; gap:10px;"><button class="btn-gold" onclick="editMyProfile()"><i class="fas fa-edit"></i> Edit Profil Saya</button><button class="btn-green" onclick="showMyIdCard()"><i class="fas fa-id-card"></i> Cetak ID Card Saya</button></div></div>
+             <h4 class="section-title">Riwayat Simpanan</h4>
+             <div class="content-card"><div class="table-res"><table id="tbl-mem-simpanan" class="table-green-head"><thead><tr><th>ID Trx</th><th>Tanggal</th><th>Jenis Simpanan</th><th>Jumlah</th><th>Status</th><th>Bukti</th></tr></thead><tbody></tbody></table></div></div>
+          </div>
+          <div class="role-admin role-director">
+            <div class="tabs mb-20" style="border-bottom: 2px solid #ddd;">
+              <button class="tab-btn active" id="tab-btn-mem-db" onclick="switchMemberTab('DATABASE')">DATABASE ANGGOTA</button>
+              <button class="tab-btn" id="tab-btn-mem-sim" onclick="switchMemberTab('SIMPANAN')">DATA SIMPANAN</button>
+            </div>
+            <div id="view-members-db">
+              <div class="grid-stats mb-20" id="members-area-stats"></div>
+              <div class="content-card">
+                <div class="card-header-flex wrap-mobile">
+                  <h3>Data Keanggotaan</h3>
+                  <div style="display:flex; gap:10px;"><button class="btn-green role-admin" onclick="generateAllCards()"><i class="fas fa-print"></i> Cetak Semua ID Card</button><button class="btn-gold role-admin" onclick="openMemModal()"><i class="fas fa-user-plus"></i> Tambah Anggota</button></div>
+                </div>
+                <div class="search-container"><i class="fas fa-search"></i><input type="text" id="search-mem" placeholder="Cari Nama, ID, atau Area..." onkeyup="filterTable('search-mem', 'tbl-mem')"></div>
+                <div class="table-res"><table id="tbl-mem" class="table-green-head"><thead><tr><th>ID</th><th>Reg Tgl</th><th>Nama Lengkap</th><th>Area</th><th>Domisili</th><th>Pekerjaan</th><th>Cetak</th><th>Aksi</th></tr></thead><tbody></tbody></table></div>
+              </div>
+            </div>
+            <div id="view-members-simpanan" style="display:none;">
+               <div class="grid-stats mb-20" id="admin-simpanan-summary"></div>
+               <div class="content-card">
+                 <div class="card-header-flex wrap-mobile"><h3>Riwayat Transaksi Simpanan</h3></div>
+                 <div class="search-container"><i class="fas fa-search"></i><input type="text" id="search-sim-admin" placeholder="Cari ID, Nama, atau Jenis..." onkeyup="filterTable('search-sim-admin', 'tbl-simpanan-admin')"></div>
+                 <div class="table-res"><table id="tbl-simpanan-admin" class="table-green-head"><thead><tr><th>ID Trx</th><th>Tanggal</th><th>Nama / ID Anggota</th><th>Jenis</th><th>Jumlah</th><th>Bukti</th><th>Plant</th></tr></thead><tbody></tbody></table></div>
+               </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-project" class="page" style="display:none">
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <h3>Manajemen Project</h3>
+              <div style="display:flex; gap:10px;">
+                <button class="btn-green" onclick="refreshProjectList()" title="Refresh Daftar Project"><i class="fas fa-sync-alt"></i> Refresh</button>
+                <button class="btn-gold role-admin" onclick="openProjectTrxModal()"><i class="fas fa-plus-circle"></i> Transaksi Project Baru</button>
+              </div>
+            </div>
+            <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+              <label style="font-weight: 600; color: #1a4d2e;">Pilih Project:</label>
+              <select id="project-select" style="padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; min-width: 250px;" onchange="loadSelectedProject()">
+                <option value="">-- Pilih Project --</option>
+              </select>
+            </div>
+            <div class="grid-stats" id="project-stats" style="margin-bottom: 20px; display: grid;"></div>
+            <div class="search-container" id="project-search-container">
+              <i class="fas fa-search"></i>
+              <input type="text" id="search-project" placeholder="Cari transaksi..." onkeyup="filterProjectTable()">
+            </div>
+            <div class="table-res mt-20">
+              <table id="tbl-project" class="table-green-head">
+                <thead><tr><th>ID</th><th>Tgl</th><th>Jenis</th><th>Kategori</th><th>Nama Product</th><th>QTY</th><th>Harga</th><th>Jumlah</th><th>Dokumen</th><th>Aksi</th></tr></thead>
+                <tbody id="project-tbody"></tbody>
+              </table>
+            </div>
+            <div id="project-empty-message" style="text-align:center; padding:40px; display:none;">
+              <i class="fas fa-folder-open" style="font-size:48px; color:#ccc;"></i>
+              <p style="margin-top:15px; color:#666;">Belum ada transaksi untuk project ini</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-masterdata" class="page" style="display:none">
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <h3 id="masterdata-title">Master Data Management</h3>
+              <div style="display:flex; gap:10px;" id="masterdata-buttons">
+                <button class="btn-gold" onclick="addMasterData()" id="btn-add-master"><i class="fas fa-plus-circle"></i> Tambah Data</button>
+              </div>
+            </div>
+            <div class="search-container"><i class="fas fa-search"></i><input type="text" id="search-masterdata" placeholder="Cari data..." onkeyup="filterMasterDataTable()"></div>
+            <div class="table-res">
+              <table id="tbl-masterdata" class="table-green-head"><thead id="masterdata-thead"></thead><tbody id="masterdata-tbody"></tbody></table>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-report" class="page" style="display:none;">
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <h3 id="report-title">Laporan Keuangan</h3>
+              <div style="display:flex; gap:10px;">
+                <button class="btn-gold" onclick="exportReport('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
+                <button class="btn-green" onclick="exportReport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+              </div>
+            </div>
+            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:20px;">
+              <div class="form-group" style="flex:1; min-width:150px;">
+                <label>Periode Mulai</label>
+                <input type="date" id="report-start-date">
+              </div>
+              <div class="form-group" style="flex:1; min-width:150px;">
+                <label>Periode Akhir</label>
+                <input type="date" id="report-end-date">
+              </div>
+              <div class="form-group" style="flex:1; min-width:150px;">
+                <label>Filter</label>
+                <select id="report-filter">
+                  <option value="">Semua</option>
+                  <option value="KOPERASI">KOPERASI</option>
+                  <option value="PROJECT">PROJECT</option>
+                </select>
+              </div>
+              <div class="form-group" style="display:flex; align-items:flex-end;">
+                <button class="btn-green" onclick="loadReport()"><i class="fas fa-sync"></i> Tampilkan</button>
+              </div>
+            </div>
+            <div id="report-content">
+              <p style="text-align:center; color:#999;">Pilih jenis laporan dari menu samping.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Modal Transaksi -->
+    <div id="modal-trx" class="modal"><div class="modal-body"><div class="modal-header"><h3 id="trx-modal-title">Formulir Transaksi</h3><button class="close-btn" onclick="closeModal('modal-trx')">&times;</button></div><form id="form-trx"><input type="hidden" name="id" id="in-trx-id"><div class="form-grid"><div class="form-group"><label>Tanggal Transaksi</label><input type="date" name="tanggal" id="in-trx-tgl" required></div><div class="form-group"><label>Referal To</label><select name="referal" id="in-referal" onchange="handleReferalChange()" required><option value="KOPERASI">KOPERASI</option><option value="PROJECT">PROJECT</option></select></div><div class="form-group"><label>Entity / Plantation</label><select name="entity" id="in-plant" onchange="syncEntityDependents()" required></select></div><div class="form-group"><label>Jenis Transaksi</label><select name="jenis" id="in-trx-jenis" onchange="refreshCategoryDropdown()" required><option value="MASUK">PEMASUKAN</option><option value="KELUAR">PENGELUARAN</option></select></div><div class="form-group"><label>Kategori</label><select name="kategori" id="in-trx-kat" required></select></div><div class="form-group" id="produk-container"><label>Nama Produk</label><select name="produk" id="in-trx-produk"><option value="">-- Pilih Produk --</option></select></div><div class="form-group"><label>Sumber Dana</label><select name="sumberDana" id="in-trx-sumber" required></select></div><div class="form-group" id="qty-container"><label>QTY</label><input type="number" name="qty" id="in-trx-qty" min="0" step="1" value="0"></div><div class="form-group" id="hargaProjectGroup" style="display:none;"><label>Harga Satuan <span id="satuanDisplay"></span></label><input type="text" id="trxHarga" placeholder="Masukkan harga satuan" /></div><div class="form-group"><label>Jumlah (Rp)</label><input type="text" id="in-trx-jml" style="background:#f5f5f5;" /><input type="hidden" name="jumlah" id="in-trx-jml-hidden" /></div><div class="form-group" style="grid-column: span 2"><label>Akun / Anggota / Project</label><input type="text" id="in-trx-akun-text" style="display:none" readonly><select name="akunAnggota" id="in-trx-akun-select" style="display:none"></select></div>
+        <!-- TAMBAHAN CUSTOMER & SUPPLIER -->
+        <div class="form-group" id="customer-container" style="display:none; grid-column: span 1;">
+          <label>Nama Customer</label>
+          <select name="customerId" id="in-customer">
+            <option value="">-- Pilih Customer --</option>
+          </select>
+        </div>
+        <div class="form-group" id="supplier-container" style="display:none; grid-column: span 1;">
+          <label>Nama Supplier</label>
+          <select name="supplierId" id="in-supplier">
+            <option value="">-- Pilih Supplier --</option>
+          </select>
+        </div>
+        <div class="form-group" style="grid-column: span 2"><label>Keterangan</label><textarea name="keterangan" id="in-trx-ket" rows="2"></textarea></div><div class="form-group" style="grid-column: span 2"><label>Lampiran File (Optional)</label><input type="file" id="in-file"><input type="hidden" name="existingFile" id="in-trx-file"><div id="file-current-info" style="margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 4px; border: 1px solid #eee; min-height: 40px;"></div></div></div><div class="modal-footer"><button type="button" class="btn-light" onclick="closeModal('modal-trx')">Batal</button><button type="submit" class="btn-gold">Simpan Transaksi</button></div></form></div></div>
+
+    <!-- Modal Anggota -->
+    <div id="modal-mem" class="modal"><div class="modal-body"><div class="modal-header"><h3 id="mem-modal-title">Profil Anggota</h3><button class="close-btn" onclick="closeModal('modal-mem')">&times;</button></div><form id="form-mem"><input type="hidden" name="id" id="in-mem-id"><div class="form-grid"><div class="form-group"><label>ID Anggota (Auto/Readonly)</label><input type="text" id="in-mem-id-display" readonly disabled style="background:#f0f0f0"></div><div class="form-group"><label>Tanggal Registrasi</label><input type="text" id="in-mem-reg-display" readonly disabled style="background:#f0f0f0" placeholder="Auto Generate"></div><div class="form-group"><label>Nama Lengkap</label><input type="text" name="nama" id="in-mem-nama" required></div><div class="form-group"><label>Jenis Kelamin</label><select name="gender" id="in-mem-gender"><option value="L">Laki-laki</option><option value="P">Perempuan</option></select></div><div class="form-group"><label>Provinsi</label><input type="text" name="provinsi" id="in-mem-prov" required></div><div class="form-group"><label>Kota/Kabupaten</label><input type="text" name="kota" id="in-mem-kota" required></div><div class="form-group"><label>Pekerjaan</label><input type="text" name="pekerjaan" id="in-mem-kerja" required></div><div class="form-group"><label>Area Kerja</label><select name="plantation" id="in-mem-plant"></select></div><div class="form-group"><label>Tanggal Lahir</label><input type="date" name="tglLahir" id="in-mem-tgl" required></div><div class="form-group"><label>Password Akun</label><input type="text" name="password" id="in-mem-pass" required></div><div class="form-group" style="grid-column: span 2"><label>Alamat Lengkap (Maks 200 Karakter)</label><textarea name="alamat" id="in-mem-alamat" maxlength="200" rows="3" required></textarea></div></div><div class="modal-footer"><button type="button" class="btn-light" onclick="closeModal('modal-mem')">Batal</button><button type="submit" class="btn-green">Simpan Perubahan</button></div></form></div></div>
+
+    <!-- Modal ID Card -->
+    <div id="modal-idcard-result" class="modal"><div class="modal-body" style="max-width: 500px; text-align:center;"><div class="modal-header"><h3>Preview ID Card</h3><button class="close-btn" onclick="closeModal('modal-idcard-result')">&times;</button></div><div class="id-card-preview-container"><img id="idcard-preview-img" src="" alt="ID Card Preview" style="width:100%; max-width:400px; border:1px solid #ccc; border-radius:8px;"></div><div style="margin-top:20px; font-size:0.9rem; color:#666;" id="idcard-info"></div><div class="modal-footer" style="justify-content: center;"><a id="btn-download-idcard" href="#" class="btn-gold" style="text-decoration:none;"><i class="fas fa-download"></i> Download JPG</a><button class="btn-light" onclick="closeModal('modal-idcard-result')">Tutup</button></div></div></div>
+
+    <!-- Modal Master Data -->
+    <div id="modal-masterdata" class="modal"><div class="modal-body"><div class="modal-header"><h3 id="masterdata-modal-title">Form Master Data</h3><button class="close-btn" onclick="closeModal('modal-masterdata')">&times;</button></div><form id="form-masterdata"><input type="hidden" name="id" id="in-master-id"><input type="hidden" name="type" id="in-master-type"><div class="form-grid" id="masterdata-form-fields"></div><div class="modal-footer"><button type="button" class="btn-light" onclick="closeModal('modal-masterdata')">Batal</button><button type="submit" class="btn-green">Simpan Data</button></div></form></div></div>
+
+    <!-- WhatsApp Floating Button -->
+    <a href="https://wa.me/6282148988520" target="_blank" class="whatsapp-float" aria-label="Hubungi via WhatsApp">
+      <i class="fab fa-whatsapp"></i>
+    </a>
+
+    <?!= include('content'); ?>
+    <?!= include('script'); ?>
+  </body>
+</html>

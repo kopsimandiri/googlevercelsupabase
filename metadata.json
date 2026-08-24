@@ -1,0 +1,8 @@
+{
+  "name": "KOPSIM Mandiri",
+  "description": "Enterprise management and public portal frontend modernizing KOPSIM Syarikat Islam Mandiri apps script system",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

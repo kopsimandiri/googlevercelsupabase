@@ -1,0 +1,613 @@
+<!-- ============================================================ -->
+<!-- FILE: index.html (APP SHELL - DENGAN PERBAIKAN)             -->
+<!-- ============================================================ -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- CHART.JS -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <?!= include('style'); ?>
+    <script>
+      window.TRANSACTION_TYPES = { KAS: 'KAS', BARANG: 'BARANG', OPER: 'OPER' };
+      window.CASH_TYPES = { MASUK: 'MASUK', KELUAR: 'KELUAR' };
+      window.REFERAL_TYPES = { KOPERASI: 'KOPERASI', PROJECT: 'PROJECT' };
+    </script>
+  </head>
+  <body>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <canvas id="generator-canvas" style="display:none;"></canvas>
+
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="loader-overlay">
+      <div class="login-card">
+        <div class="brand-logo"><i class="fas fa-landmark"></i></div>
+        <h2>SI MANDIRI</h2>
+        <p style="margin-bottom: 30px; color: #666;">Koperasi & Project Management System</p>
+        <form id="form-login">
+          <div class="input-group">
+            <label><i class="fas fa-user"></i> Username / ID</label>
+            <input type="text" id="user" placeholder="Masukkan Username" required>
+          </div>
+          <div class="input-group">
+            <label><i class="fas fa-lock"></i> Password</label>
+            <input type="password" id="pass" placeholder="Masukkan Password" required>
+          </div>
+          <button type="submit" class="btn-login">MASUK KE SISTEM <i class="fas fa-arrow-right"></i></button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="loader" class="loader-overlay" style="display:none; background: rgba(255,255,255,0.9);">
+      <div class="spinner"></div>
+      <p style="margin-top: 15px; color: var(--primary); font-weight: 600;" id="loader-text">Sedang Memproses...</p>
+    </div>
+
+    <!-- App Shell -->
+    <div class="wrapper" id="app-shell" style="display:none">
+      <nav class="sidebar" id="sidebar">
+        <div class="brand">
+          <i class="fas fa-landmark"></i>
+          <span>SI MANDIRI</span>
+        </div>
+        <div class="user-profile">
+          <div class="avatar"><i class="fas fa-user-circle"></i></div>
+          <div class="info">
+            <span id="user-display-name">User</span>
+            <small id="user-display-role">Role</small>
+          </div>
+        </div>
+
+        <ul class="nav-links">
+          <li onclick="showPage('home')" id="btn-home" class="role-admin role-director">
+            <i class="fas fa-th-large"></i> Dashboard
+          </li>
+          <li onclick="showPage('keuangan')" id="btn-keuangan" class="role-admin role-director">
+            <i class="fas fa-wallet"></i> Keuangan
+          </li>
+          <li onclick="showPage('anggota')" id="btn-anggota" class="role-admin role-director role-anggota">
+            <i class="fas fa-users"></i> Keanggotaan
+          </li>
+
+          <li class="has-submenu role-admin role-director role-project">
+            <div class="submenu-header" onclick="toggleSubmenu('project-submenu')">
+              <i class="fas fa-project-diagram"></i> Project <i class="fas fa-chevron-down submenu-arrow"></i>
+            </div>
+            <ul id="project-submenu" class="submenu">
+              <!-- akan diisi oleh JavaScript -->
+            </ul>
+          </li>
+
+          <li class="has-submenu role-admin">
+            <div class="submenu-header" onclick="toggleSubmenu('masterdata-submenu')">
+              <i class="fas fa-database"></i> Master Data
+              <i class="fas fa-chevron-down submenu-arrow"></i>
+            </div>
+            <ul id="masterdata-submenu" class="submenu">
+              <li onclick="showMasterData('areas')"><i class="fas fa-map-marker-alt"></i> Areas</li>
+              <li onclick="showMasterData('categories')"><i class="fas fa-tags"></i> Categories</li>
+              <li onclick="showMasterData('products')"><i class="fas fa-box"></i> Master Product</li>
+              <li onclick="showMasterData('prices')"><i class="fas fa-tag"></i> Master Price</li>
+            </ul>
+          </li>
+
+          <!-- Menu Laporan Keuangan -->
+          <li class="has-submenu role-admin role-director">
+            <div class="submenu-header" onclick="toggleSubmenu('laporan-submenu')">
+              <i class="fas fa-chart-line"></i> Laporan Keuangan
+              <i class="fas fa-chevron-down submenu-arrow"></i>
+            </div>
+            <ul id="laporan-submenu" class="submenu">
+              <li onclick="showReport('jurnal')"><i class="fas fa-book"></i> Jurnal Umum</li>
+              <li onclick="showReport('ledger')"><i class="fas fa-list-ul"></i> Buku Besar</li>
+              <li onclick="showReport('trial-balance')"><i class="fas fa-balance-scale"></i> Neraca Saldo</li>
+              <li onclick="showReport('profit-loss')"><i class="fas fa-chart-pie"></i> Laba Rugi</li>
+              <li onclick="showReport('balance-sheet')"><i class="fas fa-table"></i> Neraca</li>
+              <li onclick="showReport('cash-flow')"><i class="fas fa-money-bill-wave"></i> Arus Kas</li>
+              <li onclick="showReport('shu')"><i class="fas fa-hand-holding-usd"></i> SHU</li>
+              <li onclick="showReport('rekap-project')"><i class="fas fa-project-diagram"></i> Rekap Project</li>
+              <li onclick="showReport('rekap-cabang')"><i class="fas fa-store"></i> Rekap Cabang</li>
+              <li onclick="showReport('rekap-plantation')"><i class="fas fa-tree"></i> Rekap Plantation</li>
+              <li onclick="showReport('dashboard-keuangan')"><i class="fas fa-chart-bar"></i> Dashboard Keuangan</li>
+            </ul>
+          </li>
+          <!-- End Laporan -->
+
+          <li onclick="exitSystemApp()" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+            <i class="fas fa-home"></i> Kembali ke Portal
+          </li>
+
+          <li onclick="logout()" class="logout-btn"><i class="fas fa-power-off"></i> Logout</li>
+        </ul>
+      </nav>
+
+      <main class="main-content">
+        <header class="page-header-green">
+          <button class="menu-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+          <h2 id="page-title">DASHBOARD SISTEM</h2>
+        </header>
+
+        <!-- Home -->
+        <section id="page-home" class="page">
+          <h4 class="section-title">Ringkasan Keuangan Keseluruhan</h4>
+          <div class="grid-stats" id="dashboard-summary"></div>
+          <h4 class="section-title" style="margin-top:40px">Statistik Keanggotaan</h4>
+          <div class="grid-stats" id="dashboard-members"></div>
+        </section>
+
+        <!-- Keuangan -->
+        <section id="page-keuangan" class="page" style="display:none">
+          <div class="grid-stats mb-20" id="finance-summary"></div>
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <div class="tabs">
+                <button class="tab-btn active" onclick="switchFinTab('PUSAT')">PUSAT</button>
+                <button class="tab-btn" onclick="switchFinTab('CABANG')">CABANG</button>
+                <button class="tab-btn" onclick="switchFinTab('PROJECT')">PROJECT</button>
+              </div>
+              <button class="btn-gold role-admin" onclick="openTrxModal()">
+                <i class="fas fa-plus-circle"></i> Transaksi Baru
+              </button>
+            </div>
+
+            <div class="search-container">
+              <i class="fas fa-search"></i>
+              <input type="text" id="search-trx" placeholder="Cari ID, Ket, atau Nominal..." onkeyup="filterTable('search-trx', 'tbl-trx')">
+            </div>
+
+            <div class="table-res">
+              <table id="tbl-trx" class="table-green-head">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Tgl</th>
+                    <th>Jenis</th>
+                    <th>Kategori</th>
+                    <th>Entity</th>
+                    <th id="th-akun">Akun</th>
+                    <th class="col-qty">QTY</th>
+                    <th class="col-harga">Harga</th>
+                    <th>Jumlah</th>
+                    <th>Dokumen</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Anggota -->
+        <section id="page-anggota" class="page" style="display:none">
+          <div id="member-personal-view" class="role-anggota" style="display:none;">
+            <h4 class="section-title">Ringkasan Simpanan Saya</h4>
+            <div class="grid-stats mb-20" id="personal-savings-summary"></div>
+
+            <h4 class="section-title">Biodata Pribadi</h4>
+            <div class="content-card mb-20">
+              <div id="biodata-grid" class="info-grid"></div>
+              <div style="margin-top: 20px; display:flex; justify-content:flex-end; gap:10px;">
+                <button class="btn-gold" onclick="editMyProfile()"><i class="fas fa-edit"></i> Edit Profil Saya</button>
+                <button class="btn-green" onclick="showMyIdCard()"><i class="fas fa-id-card"></i> Cetak ID Card Saya</button>
+              </div>
+            </div>
+
+            <h4 class="section-title">Riwayat Simpanan</h4>
+            <div class="content-card">
+              <div class="table-res">
+                <table id="tbl-mem-simpanan" class="table-green-head">
+                  <thead>
+                    <tr>
+                      <th>ID Trx</th>
+                      <th>Tanggal</th>
+                      <th>Jenis Simpanan</th>
+                      <th>Jumlah</th>
+                      <th>Status</th>
+                      <th>Bukti</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="role-admin role-director">
+            <div class="tabs mb-20" style="border-bottom: 2px solid #ddd;">
+              <button class="tab-btn active" id="tab-btn-mem-db" onclick="switchMemberTab('DATABASE')">DATABASE ANGGOTA</button>
+              <button class="tab-btn" id="tab-btn-mem-sim" onclick="switchMemberTab('SIMPANAN')">DATA SIMPANAN</button>
+            </div>
+
+            <div id="view-members-db">
+              <div class="grid-stats mb-20" id="members-area-stats"></div>
+
+              <div class="content-card">
+                <div class="card-header-flex wrap-mobile">
+                  <h3>Data Keanggotaan</h3>
+                  <div style="display:flex; gap:10px;">
+                    <button class="btn-green role-admin" onclick="generateAllCards()">
+                      <i class="fas fa-print"></i> Cetak Semua ID Card
+                    </button>
+                    <button class="btn-gold role-admin" onclick="openMemModal()">
+                      <i class="fas fa-user-plus"></i> Tambah Anggota
+                    </button>
+                  </div>
+                </div>
+
+                <div class="search-container">
+                  <i class="fas fa-search"></i>
+                  <input type="text" id="search-mem" placeholder="Cari Nama, ID, atau Area..." onkeyup="filterTable('search-mem', 'tbl-mem')">
+                </div>
+
+                <div class="table-res">
+                  <table id="tbl-mem" class="table-green-head">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Reg Tgl</th>
+                        <th>Nama Lengkap</th>
+                        <th>Area</th>
+                        <th>Domisili</th>
+                        <th>Pekerjaan</th>
+                        <th>Cetak</th>
+                        <th>Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div id="view-members-simpanan" style="display:none;">
+              <div class="grid-stats mb-20" id="admin-simpanan-summary"></div>
+
+              <div class="content-card">
+                <div class="card-header-flex wrap-mobile">
+                  <h3>Riwayat Transaksi Simpanan</h3>
+                </div>
+
+                <div class="search-container">
+                  <i class="fas fa-search"></i>
+                  <input type="text" id="search-sim-admin" placeholder="Cari ID, Nama, atau Jenis..." onkeyup="filterTable('search-sim-admin', 'tbl-simpanan-admin')">
+                </div>
+
+                <div class="table-res">
+                  <table id="tbl-simpanan-admin" class="table-green-head">
+                    <thead>
+                      <tr>
+                        <th>ID Trx</th>
+                        <th>Tanggal</th>
+                        <th>Nama / ID Anggota</th>
+                        <th>Jenis</th>
+                        <th>Jumlah</th>
+                        <th>Bukti</th>
+                        <th>Plant</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Project -->
+        <section id="page-project" class="page" style="display:none">
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <h3>Manajemen Project</h3>
+              <div style="display:flex; gap:10px;">
+                <button class="btn-green" onclick="refreshProjectTabs()" title="Refresh Daftar Project">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+                <button class="btn-gold role-admin" onclick="openProjectTrxModal()">
+                  <i class="fas fa-plus-circle"></i> Transaksi Project Baru
+                </button>
+              </div>
+            </div>
+
+            <div class="tabs" id="project-tabs" style="margin-bottom: 20px; border-bottom: 2px solid #ddd;">
+              <!-- diisi JS -->
+            </div>
+
+            <div class="grid-stats" id="project-stats" style="margin-bottom: 20px; display: grid;"></div>
+
+            <div class="search-container" id="project-search-container">
+              <i class="fas fa-search"></i>
+              <input type="text" id="search-project" placeholder="Cari transaksi..." onkeyup="filterProjectTable()">
+            </div>
+
+            <div class="table-res">
+              <table id="tbl-project" class="table-green-head">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Tgl</th>
+                    <th>Jenis</th>
+                    <th>Kategori</th>
+                    <th>Nama Product</th>
+                    <th>QTY</th>
+                    <th>Harga</th>
+                    <th>Jumlah</th>
+                    <th>Dokumen</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="project-tbody"></tbody>
+              </table>
+            </div>
+
+            <div id="project-empty-message" style="text-align:center; padding:40px; display:none;">
+              <i class="fas fa-folder-open" style="font-size:48px; color:#ccc;"></i>
+              <p style="margin-top:15px; color:#666;">Belum ada transaksi untuk project ini</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Master Data -->
+        <section id="page-masterdata" class="page" style="display:none">
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <h3 id="masterdata-title">Master Data Management</h3>
+              <div style="display:flex; gap:10px;" id="masterdata-buttons">
+                <button class="btn-gold" onclick="addMasterData()" id="btn-add-master">
+                  <i class="fas fa-plus-circle"></i> Tambah Data
+                </button>
+              </div>
+            </div>
+
+            <div class="search-container">
+              <i class="fas fa-search"></i>
+              <input type="text" id="search-masterdata" placeholder="Cari data..." onkeyup="filterMasterDataTable()">
+            </div>
+
+            <div class="table-res">
+              <table id="tbl-masterdata" class="table-green-head">
+                <thead id="masterdata-thead"></thead>
+                <tbody id="masterdata-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Laporan Keuangan -->
+        <section id="page-report" class="page" style="display:none;">
+          <div class="content-card">
+            <div class="card-header-flex wrap-mobile">
+              <h3 id="report-title">Laporan Keuangan</h3>
+              <div style="display:flex; gap:10px;">
+                <button class="btn-gold" onclick="exportReport('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
+                <button class="btn-green" onclick="exportReport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+              </div>
+            </div>
+            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:20px;">
+              <div class="form-group" style="flex:1; min-width:150px;">
+                <label>Periode Mulai</label>
+                <input type="date" id="report-start-date">
+              </div>
+              <div class="form-group" style="flex:1; min-width:150px;">
+                <label>Periode Akhir</label>
+                <input type="date" id="report-end-date">
+              </div>
+              <div class="form-group" style="flex:1; min-width:150px;">
+                <label>Filter</label>
+                <select id="report-filter">
+                  <option value="">Semua</option>
+                  <option value="KOPERASI">KOPERASI</option>
+                  <option value="PROJECT">PROJECT</option>
+                </select>
+              </div>
+              <div class="form-group" style="display:flex; align-items:flex-end;">
+                <button class="btn-green" onclick="loadReport()"><i class="fas fa-sync"></i> Tampilkan</button>
+              </div>
+            </div>
+            <div id="report-content">
+              <p style="text-align:center; color:#999;">Pilih jenis laporan dari menu samping.</p>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- Modal Transaksi -->
+    <div id="modal-trx" class="modal">
+      <div class="modal-body">
+        <div class="modal-header">
+          <h3 id="trx-modal-title">Formulir Transaksi</h3>
+          <button class="close-btn" onclick="closeModal('modal-trx')">&times;</button>
+        </div>
+        <form id="form-trx">
+          <input type="hidden" name="id" id="in-trx-id">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal Transaksi</label>
+              <input type="date" name="tanggal" id="in-trx-tgl" required>
+            </div>
+            <div class="form-group">
+              <label>Referal To</label>
+              <select name="referal" id="in-referal" onchange="handleReferalChange()" required>
+                <option value="KOPERASI">KOPERASI</option>
+                <option value="PROJECT">PROJECT</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Entity / Plantation</label>
+              <select name="entity" id="in-plant" onchange="syncEntityDependents()" required></select>
+            </div>
+            <div class="form-group">
+              <label>Jenis Transaksi</label>
+              <select name="jenis" id="in-trx-jenis" onchange="refreshCategoryDropdown()" required>
+                <option value="MASUK">PEMASUKAN</option>
+                <option value="KELUAR">PENGELUARAN</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Kategori</label>
+              <select name="kategori" id="in-trx-kat" required></select>
+            </div>
+            <div class="form-group" id="produk-container">
+              <label>Nama Produk</label>
+              <select name="produk" id="in-trx-produk">
+                <option value="">-- Pilih Produk --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Sumber Dana</label>
+              <select name="sumberDana" id="in-trx-sumber" required></select>
+            </div>
+            <div class="form-group" id="qty-container">
+              <label>QTY</label>
+              <input type="number" name="qty" id="in-trx-qty" min="0" step="1" value="0">
+            </div>
+            <!-- TAMBAHAN FIELD HARGA SATUAN (hanya muncul untuk PROJECT) -->
+            <div class="form-group" id="hargaProjectGroup" style="display:none;">
+              <label>Harga Satuan <span id="satuanDisplay"></span></label>
+              <input type="text" id="trxHarga" placeholder="Masukkan harga satuan" />
+            </div>
+            <div class="form-group">
+              <label>Jumlah (Rp)</label>
+              <!-- readonly dihapus, akan dikontrol JS -->
+              <input type="text" id="in-trx-jml" style="background:#f5f5f5;" />
+              <input type="hidden" name="jumlah" id="in-trx-jml-hidden" />
+            </div>
+            <div class="form-group" style="grid-column: span 2">
+              <label>Akun / Anggota / Project</label>
+              <input type="text" id="in-trx-akun-text" style="display:none" readonly>
+              <select name="akunAnggota" id="in-trx-akun-select" style="display:none"></select>
+            </div>
+            <div class="form-group" style="grid-column: span 2">
+              <label>Keterangan</label>
+              <textarea name="keterangan" id="in-trx-ket" rows="2"></textarea>
+            </div>
+            <div class="form-group" style="grid-column: span 2">
+              <label>Lampiran File (Optional)</label>
+              <input type="file" id="in-file">
+              <input type="hidden" name="existingFile" id="in-trx-file">
+              <div id="file-current-info" style="margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 4px; border: 1px solid #eee; min-height: 40px;"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-light" onclick="closeModal('modal-trx')">Batal</button>
+            <button type="submit" class="btn-gold">Simpan Transaksi</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal Anggota -->
+    <div id="modal-mem" class="modal">
+      <div class="modal-body">
+        <div class="modal-header">
+          <h3 id="mem-modal-title">Profil Anggota</h3>
+          <button class="close-btn" onclick="closeModal('modal-mem')">&times;</button>
+        </div>
+        <form id="form-mem">
+          <input type="hidden" name="id" id="in-mem-id">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>ID Anggota</label>
+              <input type="text" id="in-mem-id-display" readonly disabled style="background:#f0f0f0">
+            </div>
+            <div class="form-group">
+              <label>Tanggal Registrasi</label>
+              <input type="text" id="in-mem-reg-display" readonly disabled style="background:#f0f0f0">
+            </div>
+            <div class="form-group">
+              <label>Nama Lengkap</label>
+              <input type="text" name="nama" id="in-mem-nama" required>
+            </div>
+            <div class="form-group">
+              <label>Jenis Kelamin</label>
+              <select name="gender" id="in-mem-gender">
+                <option value="L">Laki-laki</option>
+                <option value="P">Perempuan</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Provinsi</label>
+              <input type="text" name="provinsi" id="in-mem-prov" required>
+            </div>
+            <div class="form-group">
+              <label>Kota/Kabupaten</label>
+              <input type="text" name="kota" id="in-mem-kota" required>
+            </div>
+            <div class="form-group">
+              <label>Pekerjaan</label>
+              <input type="text" name="pekerjaan" id="in-mem-kerja" required>
+            </div>
+            <div class="form-group">
+              <label>Area Kerja</label>
+              <select name="plantation" id="in-mem-plant"></select>
+            </div>
+            <div class="form-group">
+              <label>Tanggal Lahir</label>
+              <input type="date" name="tglLahir" id="in-mem-tgl" required>
+            </div>
+            <div class="form-group">
+              <label>Password Akun</label>
+              <input type="text" name="password" id="in-mem-pass" required>
+            </div>
+            <div class="form-group" style="grid-column: span 2">
+              <label>Alamat Lengkap (Maks 200 Karakter)</label>
+              <textarea name="alamat" id="in-mem-alamat" maxlength="200" rows="3" required></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-light" onclick="closeModal('modal-mem')">Batal</button>
+            <button type="submit" class="btn-green">Simpan Perubahan</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal ID Card -->
+    <div id="modal-idcard-result" class="modal">
+      <div class="modal-body" style="max-width: 500px; text-align:center;">
+        <div class="modal-header">
+          <h3>Preview ID Card</h3>
+          <button class="close-btn" onclick="closeModal('modal-idcard-result')">&times;</button>
+        </div>
+        <div class="id-card-preview-container">
+          <img id="idcard-preview-img" src="" alt="ID Card Preview" style="width:100%; max-width:400px; border:1px solid #ccc; border-radius:8px;">
+        </div>
+        <div style="margin-top:20px; font-size:0.9rem; color:#666;" id="idcard-info"></div>
+        <div class="modal-footer" style="justify-content: center;">
+          <a id="btn-download-idcard" href="#" class="btn-gold" style="text-decoration: none;">
+            <i class="fas fa-download"></i> Download JPG
+          </a>
+          <button class="btn-light" onclick="closeModal('modal-idcard-result')">Tutup</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Master Data -->
+    <div id="modal-masterdata" class="modal">
+      <div class="modal-body">
+        <div class="modal-header">
+          <h3 id="masterdata-modal-title">Form Master Data</h3>
+          <button class="close-btn" onclick="closeModal('modal-masterdata')">&times;</button>
+        </div>
+        <form id="form-masterdata">
+          <input type="hidden" name="id" id="in-master-id">
+          <input type="hidden" name="type" id="in-master-type">
+          <div class="form-grid" id="masterdata-form-fields"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn-light" onclick="closeModal('modal-masterdata')">Batal</button>
+            <button type="submit" class="btn-green">Simpan Data</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <?!= include('script'); ?>
+  </body>
+</html>

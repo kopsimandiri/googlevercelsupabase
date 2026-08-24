@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary-900: #0B3D26;
+  --color-primary-700: #15803D;
+  --color-primary-500: #22A85C;
+  --color-accent-gold: #C9972C;
+  --color-accent-gold-dark: #8A6B1E;
+  --color-bg-cream: #FAF7F0;
+  --color-surface: #FFFFFF;
+  --color-text-dark: #1A2E22;
+  --color-text-muted: #6B7280;
+  --color-status-warning: #F5A623;
+  --radius-card: 1.25rem;
+}
+
+body {
+  background-color: var(--color-bg-cream);
+}
+

@@ -1,0 +1,2830 @@
+<script>
+  // ========== CONSTANTS ==========
+  const TRANSACTION_COLS = {
+    NO: 0, ID: 1, TANGGAL: 2, REFERAL: 3, PLANTATION: 4,
+    JENIS: 5, KATEGORI: 6, SKU_NAME: 7, METODE_BAYAR: 8,
+    QTY: 9, JUMLAH: 10, FILELINK: 11, AKUN: 12,
+    KETERANGAN: 13, LOGIN_AS: 14, LOGTIME: 15, AREA_JENIS: 16,
+    HARGA_SATUAN: 17, CUSTOMER_ID: 18, SUPPLIER_ID: 19
+  };
+  const MEMBERSHIP_COLS = {
+    ID: 0, TGL_REG: 1, NAMA: 2, GENDER: 3, PROVINSI: 4,
+    KOTA: 5, ALAMAT: 6, PEKERJAAN: 7, PLANTATION: 8,
+    PASSWORD: 9, TGL_LAHIR: 10, AREA_JENIS: 13
+  };
+  const TRANSACTION_TYPES = { KAS: 'KAS', BARANG: 'BARANG', OPER: 'OPER' };
+  const CASH_TYPES = { MASUK: 'MASUK', KELUAR: 'KELUAR' };
+  const REFERAL_TYPES = { KOPERASI: 'KOPERASI', PROJECT: 'PROJECT' };
+  const ROLES = { ADMIN: 'ADMIN', DIRECTOR: 'DIRECTOR', ANGGOTA: 'ANGGOTA' };
+
+  const AREAS_COLS = { REFERAL: 2, ENTITY: 7, DANA1: 8, DANA2: 9, DANA3: 10 };
+  const CATEGORIES_COLS = { JENIS: 2, KATEGORI: 5 };
+  const MSKU_COLS = { NAMA: 2, ENTITY: 3 };
+
+  const TRX = TRANSACTION_COLS;
+  const MEM = MEMBERSHIP_COLS;
+
+  // ========== STATE ==========
+  let DATA = { transactions: [], members: [], simpanan: [], driveFiles: {}, refs: {}, summary: null, masterBarang: [] };
+  let SESSION = { role: null, user: null, userId: null };
+  let currentFinTab = 'PUSAT';
+  let currentMemberTab = 'DATABASE';
+  let currentMasterDataType = '';
+  let currentProject = '';
+  let projectTransactionsCache = {};
+  let projectSummaryCache = {};
+
+  const TEXT_CONFIG = {
+    font: "bold 38px Arial", color: "#000000",
+    posisi: { nama: { x: 175, y: 440 }, memberId: { x: 175, y: 510 }, area: { x: 175, y: 580 }, joinDate: { x: 175, y: 650 } }
+  };
+  let TEMPLATE_IMG_OBJ = null;
+
+  const PROJECT_LIST = ['KAMPUNG HAJI', 'TRADING IKAN', 'GARAM', 'PERTANIAN', 'PLYWOOD', 'MINYAK MERAH', 'SUPPLIER MBG', 'DISTRIBUTOR MEATSHOP'];
+
+  const MemberCache = {
+    data: null, timestamp: null, ttl: 5 * 60 * 1000,
+    get: function() { if (this.data && this.timestamp && (Date.now() - this.timestamp < this.ttl)) return this.data; return null; },
+    set: function(data) { this.data = data; this.timestamp = Date.now(); },
+    clear: function() { this.data = null; this.timestamp = null; }
+  };
+
+  // ========== NOTIFIKASI MODERN ==========
+
+  function showToast(message, type = 'success', duration = 3000) {
+    const container = document.getElementById('toastContainerPendaftaran');
+    if (!container) {
+      console.warn('Toast container not found!');
+      return;
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast-custom ' + type;
+    const iconMap = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle' };
+    const icon = iconMap[type] || iconMap.success;
+    toast.innerHTML = `
+      <i class="fas ${icon}"></i>
+      <span class="toast-msg">${message}</span>
+      <button class="toast-close">&times;</button>
+    `;
+    container.appendChild(toast);
+    toast.querySelector('.toast-close').addEventListener('click', function() {
+      toast.remove();
+    });
+    setTimeout(() => {
+      if (toast.parentNode) toast.remove();
+    }, duration);
+  }
+
+  // ========== MODAL KONFIRMASI ==========
+  let confirmCallback = null;
+
+  function showConfirmDialog(message, detail, onConfirm) {
+    const modal = document.getElementById('confirm-modal');
+    if (!modal) {
+      console.error('confirm-modal tidak ditemukan!');
+      return;
+    }
+    document.getElementById('confirm-message').innerHTML = `<p>${message}</p>${detail ? '<p style="font-size:0.9rem;color:#666;">' + detail + '</p>' : ''}`;
+    confirmCallback = onConfirm;
+    modal.style.display = 'block';
+
+    const yesBtn = document.getElementById('confirm-yes-btn');
+    const newYesBtn = yesBtn.cloneNode(true);
+    yesBtn.parentNode.replaceChild(newYesBtn, yesBtn);
+
+    newYesBtn.onclick = function() {
+      const cb = confirmCallback;
+      modal.style.display = 'none';
+      confirmCallback = null;
+      if (typeof cb === 'function') cb();
+    };
+
+    document.querySelector('#confirm-modal .close-btn').onclick = function() {
+      modal.style.display = 'none';
+      confirmCallback = null;
+    };
+
+    modal.onclick = function(e) {
+      if (e.target === modal) {
+        modal.style.display = 'none';
+        confirmCallback = null;
+      }
+    };
+  }
+
+  function closeConfirmModal() {
+    const modal = document.getElementById('confirm-modal');
+    if (modal) modal.style.display = 'none';
+    confirmCallback = null;
+  }
+
+  // ========== UTILITIES ==========
+  function parseDateToInput(str) {
+    if (!str) return "";
+    const d = new Date(str); return isNaN(d) ? "" : d.toISOString().split('T')[0];
+  }
+  function formatRp(n) {
+    if (n === undefined || n === null) return "Rp 0";
+    const num = typeof n === 'string' ? parseFloat(n.replace(/[^0-9.-]/g, '')) : n;
+    return "Rp " + (num || 0).toLocaleString('id-ID');
+  }
+  function parseRupiah(str) {
+    if (!str) return 0;
+    return parseFloat(str.replace(/[^0-9]/g, '')) || 0;
+  }
+  function safeGetElement(id) { return document.getElementById(id); }
+  function safeSetDisplay(id, displayValue) { const el = safeGetElement(id); if (el) el.style.display = displayValue; }
+  function toggleLoader(show, message = "Sedang Memproses...") {
+    const loader = safeGetElement('loader');
+    const loaderText = safeGetElement('loader-text');
+    if (loader) {
+      if (show) { if (loaderText) loaderText.innerText = message; loader.style.display = 'flex'; }
+      else { loader.style.display = 'none'; }
+    }
+  }
+  function fetchDataWithTimeout(apiFunction, params = [], timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => { toggleLoader(false); reject(new Error("Waktu habis.")); }, timeoutMs);
+      const runner = google.script.run
+        .withSuccessHandler(result => { clearTimeout(timeoutId); resolve(result); })
+        .withFailureHandler(error => { clearTimeout(timeoutId); reject(error); });
+      if (params.length > 0) runner[apiFunction](...params); else runner[apiFunction]();
+    });
+  }
+  function fillSelect(id, list) {
+    const el = safeGetElement(id);
+    if (el && list && list.length > 0) {
+      el.innerHTML = list.map(i => `<option value="${i}">${i}</option>`).join('');
+      return true;
+    }
+    return false;
+  }
+
+  // ========== HELPER FUNCTIONS ==========
+  function getUniqueSorted(array, colIndex) {
+    if (!array || !array.length) return [];
+    const values = array.map(row => (row[colIndex] || '').toString().trim()).filter(v => v !== '');
+    const unique = [...new Set(values)];
+    unique.sort((a, b) => a.localeCompare(b));
+    return unique;
+  }
+  function getEntities(referal) {
+    try {
+      if (!DATA.refs || !DATA.refs.areas) return [];
+      const areas = DATA.refs.areas;
+      const filtered = areas.filter(row => {
+        const rowRef = (row[AREAS_COLS.REFERAL] || '').toString().toUpperCase().trim();
+        return rowRef === referal.toUpperCase().trim();
+      });
+      return getUniqueSorted(filtered, AREAS_COLS.ENTITY);
+    } catch (e) { console.error('getEntities error:', e); return []; }
+  }
+  function getCategories(jenis) {
+    try {
+      if (!DATA.refs || !DATA.refs.categories) return [];
+      const categories = DATA.refs.categories;
+      const filterJenis = (jenis === CASH_TYPES.MASUK) ? 'MASUK' : 'KELUAR';
+      const filtered = categories.filter(row => {
+        const rowJenis = (row[CATEGORIES_COLS.JENIS] || '').toString().toUpperCase().trim();
+        return rowJenis === filterJenis;
+      });
+      return getUniqueSorted(filtered, CATEGORIES_COLS.KATEGORI);
+    } catch (e) { console.error('getCategories error:', e); return []; }
+  }
+  function getProducts(entity) {
+    try {
+      if (!DATA.masterBarang || !DATA.masterBarang.length) return [];
+      const filtered = DATA.masterBarang.filter(row => {
+        const rowEntity = (row[MSKU_COLS.ENTITY] || '').toString().toUpperCase().trim();
+        return rowEntity === entity.toUpperCase().trim();
+      });
+      return getUniqueSorted(filtered, MSKU_COLS.NAMA);
+    } catch (e) { console.error('getProducts error:', e); return []; }
+  }
+  function getFundingSources(entity, referal) {
+    try {
+      if (!DATA.refs || !DATA.refs.areas) return [];
+      const areas = DATA.refs.areas;
+      const found = areas.find(row => {
+        const rowEntity = (row[AREAS_COLS.ENTITY] || '').toString().toUpperCase().trim();
+        const rowRef = (row[AREAS_COLS.REFERAL] || '').toString().toUpperCase().trim();
+        return rowEntity === entity.toUpperCase().trim() &&
+               (referal ? rowRef === referal.toUpperCase().trim() : true);
+      });
+      if (!found) return [];
+      const funds = [
+        found[AREAS_COLS.DANA1],
+        found[AREAS_COLS.DANA2],
+        found[AREAS_COLS.DANA3]
+      ].filter(v => v && v.toString().trim() !== '').map(v => v.toString().trim());
+      const unique = [...new Set(funds)];
+      unique.sort((a, b) => a.localeCompare(b));
+      return unique;
+    } catch (e) { console.error('getFundingSources error:', e); return []; }
+  }
+
+  // ========== REFRESH DROPDOWN ==========
+  function refreshEntityDropdown() {
+    try {
+      const referalEl = safeGetElement('in-referal');
+      const entitySelect = safeGetElement('in-plant');
+      if (!referalEl || !entitySelect) return;
+      const referal = referalEl.value;
+      entitySelect.innerHTML = '<option value="">-- Pilih Entity --</option>';
+      const entities = getEntities(referal);
+      if (entities.length > 0) {
+        entitySelect.innerHTML += entities.map(v => `<option value="${v}">${v}</option>`).join('');
+      } else {
+        entitySelect.innerHTML += '<option value="" disabled>Tidak ada entity untuk referal ini</option>';
+      }
+      refreshProductDropdown();
+      refreshFundingDropdown();
+      refreshAkunDropdown();
+    } catch (e) { console.error('refreshEntityDropdown error:', e); }
+  }
+  function refreshCategoryDropdown() {
+    try {
+      const jenisEl = safeGetElement('in-trx-jenis');
+      const katSelect = safeGetElement('in-trx-kat');
+      if (!jenisEl || !katSelect) return;
+      const jenis = jenisEl.value;
+      katSelect.innerHTML = '<option value="">-- Pilih Kategori --</option>';
+      const categories = getCategories(jenis);
+      if (categories.length > 0) {
+        katSelect.innerHTML += categories.map(v => `<option value="${v}">${v}</option>`).join('');
+      } else {
+        katSelect.innerHTML += '<option value="" disabled>Tidak ada kategori untuk jenis ini</option>';
+      }
+    } catch (e) { console.error('refreshCategoryDropdown error:', e); }
+  }
+  function refreshProductDropdown() {
+    try {
+      const referalEl = safeGetElement('in-referal');
+      const entitySelect = safeGetElement('in-plant');
+      const productSelect = safeGetElement('in-trx-produk');
+      if (!referalEl || !entitySelect || !productSelect) return;
+      const referal = referalEl.value;
+      const entity = entitySelect.value;
+      productSelect.innerHTML = '<option value="">-- Pilih Produk --</option>';
+      if (referal === REFERAL_TYPES.PROJECT && entity) {
+        const products = getProducts(entity);
+        if (products.length > 0) {
+          productSelect.innerHTML += products.map(v => `<option value="${v}">${v}</option>`).join('');
+        } else {
+          productSelect.innerHTML += '<option value="" disabled>Tidak ada produk untuk entity ini</option>';
+        }
+      } else {
+        productSelect.innerHTML = '<option value="">-- Tidak ada produk --</option>';
+      }
+    } catch (e) { console.error('refreshProductDropdown error:', e); }
+  }
+  function refreshFundingDropdown() {
+    try {
+      const referalEl = safeGetElement('in-referal');
+      const entitySelect = safeGetElement('in-plant');
+      const sumberSelect = safeGetElement('in-trx-sumber');
+      if (!referalEl || !entitySelect || !sumberSelect) return;
+      const referal = referalEl.value;
+      const entity = entitySelect.value;
+      sumberSelect.innerHTML = '<option value="">-- Pilih Sumber Dana --</option>';
+      if (entity) {
+        const funds = getFundingSources(entity, referal);
+        if (funds.length > 0) {
+          sumberSelect.innerHTML += funds.map(v => `<option value="${v}">${v}</option>`).join('');
+        } else {
+          sumberSelect.innerHTML += '<option value="" disabled>Tidak ada sumber dana untuk entity ini</option>';
+        }
+      } else {
+        sumberSelect.innerHTML = '<option value="">-- Pilih Entity dulu --</option>';
+      }
+    } catch (e) { console.error('refreshFundingDropdown error:', e); }
+  }
+  function refreshAkunDropdown() {
+    try {
+      const referal = safeGetElement('in-referal')?.value;
+      const entity = safeGetElement('in-plant')?.value;
+      const akunSelect = safeGetElement('in-trx-akun-select');
+      const akunText = safeGetElement('in-trx-akun-text');
+      if (referal === REFERAL_TYPES.PROJECT) {
+        if (akunSelect) { akunSelect.style.display = 'none'; akunSelect.removeAttribute('name'); }
+        if (akunText) {
+          akunText.style.display = 'block';
+          akunText.value = 'DANA PROJECT';
+          akunText.setAttribute('name', 'akunAnggota');
+          akunText.readOnly = true;
+        }
+      } else {
+        if (akunText) { akunText.style.display = 'none'; akunText.removeAttribute('name'); }
+        if (akunSelect) {
+          akunSelect.style.display = 'block';
+          akunSelect.setAttribute('name', 'akunAnggota');
+          if (!entity) {
+            akunSelect.innerHTML = '<option value="">-- Pilih Entity dulu --</option>';
+            return;
+          }
+          if (DATA.members && DATA.members.length > 0) {
+            const filtered = DATA.members.filter(m => (m[MEM.PLANTATION] || '').toString().trim().toUpperCase() === entity.toUpperCase().trim());
+            const options = filtered.map(m => m[MEM.NAMA] + ' (' + m[MEM.ID] + ')');
+            if (options.length > 0) {
+              akunSelect.innerHTML = '<option value="">-- Pilih Anggota --</option>' + options.map(v => `<option value="${v}">${v}</option>`).join('');
+            } else {
+              akunSelect.innerHTML = '<option value="">-- Tidak ada anggota --</option>';
+            }
+          } else {
+            akunSelect.innerHTML = '<option value="">-- Data anggota tidak tersedia --</option>';
+          }
+        }
+      }
+    } catch (e) { console.error('refreshAkunDropdown error:', e); }
+  }
+
+  // ========== REFRESH CUSTOMER/SUPPLIER DROPDOWNS ==========
+  function refreshCustomerSupplierDropdowns() {
+    const custSelect = document.getElementById('in-customer');
+    const suppSelect = document.getElementById('in-supplier');
+    if (custSelect) {
+      const customers = DATA.refs.customers || [];
+      custSelect.innerHTML = '<option value="">-- Pilih Customer --</option>';
+      customers.forEach(c => {
+        custSelect.innerHTML += `<option value="${c.id}">${c.nama}</option>`;
+      });
+    }
+    if (suppSelect) {
+      const suppliers = DATA.refs.suppliers || [];
+      suppSelect.innerHTML = '<option value="">-- Pilih Supplier --</option>';
+      suppliers.forEach(s => {
+        suppSelect.innerHTML += `<option value="${s.id}">${s.nama}</option>`;
+      });
+    }
+  }
+
+  // ========== REFRESH VISIBILITY (DENGAN CUSTOMER/SUPPLIER) ==========
+  function refreshVisibility() {
+    try {
+      const referal = safeGetElement('in-referal')?.value;
+      const jenis = safeGetElement('in-trx-jenis')?.value;
+      const produkContainer = document.getElementById('produk-container');
+      const qtyContainer = document.getElementById('qty-container');
+      const hargaGroup = document.getElementById('hargaProjectGroup');
+      const jmlInput = document.getElementById('in-trx-jml');
+      const hiddenJml = document.getElementById('in-trx-jml-hidden');
+
+      const customerContainer = document.getElementById('customer-container');
+      const supplierContainer = document.getElementById('supplier-container');
+
+      const isProject = (referal === REFERAL_TYPES.PROJECT);
+
+      if (produkContainer) produkContainer.style.display = isProject ? 'block' : 'none';
+      if (qtyContainer) qtyContainer.style.display = isProject ? 'block' : 'none';
+      if (hargaGroup) hargaGroup.style.display = isProject ? 'block' : 'none';
+
+      if (customerContainer) customerContainer.style.display = (isProject && jenis === CASH_TYPES.MASUK) ? 'block' : 'none';
+      if (supplierContainer) supplierContainer.style.display = (isProject && jenis === CASH_TYPES.KELUAR) ? 'block' : 'none';
+
+      // Reset selection saat berganti
+      if (customerContainer && customerContainer.style.display === 'none') {
+        const custSelect = document.getElementById('in-customer');
+        if (custSelect) custSelect.value = '';
+      }
+      if (supplierContainer && supplierContainer.style.display === 'none') {
+        const suppSelect = document.getElementById('in-supplier');
+        if (suppSelect) suppSelect.value = '';
+      }
+
+      if (isProject) {
+        jmlInput.readOnly = true;
+        jmlInput.style.background = '#f5f5f5';
+        jmlInput.removeEventListener('input', handleManualJumlahInput);
+        calculateProjectTotal();
+      } else {
+        jmlInput.readOnly = false;
+        jmlInput.style.background = '#ffffff';
+        jmlInput.removeEventListener('input', handleManualJumlahInput);
+        jmlInput.addEventListener('input', handleManualJumlahInput);
+        if (!jmlInput.value) {
+          jmlInput.value = '';
+          if (hiddenJml) hiddenJml.value = '';
+        }
+      }
+
+      const qtyInput = document.getElementById('in-trx-qty');
+      const hargaInput = document.getElementById('trxHarga');
+      if (qtyInput) {
+        if (isProject) qtyInput.setAttribute('required', 'required');
+        else qtyInput.removeAttribute('required');
+      }
+      if (hargaInput) {
+        if (isProject) hargaInput.setAttribute('required', 'required');
+        else hargaInput.removeAttribute('required');
+      }
+
+    } catch (e) { console.error('refreshVisibility error:', e); }
+  }
+
+  function handleManualJumlahInput(e) {
+    const input = e.target;
+    let raw = input.value.replace(/[^0-9]/g, '');
+    if (raw === '') {
+      document.getElementById('in-trx-jml-hidden').value = '';
+      return;
+    }
+    const num = parseInt(raw, 10);
+    document.getElementById('in-trx-jml-hidden').value = num;
+    input.value = 'Rp ' + num.toLocaleString('id-ID');
+  }
+
+  function refreshAllFields() {
+    try {
+      refreshEntityDropdown();
+      refreshCategoryDropdown();
+      refreshProductDropdown();
+      refreshFundingDropdown();
+      refreshAkunDropdown();
+      refreshCustomerSupplierDropdowns();
+      refreshVisibility();
+    } catch (e) { console.error('refreshAllFields error:', e); }
+  }
+
+  // ========== FUNGSI UNTUK HARGA SATUAN ==========
+  function toggleHargaProject(show) {
+    var group = document.getElementById('hargaProjectGroup');
+    if (group) {
+      group.style.display = show ? 'block' : 'none';
+    }
+    const jmlInput = document.getElementById('in-trx-jml');
+    if (jmlInput) {
+      jmlInput.readOnly = show;
+      jmlInput.style.background = show ? '#f5f5f5' : '#ffffff';
+      if (!show) {
+        jmlInput.removeEventListener('input', handleManualJumlahInput);
+        jmlInput.addEventListener('input', handleManualJumlahInput);
+        if (!jmlInput.value) {
+          jmlInput.value = '';
+          document.getElementById('in-trx-jml-hidden').value = '';
+        }
+      } else {
+        jmlInput.removeEventListener('input', handleManualJumlahInput);
+        calculateProjectTotal();
+      }
+    }
+  }
+
+  function calculateProjectTotal() {
+    var qtyInput = document.getElementById('in-trx-qty');
+    var hargaInput = document.getElementById('trxHarga');
+    var jumlahInput = document.getElementById('in-trx-jml');
+    var hiddenJumlah = document.getElementById('in-trx-jml-hidden');
+    if (!qtyInput || !hargaInput || !jumlahInput) return;
+
+    var qty = parseFloat(qtyInput.value) || 0;
+    var harga = parseRupiah(hargaInput.value);
+    var total = qty * harga;
+
+    jumlahInput.value = formatRp(total);
+    if (hiddenJumlah) hiddenJumlah.value = total;
+  }
+
+  function fetchDefaultPrice(projectName) {
+    if (!projectName) return;
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result && result.defaultHarga !== undefined) {
+          var hargaInput = document.getElementById('trxHarga');
+          if (hargaInput) {
+            hargaInput.value = formatRp(result.defaultHarga);
+            calculateProjectTotal();
+          }
+          var satuanSpan = document.getElementById('satuanDisplay');
+          if (satuanSpan && result.satuan) {
+            satuanSpan.innerText = ' (' + result.satuan + ')';
+          }
+        }
+      })
+      .withFailureHandler(function(err) {
+        console.error('Gagal ambil harga default:', err);
+      })
+      .getProjectDefaultPrice(projectName);
+  }
+
+  function handleReferalChange() {
+    var referal = document.getElementById('in-referal').value;
+    var isProject = (referal === 'PROJECT');
+    toggleHargaProject(isProject);
+
+    var hargaInput = document.getElementById('trxHarga');
+    if (hargaInput) {
+      if (isProject) hargaInput.setAttribute('required', 'required');
+      else hargaInput.removeAttribute('required');
+    }
+
+    if (isProject) {
+      var entity = document.getElementById('in-plant').value;
+      if (entity) fetchDefaultPrice(entity);
+    }
+
+    refreshVisibility();
+  }
+
+  // ========== LOGIN ==========
+  const formLogin = safeGetElement('form-login');
+  if (formLogin) {
+    formLogin.onsubmit = function(e) {
+      e.preventDefault();
+      const u = safeGetElement('user')?.value || ''; const p = safeGetElement('pass')?.value || '';
+      toggleLoader(true, "Memverifikasi login...");
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.status === 'success') {
+            SESSION = res;
+            safeSetDisplay('login-overlay', 'none'); safeSetDisplay('app-shell', 'flex');
+            const userNameEl = safeGetElement('user-display-name'); if (userNameEl) userNameEl.innerText = res.user;
+            const userRoleEl = safeGetElement('user-display-role'); if (userRoleEl) userRoleEl.innerText = res.role;
+            applyRoleAccess(); fetchData();
+          } else { showToast(res.message, 'error'); toggleLoader(false); }
+        })
+        .withFailureHandler(err => { showToast("Error: " + err.message, 'error'); toggleLoader(false); })
+        .checkLogin(u, p);
+    };
+  }
+
+  // ========== ROLE ACCESS ==========
+  function applyRoleAccess() {
+    document.querySelectorAll('.role-admin, .role-director, .role-anggota').forEach(el => { if (el) el.style.display = 'none'; });
+    const roleSelector = { 'ADMIN': '.role-admin', 'DIRECTOR': '.role-director', 'ANGGOTA': '.role-anggota' }[SESSION.role];
+    if (roleSelector) {
+      document.querySelectorAll(roleSelector).forEach(el => {
+        if (el) { if (el.tagName === 'LI') el.style.display = 'flex'; else if (el.tagName === 'BUTTON') el.style.display = 'inline-block'; else el.style.display = 'block'; }
+      });
+    }
+    renderProjectSidebar();
+  }
+
+  // ========== DATA FETCHING ==========
+  async function fetchData(forceRefresh = false) {
+    try {
+      if (SESSION.role === ROLES.ANGGOTA && !forceRefresh) {
+        const cached = MemberCache.get();
+        if (cached) { DATA = cached; renderAnggotaView(); toggleLoader(false); return; }
+      }
+      const loadingMsg = SESSION.role === ROLES.ANGGOTA ? "Memuat profil..." : "Memuat data sistem...";
+      toggleLoader(true, loadingMsg);
+      const apiFunction = SESSION.role === ROLES.ANGGOTA ? 'getMemberData' : 'getAppData';
+      const res = await fetchDataWithTimeout(apiFunction);
+      if (!res) {
+        console.error('fetchData: Respons kosong dari server, menggunakan data lama');
+        toggleLoader(false);
+        return;
+      }
+      if (res.error) {
+        console.error('fetchData: Error dari server:', res.error);
+        showToast('Gagal memuat data: ' + res.error, 'error');
+        toggleLoader(false);
+        return;
+      }
+      console.log('📦 fetchData: Data diterima, transactions length:', res.transactions ? res.transactions.length : 0);
+      DATA = res;
+      if (SESSION.role === ROLES.ANGGOTA) {
+        MemberCache.set(res);
+        renderAnggotaView();
+      } else {
+        renderDashboard();
+        renderKeuangan();
+        renderAnggota();
+        renderSimpananAdmin();
+        renderProjectSidebar();
+        renderProjectTabs();
+        if (currentProject) {
+          loadProjectData(currentProject);
+        }
+        showPage('home');
+      }
+      preloadIdCardTemplate();
+      toggleLoader(false);
+    } catch (error) {
+      console.error('fetchData error:', error);
+      showToast('Terjadi kesalahan saat memuat data: ' + error.message, 'error');
+      toggleLoader(false);
+    }
+  }
+
+  // ================================================================
+  // ========== DASHBOARD V2 — EXECUTIVE MANAGEMENT DASHBOARD ==========
+  // ================================================================
+  function renderDashboard() {
+    const s = DATA.summary;
+    const members = DATA.members || [];
+    const transactions = DATA.transactions || [];
+
+    // Hitung simpanan dari transaksi
+    let simpanan = { pokok: 0, wajib: 0, mana: 0, total: 0 };
+    transactions.forEach(t => {
+      const kat = (t[TRX.KATEGORI] || "").toString().toUpperCase();
+      let jml = t[TRX.JUMLAH] || 0;
+      if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+      const amt = (t[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? jml : -jml;
+      if (kat.includes('POKOK')) simpanan.pokok += amt;
+      else if (kat.includes('WAJIB')) simpanan.wajib += amt;
+      else if (kat.includes('MANA')) simpanan.mana += amt;
+    });
+    simpanan.total = simpanan.pokok + simpanan.wajib + simpanan.mana;
+
+    // Hitung anggota pusat/cabang
+    let mPusat = 0, mCabang = 0;
+    members.forEach(m => {
+      if (!m) return;
+      const areaJenis = (m[MEM.AREA_JENIS] || "").toString().toUpperCase();
+      if (areaJenis.includes('PUSAT')) mPusat++;
+      else if (areaJenis.includes('CABANG')) mCabang++;
+    });
+
+    const container = safeGetElement('dashboard-summary');
+    const membersContainer = safeGetElement('dashboard-members');
+    if (!container) return;
+
+    let html = `
+      <div class="dashboard-header">
+        <div>
+          <h2 class="dashboard-title">DASHBOARD EKSEKUTIF</h2>
+          <p class="dashboard-subtitle">Ringkasan kondisi operasional KOPSIM Mandiri</p>
+        </div>
+        <div class="dashboard-update">
+          <i class="fas fa-sync-alt"></i>
+          <span>Update: ${new Date().toLocaleString('id-ID')}</span>
+        </div>
+      </div>
+
+      <div class="dashboard-kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background: var(--color-primary-light); color: var(--color-white);">
+            <i class="fas fa-wallet"></i>
+          </div>
+          <div class="kpi-content">
+            <span class="kpi-label">Total Saldo</span>
+            <span class="kpi-value">${formatRp(s ? s.saldo : 0)}</span>
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background: var(--color-success); color: var(--color-white);">
+            <i class="fas fa-arrow-down"></i>
+          </div>
+          <div class="kpi-content">
+            <span class="kpi-label">Total Pemasukan</span>
+            <span class="kpi-value">${formatRp(s ? s.totalPemasukan : 0)}</span>
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background: var(--color-danger); color: var(--color-white);">
+            <i class="fas fa-arrow-up"></i>
+          </div>
+          <div class="kpi-content">
+            <span class="kpi-label">Total Pengeluaran</span>
+            <span class="kpi-value">${formatRp(s ? s.totalPengeluaran : 0)}</span>
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background: var(--color-accent); color: var(--color-white);">
+            <i class="fas fa-users"></i>
+          </div>
+          <div class="kpi-content">
+            <span class="kpi-label">Total Anggota</span>
+            <span class="kpi-value">${members.length}</span>
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background: #6f42c1; color: var(--color-white);">
+            <i class="fas fa-piggy-bank"></i>
+          </div>
+          <div class="kpi-content">
+            <span class="kpi-label">Total Simpanan</span>
+            <span class="kpi-value">${formatRp(simpanan.total)}</span>
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background: #0d6efd; color: var(--color-white);">
+            <i class="fas fa-project-diagram"></i>
+          </div>
+          <div class="kpi-content">
+            <span class="kpi-label">Project Aktif</span>
+            <span class="kpi-value" id="dashboard-project-count">...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-section">
+        <div class="section-header-wrapper">
+          <h3 class="section-title">RINGKASAN KEUANGAN</h3>
+          <span class="section-badge">Koperasi vs Project</span>
+        </div>
+        <div class="dashboard-financial-grid">
+          <div class="financial-card">
+            <div class="financial-header">
+              <span class="financial-label"><i class="fas fa-building"></i> Koperasi</span>
+              <span class="financial-value">${formatRp(s ? s.totalKoperasi : 0)}</span>
+            </div>
+            <div class="financial-detail">
+              <span>Masuk: ${formatRp(s ? s.koperasi.masuk : 0)}</span>
+              <span>Keluar: ${formatRp(s ? s.koperasi.keluar : 0)}</span>
+            </div>
+          </div>
+          <div class="financial-card" style="border-left-color: var(--color-accent);">
+            <div class="financial-header">
+              <span class="financial-label"><i class="fas fa-rocket"></i> Project</span>
+              <span class="financial-value">${formatRp(s ? s.totalProject : 0)}</span>
+            </div>
+            <div class="financial-detail">
+              <span>Masuk: ${formatRp(s ? s.project.masuk : 0)}</span>
+              <span>Keluar: ${formatRp(s ? s.project.keluar : 0)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-two-col">
+        <div class="dashboard-section">
+          <div class="section-header-wrapper">
+            <h3 class="section-title">KEANGGOTAAN</h3>
+          </div>
+          <div class="membership-grid">
+            <div class="membership-item">
+              <span class="membership-label">Total</span>
+              <span class="membership-value">${members.length}</span>
+            </div>
+            <div class="membership-item">
+              <span class="membership-label">Pusat</span>
+              <span class="membership-value">${mPusat}</span>
+            </div>
+            <div class="membership-item">
+              <span class="membership-label">Cabang</span>
+              <span class="membership-value">${mCabang}</span>
+            </div>
+          </div>
+        </div>
+        <div class="dashboard-section">
+          <div class="section-header-wrapper">
+            <h3 class="section-title">SIMPANAN</h3>
+          </div>
+          <div class="savings-grid">
+            <div class="savings-item">
+              <span class="savings-label">Pokok</span>
+              <span class="savings-value">${formatRp(simpanan.pokok)}</span>
+            </div>
+            <div class="savings-item">
+              <span class="savings-label">Wajib</span>
+              <span class="savings-value">${formatRp(simpanan.wajib)}</span>
+            </div>
+            <div class="savings-item">
+              <span class="savings-label">Manasuka</span>
+              <span class="savings-value">${formatRp(simpanan.mana)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-section" id="dashboard-project-section">
+        <div class="section-header-wrapper">
+          <h3 class="section-title">PROJECT AKTIF</h3>
+          <span class="section-badge" id="dashboard-project-badge">Memuat...</span>
+        </div>
+        <div id="dashboard-project-list" style="display:flex; justify-content:center; padding:20px;">
+          <div class="spinner" style="width:32px; height:32px; border-width:3px;"></div>
+        </div>
+      </div>
+
+      <div class="dashboard-section">
+        <div class="section-header-wrapper">
+          <h3 class="section-title">AKTIVITAS TERBARU</h3>
+        </div>
+        <div class="table-res" style="max-height:300px;">
+          <table class="table-green-head">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Jenis</th>
+                <th>Kategori</th>
+                <th>Entity</th>
+                <th style="text-align:right;">Nominal</th>
+              </tr>
+            </thead>
+            <tbody>
+    `;
+
+    const recent = transactions.slice(-5).reverse();
+    if (recent.length === 0) {
+      html += `<tr><td colspan="5" style="text-align:center;">Belum ada transaksi</td></tr>`;
+    } else {
+      recent.forEach(t => {
+        const jml = t[TRX.JUMLAH] || 0;
+        const jenis = (t[TRX.JENIS] || "").toString().toUpperCase();
+        const badgeClass = jenis === CASH_TYPES.MASUK ? 'bg-masuk' : 'bg-keluar';
+        html += `
+          <tr>
+            <td>${t[TRX.TANGGAL] || '-'}</td>
+            <td><span class="badge ${badgeClass}">${jenis || '-'}</span></td>
+            <td>${t[TRX.KATEGORI] || '-'}</td>
+            <td>${t[TRX.PLANTATION] || '-'}</td>
+            <td style="text-align:right; font-weight:600;">${formatRp(jml)}</td>
+          </tr>
+        `;
+      });
+    }
+
+    html += `
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="dashboard-section">
+        <div class="section-header-wrapper">
+          <h3 class="section-title">AKSI CEPAT</h3>
+        </div>
+        <div class="quick-actions">
+          <button class="btn-gold" onclick="openTrxModal()"><i class="fas fa-plus-circle"></i> Transaksi Baru</button>
+          <button class="btn-green" onclick="openMemModal()"><i class="fas fa-user-plus"></i> Tambah Anggota</button>
+          <button class="btn-primary" onclick="showPage('project')"><i class="fas fa-project-diagram"></i> Kelola Project</button>
+          <button class="btn-accent" onclick="showPage('anggota')"><i class="fas fa-users"></i> Data Anggota</button>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+    if (membersContainer) membersContainer.innerHTML = '';
+    renderDashboardProjectOverview();
+    const titleEl = safeGetElement('page-title');
+    if (titleEl) titleEl.innerText = 'DASHBOARD EKSEKUTIF';
+  }
+
+  async function renderDashboardProjectOverview() {
+    try {
+      const listContainer = document.getElementById('dashboard-project-list');
+      const badge = document.getElementById('dashboard-project-badge');
+      const countEl = document.getElementById('dashboard-project-count');
+      if (!listContainer) return;
+      const projects = await fetchDataWithTimeout('getAllProjectsWithTransactions', [], 8000);
+      if (!projects || projects.length === 0) {
+        listContainer.innerHTML = `<div style="color:var(--color-gray-400); text-align:center; padding:20px;">Belum ada project aktif</div>`;
+        if (badge) badge.textContent = '0 Project';
+        if (countEl) countEl.textContent = '0';
+        return;
+      }
+      if (badge) badge.textContent = projects.length + ' Project';
+      if (countEl) countEl.textContent = projects.length;
+      let html = `<div class="project-mini-grid">`;
+      projects.slice(0, 6).forEach(p => {
+        const status = p.saldo > 0 ? 'Aktif' : 'Dalam Pengembangan';
+        const statusClass = p.saldo > 0 ? 'bg-masuk' : 'bg-keluar';
+        html += `
+          <div class="project-mini-card" onclick="switchProjectTab('${p.name.replace(/'/g, "\\'")}')">
+            <div class="project-mini-name">${p.name}</div>
+            <div class="project-mini-meta">
+              <span class="badge ${statusClass}">${status}</span>
+              <span>${formatRp(p.saldo)}</span>
+            </div>
+          </div>
+        `;
+      });
+      if (projects.length > 6) {
+        html += `<div class="project-mini-more" onclick="showPage('project')">+ ${projects.length - 6} lainnya</div>`;
+      }
+      html += `</div>`;
+      listContainer.innerHTML = html;
+    } catch (e) {
+      console.error('Dashboard project overview error:', e);
+      const listContainer = document.getElementById('dashboard-project-list');
+      if (listContainer) {
+        listContainer.innerHTML = `<div style="color:var(--color-gray-400); text-align:center; padding:20px;">Gagal memuat data project</div>`;
+      }
+    }
+  }
+
+  // ========== RENDER KEUANGAN (TAMPILKAN CUSTOMER/SUPPLIER) ==========
+  function renderKeuangan() {
+    try {
+      if (!DATA || !DATA.transactions) {
+        console.warn('renderKeuangan: DATA.transactions kosong atau undefined');
+        const financeSummary = safeGetElement('finance-summary');
+        const tblTrx = document.querySelector('#tbl-trx tbody');
+        if (financeSummary) financeSummary.innerHTML = `<div class="stat-card"><h3>Belum ada transaksi</h3></div>`;
+        if (tblTrx) tblTrx.innerHTML = '<tr><td colspan="11" style="text-align:center">Tidak ada transaksi</td></tr>';
+        return;
+      }
+
+      const thAkun = document.querySelector('#tbl-trx thead tr th#th-akun');
+      if (thAkun) {
+        thAkun.innerText = currentFinTab === 'PROJECT' ? 'Partner' : 'Akun';
+      }
+
+      const searchVal = safeGetElement('search-trx')?.value?.toUpperCase() || '';
+
+      const filteredData = [];
+      let tM = 0, tK = 0;
+
+      DATA.transactions.forEach(t => {
+        if (!t) return;
+        const areaJenis = (t[TRX.AREA_JENIS] || "").toString().toUpperCase().trim();
+        const jenis = (t[TRX.JENIS] || "").toString().toUpperCase().trim();
+        let jml = t[TRX.JUMLAH] || 0;
+        if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+
+        let kategori = '';
+        if (areaJenis.includes('KOPERASI PUSAT')) kategori = 'PUSAT';
+        else if (areaJenis.includes('KOPERASI CABANG')) kategori = 'CABANG';
+        else if (areaJenis.includes('PROJECT')) kategori = 'PROJECT';
+
+        let matchTab = false;
+        if (currentFinTab === 'PUSAT' && kategori === 'PUSAT') matchTab = true;
+        else if (currentFinTab === 'CABANG' && kategori === 'CABANG') matchTab = true;
+        else if (currentFinTab === 'PROJECT' && kategori === 'PROJECT') matchTab = true;
+
+        if (!matchTab) return;
+
+        if (searchVal !== '') {
+          const searchable = [
+            t[TRX.ID],
+            t[TRX.TANGGAL],
+            t[TRX.JENIS],
+            t[TRX.KATEGORI],
+            t[TRX.PLANTATION],
+            t[TRX.SKU_NAME],
+            t[TRX.AKUN],
+            t[TRX.KETERANGAN],
+            formatRp(jml)
+          ].map(v => (v || '').toString().toUpperCase()).join(' ');
+          if (!searchable.includes(searchVal)) {
+            return;
+          }
+        }
+
+        filteredData.push(t);
+        if (jenis === CASH_TYPES.MASUK) tM += jml; else tK += jml;
+      });
+
+      const financeSummary = safeGetElement('finance-summary');
+      if (financeSummary) {
+        if (filteredData.length === 0) {
+          financeSummary.innerHTML = `<div class="stat-card"><h3>Tidak ada transaksi untuk filter ini</h3></div>`;
+        } else {
+          financeSummary.innerHTML = `
+            <div class="stat-card"><small>Masuk (${currentFinTab})</small><h3>Rp ${tM.toLocaleString('id-ID')}</h3></div>
+            <div class="stat-card"><small>Keluar (${currentFinTab})</small><h3>Rp ${tK.toLocaleString('id-ID')}</h3></div>
+            <div class="stat-card" style="border-bottom-color: var(--accent)"><small>Saldo Efektif</small><h3>Rp ${(tM - tK).toLocaleString('id-ID')}</h3></div>
+          `;
+        }
+      }
+
+      const tblTrx = document.querySelector('#tbl-trx tbody');
+      if (tblTrx) {
+        if (filteredData.length === 0) {
+          tblTrx.innerHTML = `<tr><td colspan="11" style="text-align:center">Tidak ada transaksi untuk filter ini</td></tr>`;
+        } else {
+          const isProjectTab = (currentFinTab === 'PROJECT');
+          tblTrx.innerHTML = filteredData.map(t => {
+            if (!t) return '';
+            let jml = t[TRX.JUMLAH] || 0;
+            if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+
+            let displayColumn = '-';
+            if (isProjectTab) {
+              const custId = t[TRX.CUSTOMER_ID];
+              const suppId = t[TRX.SUPPLIER_ID];
+              if (custId) {
+                const cust = (DATA.refs.customers || []).find(c => c.id === custId);
+                displayColumn = cust ? cust.nama : 'Customer tidak ditemukan';
+              } else if (suppId) {
+                const supp = (DATA.refs.suppliers || []).find(s => s.id === suppId);
+                displayColumn = supp ? supp.nama : 'Supplier tidak ditemukan';
+              } else {
+                displayColumn = t[TRX.SKU_NAME] || '-';
+              }
+            } else {
+              displayColumn = t[TRX.AKUN] || '-';
+            }
+
+            const fileUrl = t[TRX.FILELINK] || '';
+            const docHtml = fileUrl
+              ? `<a href="${fileUrl}" target="_blank" style="color:var(--primary); font-weight:700; text-decoration:none;" title="Lihat Dokumen"><i class="fas fa-file"></i> Lihat</a>`
+              : '<span style="color:#ccc;">—</span>';
+
+            const btns = (SESSION.role === ROLES.ADMIN)
+              ? `<button class="btn-action btn-edit" onclick="editTrx('${t[TRX.ID]}')"><i class="fas fa-edit"></i></button> <button class="btn-action btn-del" onclick="delTrx('${t[TRX.ID]}')"><i class="fas fa-trash"></i></button>`
+              : '-';
+
+            if (isProjectTab) {
+              const referal = (t[TRX.REFERAL] || '').toUpperCase();
+              const isProject = (referal === 'PROJECT');
+              const qtyVal = isProject ? (t[TRX.QTY] || 0) : 0;
+              const hargaVal = isProject ? (t[TRX.HARGA_SATUAN] || 0) : 0;
+              const qtyDisplay = isProject ? qtyVal.toLocaleString('id-ID') : '-';
+              const hargaDisplay = isProject ? formatRp(hargaVal) : '-';
+
+              return `<tr>
+                <td><b>${t[TRX.ID] || '-'}</b></td>
+                <td>${t[TRX.TANGGAL] || '-'}</td>
+                <td><span class="badge ${(t[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? 'bg-masuk' : 'bg-keluar'}">${t[TRX.JENIS] || '-'}</span></td>
+                <td>${t[TRX.KATEGORI] || '-'}</td>
+                <td>${t[TRX.PLANTATION] || '-'}</td>
+                <td>${displayColumn}</td>
+                <td class="col-qty" style="text-align:right;">${qtyDisplay}</td>
+                <td class="col-harga" style="text-align:right;">${hargaDisplay}</td>
+                <td style="font-weight:700; text-align:right">${formatRp(jml)}</td>
+                <td style="text-align:center;">${docHtml}</td>
+                <td>${btns}</td>
+              </tr>`;
+            } else {
+              return `<tr>
+                <td><b>${t[TRX.ID] || '-'}</b></td>
+                <td>${t[TRX.TANGGAL] || '-'}</td>
+                <td><span class="badge ${(t[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? 'bg-masuk' : 'bg-keluar'}">${t[TRX.JENIS] || '-'}</span></td>
+                <td>${t[TRX.KATEGORI] || '-'}</td>
+                <td>${t[TRX.PLANTATION] || '-'}</td>
+                <td>${displayColumn}</td>
+                <td class="col-qty" style="display:none; text-align:right;">-</td>
+                <td class="col-harga" style="display:none; text-align:right;">-</td>
+                <td style="font-weight:700; text-align:right">${formatRp(jml)}</td>
+                <td style="text-align:center;">${docHtml}</td>
+                <td>${btns}</td>
+              </tr>`;
+            }
+          }).join('');
+        }
+      }
+    } catch (e) { console.error('renderKeuangan error:', e); }
+  }
+
+  // ========== RENDER ANGGOTA (ADMIN) ==========
+  function renderAnggota() {
+    try {
+      if (!DATA || !DATA.members) return;
+      let countPusat = 0, countCabang = 0;
+      DATA.members.forEach(m => {
+        if (!m) return;
+        const areaJenis = (m[MEM.AREA_JENIS] || "").toString().toUpperCase();
+        if (areaJenis.includes('PUSAT')) countPusat++;
+        else if (areaJenis.includes('CABANG')) countCabang++;
+      });
+      const membersAreaStats = safeGetElement('members-area-stats');
+      if (membersAreaStats) {
+        membersAreaStats.innerHTML = `
+          <div class="stat-card" style="border-bottom-color: var(--accent);"><small>Area Pusat</small><h3>${countPusat} Anggota</h3></div>
+          <div class="stat-card" style="border-bottom-color: var(--primary-light);"><small>Area Cabang</small><h3>${countCabang} Anggota</h3></div>
+          <div class="stat-card"><small>Total Keseluruhan</small><h3>${DATA.members.length} Anggota</h3></div>
+        `;
+      }
+      const tblMem = document.querySelector('#tbl-mem tbody');
+      if (tblMem) {
+        tblMem.innerHTML = DATA.members.map(m => {
+          if (!m) return '';
+          const area = m[MEM.PLANTATION] || '-';
+          return `<tr>
+            <td>${m[MEM.ID]}</td>
+            <td>${m[MEM.TGL_REG]}</td>
+            <td><b>${m[MEM.NAMA]}</b></td>
+            <td><span class="badge bg-masuk">${area}</span></td>
+            <td>${m[MEM.KOTA]}</td>
+            <td>${m[MEM.PEKERJAAN]}</td>
+            <td><button class="btn-action btn-edit" style="background:#e6f4ea; color:#1a4d2e" onclick="prepareIdCard('${m[MEM.ID]}')"><i class="fas fa-print"></i></button></td>
+            <td>
+              <button class="btn-action btn-edit" onclick="editMem('${m[MEM.ID]}')"><i class="fas fa-edit"></i></button>
+              ${SESSION.role === ROLES.ADMIN ? `<button class="btn-action btn-del" onclick="delMem('${m[MEM.ID]}')"><i class="fas fa-trash"></i></button>` : ''}
+            </td>
+          </tr>`;
+        }).join('');
+      }
+    } catch (e) { console.error('renderAnggota error:', e); }
+  }
+
+  // ========== RENDER SIMPANAN ADMIN ==========
+  function renderSimpananAdmin() {
+    try {
+      if (!DATA || !DATA.transactions) return;
+      const trxSimpanan = DATA.transactions.filter(t => {
+        if (!t) return false;
+        const ref = (t[TRX.REFERAL] || "").toString().toUpperCase();
+        if (ref !== REFERAL_TYPES.KOPERASI) return false;
+        const kat = (t[TRX.KATEGORI] || "").toString().toUpperCase();
+        return (kat.includes('POKOK') || kat.includes('WAJIB') || kat.includes('MANA'));
+      });
+      let pusat = { pokok: 0, wajib: 0, mana: 0 };
+      let cabang = { pokok: 0, wajib: 0, mana: 0 };
+      trxSimpanan.forEach(t => {
+        if (!t) return;
+        const areaJenis = (t[TRX.AREA_JENIS] || "").toString().toUpperCase();
+        const kat = (t[TRX.KATEGORI] || "").toString().toUpperCase();
+        let jml = t[TRX.JUMLAH] || 0;
+        if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+        const amt = (t[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? jml : -jml;
+        let type = '';
+        if (kat.includes('POKOK')) type = 'pokok';
+        else if (kat.includes('WAJIB')) type = 'wajib';
+        else if (kat.includes('MANA')) type = 'mana';
+        if (type) {
+          if (areaJenis.includes('PUSAT')) {
+            pusat[type] += amt;
+          } else if (areaJenis.includes('CABANG')) {
+            cabang[type] += amt;
+          }
+        }
+      });
+      const rowHtml = (lbl, val) => `<div class="sub-item"><span>${lbl}</span><span>Rp ${val.toLocaleString('id-ID')}</span></div>`;
+      const totalPusat = pusat.pokok + pusat.wajib + pusat.mana;
+      const totalCabang = cabang.pokok + cabang.wajib + cabang.mana;
+      const adminSimpananSummary = safeGetElement('admin-simpanan-summary');
+      if (adminSimpananSummary) {
+        adminSimpananSummary.innerHTML = `
+          <div class="stat-card" style="border-bottom-color: var(--accent);"><small>SIMPANAN PUSAT</small><h3>${formatRp(totalPusat)}</h3><div class="sub-detail">${rowHtml('S. Pokok', pusat.pokok)}${rowHtml('S. Wajib', pusat.wajib)}${rowHtml('S. Manasuka', pusat.mana)}</div></div>
+          <div class="stat-card" style="border-bottom-color: var(--primary-light);"><small>SIMPANAN CABANG</small><h3>${formatRp(totalCabang)}</h3><div class="sub-detail">${rowHtml('S. Pokok', cabang.pokok)}${rowHtml('S. Wajib', cabang.wajib)}${rowHtml('S. Manasuka', cabang.mana)}</div></div>
+          <div class="stat-card"><small>TOTAL ASET SIMPANAN</small><h3>${formatRp(totalPusat + totalCabang)}</h3></div>
+        `;
+      }
+      const tblSimpananAdmin = document.querySelector('#tbl-simpanan-admin tbody');
+      if (tblSimpananAdmin) {
+        tblSimpananAdmin.innerHTML = trxSimpanan.map(s => {
+          if (!s) return '';
+          let jml = s[TRX.JUMLAH] || 0; if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+          const fileUrl = s[TRX.FILELINK] || '';
+          const linkHtml = fileUrl ? `<a href="${fileUrl}" target="_blank" style="color:var(--primary); font-weight:700; text-decoration:none;"><i class="fas fa-external-link-alt"></i> Lihat</a>` : "-";
+          return `<tr><td><b>${s[TRX.ID]}</b></td><td>${s[TRX.TANGGAL]}</td><td>${s[TRX.AKUN]}</td><td><span class="badge ${(s[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? 'bg-masuk' : 'bg-keluar'}">${s[TRX.KATEGORI]}</span></td><td style="font-weight:700">${formatRp(jml)}</td><td style="text-align:center;">${linkHtml}</td><td>${s[TRX.AREA_JENIS] || '-'}</td></tr>`;
+        }).join('');
+      }
+    } catch (e) { console.error('renderSimpananAdmin error:', e); }
+  }
+
+  // ========== RENDER ANGGOTA VIEW ==========
+  function renderAnggotaView() {
+    try {
+      if (!DATA || !DATA.profile) return;
+      safeSetDisplay('member-personal-view', 'block');
+      const adminEl = document.querySelector('.role-admin.role-director'); if (adminEl) adminEl.style.display = 'none';
+      const p = DATA.profile; const biodataGrid = safeGetElement('biodata-grid');
+      if (biodataGrid) {
+        biodataGrid.innerHTML = `
+          <div class="info-item"><label>ID Anggota</label><span>${p[MEM.ID] || '-'}</span></div>
+          <div class="info-item"><label>Nama Lengkap</label><span>${p[MEM.NAMA] || '-'}</span></div>
+          <div class="info-item"><label>Tgl Bergabung</label><span>${p[MEM.TGL_REG] || '-'}</span></div>
+          <div class="info-item"><label>Area Kerja</label><span>${p[MEM.PLANTATION] || '-'}</span></div>
+          <div class="info-item"><label>Jenis Area</label><span>${p[MEM.AREA_JENIS] || '-'}</span></div>
+          <div class="info-item"><label>Pekerjaan</label><span>${p[MEM.PEKERJAAN] || '-'}</span></div>
+          <div class="info-item"><label>Domisili</label><span>${p[MEM.KOTA] || '-'}, ${p[MEM.PROVINSI] || '-'}</span></div>
+          <div class="info-item"><label>Jenis Kelamin</label><span>${p[MEM.GENDER] === 'L' ? 'Laki-laki' : 'Perempuan'}</span></div>
+          <div class="info-item"><label>Tgl Lahir</label><span>${p[MEM.TGL_LAHIR] || '-'}</span></div>
+          <div class="info-item" style="grid-column: span 2"><label>Alamat</label><span>${p[MEM.ALAMAT] || '-'}</span></div>
+        `;
+      }
+      let saldo = { pokok: 0, wajib: 0, mana: 0 };
+      if (DATA.transactions && DATA.transactions.length > 0) {
+        DATA.transactions.forEach(t => {
+          if (!t) return; const kat = (t[TRX.KATEGORI] || "").toString().toUpperCase();
+          let jml = t[TRX.JUMLAH] || 0; if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+          const amt = (t[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? jml : -jml;
+          if (kat.includes('POKOK')) saldo.pokok += amt; else if (kat.includes('WAJIB')) saldo.wajib += amt; else if (kat.includes('MANA')) saldo.mana += amt;
+        });
+      }
+      const savingsSummary = safeGetElement('personal-savings-summary');
+      if (savingsSummary) savingsSummary.innerHTML = `<div class="stat-card"><small>SIMPANAN POKOK</small><h3>${formatRp(saldo.pokok)}</h3></div><div class="stat-card"><small>SIMPANAN WAJIB</small><h3>${formatRp(saldo.wajib)}</h3></div><div class="stat-card"><small>SIMPANAN MANASUKA</small><h3>${formatRp(saldo.mana)}</h3></div>`;
+      const tblMemSimpanan = document.querySelector('#tbl-mem-simpanan tbody');
+      if (tblMemSimpanan) {
+        if (DATA.transactions && DATA.transactions.length > 0) {
+          tblMemSimpanan.innerHTML = DATA.transactions.map(s => {
+            if (!s) return '';
+            let jml = s[TRX.JUMLAH] || 0; if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+            const fileUrl = s[TRX.FILELINK] || '';
+            const linkHtml = fileUrl ? `<a href="${fileUrl}" target="_blank" style="color:var(--primary);"><i class="fas fa-external-link-alt"></i> Lihat</a>` : "-";
+            return `<tr><td><b>${s[TRX.ID] || '-'}</b></td><td>${s[TRX.TANGGAL] || '-'}</td><td><span class="badge ${(s[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? 'bg-masuk' : 'bg-keluar'}">${s[TRX.KATEGORI] || '-'}</span></td><td style="font-weight:600">${formatRp(jml)}</td><td>${(s[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? 'Disetor' : 'Diambil'}</td><td style="text-align:center;">${linkHtml}</td></tr>`;
+          }).join('');
+        } else { tblMemSimpanan.innerHTML = '<tr><td colspan="6" style="text-align:center">Belum ada transaksi simpanan</td></tr>'; }
+      }
+      showPage('anggota');
+    } catch (e) { console.error('renderAnggotaView error:', e); }
+  }
+
+  // ========== PROJECT FUNCTIONS ==========
+
+  async function getProjectList() {
+    try {
+      var cached = sessionStorage.getItem('project_list');
+      if (cached) {
+        var parsed = JSON.parse(cached);
+        if (parsed.timestamp && (Date.now() - parsed.timestamp < 300000)) {
+          return parsed.data;
+        }
+      }
+      var result = await fetchDataWithTimeout('getProjectsFromAreas', [], 10000);
+      sessionStorage.setItem('project_list', JSON.stringify({ data: result, timestamp: Date.now() }));
+      return result;
+    } catch (e) {
+      console.error('getProjectList error:', e);
+      return [];
+    }
+  }
+
+  async function getProjectTransactions(projectName) {
+    try {
+      if (projectTransactionsCache[projectName]) {
+        return projectTransactionsCache[projectName];
+      }
+      var result = await fetchDataWithTimeout('getProjectTransactions', [projectName], 15000);
+      projectTransactionsCache[projectName] = result;
+      return result;
+    } catch (e) {
+      console.error('getProjectTransactions error:', e);
+      return [];
+    }
+  }
+
+  async function getProjectSummary(projectName) {
+    try {
+      if (projectSummaryCache[projectName]) {
+        return projectSummaryCache[projectName];
+      }
+      var result = await fetchDataWithTimeout('getProjectSummary', [projectName], 10000);
+      projectSummaryCache[projectName] = result;
+      return result;
+    } catch (e) {
+      console.error('getProjectSummary error:', e);
+      return { totalMasuk: 0, totalKeluar: 0, saldo: 0, totalTransaksi: 0 };
+    }
+  }
+
+  async function renderProjectSidebar() {
+    try {
+      var submenu = document.getElementById('project-submenu');
+      if (!submenu) return;
+
+      submenu.innerHTML = '<li style="color:#999; font-style:italic;"><i class="fas fa-spinner fa-spin"></i> Memuat...</li>';
+
+      var projects = await getProjectList();
+
+      if (projects.length === 0) {
+        submenu.innerHTML = '<li style="color:#999; font-style:italic;">Tidak ada project</li>';
+        return;
+      }
+
+      var html = '';
+      projects.forEach(function(p) {
+        var isActive = (p === currentProject) ? 'class="active"' : '';
+        html += `<li ${isActive} onclick="switchProjectTab('${p.replace(/'/g, "\\'")}')" style="cursor:pointer; display:flex; align-items:center; gap:10px; padding:10px 20px; border-radius:4px; transition:0.2s;">
+                  <i class="fas fa-project-diagram"></i> ${p}
+                </li>`;
+      });
+      submenu.innerHTML = html;
+    } catch (e) {
+      console.error('renderProjectSidebar error:', e);
+      var submenu = document.getElementById('project-submenu');
+      if (submenu) submenu.innerHTML = '<li style="color:red;">Gagal memuat project</li>';
+    }
+  }
+
+  async function renderProjectTabs() {
+    try {
+      var projects = await getProjectList();
+      var tabsContainer = document.getElementById('project-tabs');
+      if (!tabsContainer) return;
+
+      if (projects.length === 0) {
+        tabsContainer.innerHTML = '<span class="tab-btn" style="color:#999;">Tidak ada project</span>';
+        return;
+      }
+
+      var html = '';
+      projects.forEach(function(p) {
+        var activeClass = (p === currentProject) ? 'active' : '';
+        html += `<button class="tab-btn ${activeClass}" onclick="switchProjectTab('${p.replace(/'/g, "\\'")}')">${p}</button>`;
+      });
+      tabsContainer.innerHTML = html;
+
+      fillProjectSelect(projects);
+    } catch (e) {
+      console.error('renderProjectTabs error:', e);
+    }
+  }
+
+  function fillProjectSelect(projects) {
+    const select = document.getElementById('project-select');
+    if (!select) return;
+    select.innerHTML = '<option value="">-- Pilih Project --</option>';
+    projects.forEach(function(p) {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      if (p === currentProject) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+
+  window.loadSelectedProject = function() {
+    const select = document.getElementById('project-select');
+    if (select && select.value) {
+      switchProjectTab(select.value);
+    }
+  };
+
+  function filterProjectTable() {
+    filterTable('search-project', 'tbl-project');
+  }
+
+  window.switchProjectTab = async function(projectName) {
+    try {
+      console.log('🔄 Switching to project:', projectName);
+      showPage('project');
+      currentProject = projectName;
+
+      document.querySelectorAll('#project-submenu li').forEach(function(li) {
+        li.classList.remove('active');
+        if (li.textContent.trim() === projectName) {
+          li.classList.add('active');
+        }
+      });
+      document.querySelectorAll('#project-tabs .tab-btn').forEach(function(btn) {
+        btn.classList.remove('active');
+        if (btn.textContent.trim() === projectName) {
+          btn.classList.add('active');
+        }
+      });
+
+      const select = document.getElementById('project-select');
+      if (select) {
+        for (var i = 0; i < select.options.length; i++) {
+          if (select.options[i].value === projectName) {
+            select.selectedIndex = i;
+            break;
+          }
+        }
+      }
+
+      await loadProjectData(projectName);
+      console.log('✅ Project switched to:', projectName);
+    } catch (e) {
+      console.error('switchProjectTab error:', e);
+      showToast('Gagal beralih project: ' + e.message, 'error');
+    }
+  };
+
+  async function loadProjectData(projectName) {
+    try {
+      if (!projectName) {
+        console.warn('loadProjectData: projectName kosong');
+        return;
+      }
+
+      console.log('📊 Loading project data for:', projectName);
+
+      var projectStats = document.getElementById('project-stats');
+      var projectTbody = document.getElementById('project-tbody');
+      var emptyMsg = document.getElementById('project-empty-message');
+
+      if (projectStats) {
+        projectStats.innerHTML = `
+          <div class="stat-card" style="text-align:center; padding:20px;">
+            <i class="fas fa-spinner fa-spin" style="font-size:2rem; color:#1a4d2e;"></i>
+            <p style="margin-top:10px;">Memuat data...</p>
+          </div>
+        `;
+      }
+      if (projectTbody) {
+        projectTbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:20px;"><i class="fas fa-spinner fa-spin"></i> Memuat transaksi...</td></tr>';
+      }
+      if (emptyMsg) emptyMsg.style.display = 'none';
+
+      var [transactions, summary] = await Promise.all([
+        getProjectTransactions(projectName),
+        getProjectSummary(projectName)
+      ]);
+
+      console.log('📦 Transactions found:', transactions ? transactions.length : 0);
+
+      if (projectStats) {
+        projectStats.innerHTML = `
+          <div class="stat-card"><small>Dana Masuk</small><h3>${formatRp(summary.totalMasuk)}</h3></div>
+          <div class="stat-card"><small>Pengeluaran</small><h3>${formatRp(summary.totalKeluar)}</h3></div>
+          <div class="stat-card" style="border-bottom-color:var(--accent)"><small>Sisa Dana</small><h3>${formatRp(summary.saldo)}</h3></div>
+          <div class="stat-card" style="border-bottom-color:#4f6f52;"><small>Jumlah Transaksi</small><h3>${summary.totalTransaksi}</h3></div>
+        `;
+      }
+
+      if (projectTbody) {
+        if (!transactions || transactions.length === 0) {
+          projectTbody.innerHTML = '';
+          if (emptyMsg) emptyMsg.style.display = 'block';
+        } else {
+          if (emptyMsg) emptyMsg.style.display = 'none';
+          var rows = transactions.map(function(t) {
+            if (!t) return '';
+            var jml = t[TRX.JUMLAH] || 0;
+            if (typeof jml === 'string') jml = parseFloat(jml.replace(/[^0-9.-]/g, '')) || 0;
+            var qty = t[TRX.QTY] || 0;
+            var harga = t[TRX.HARGA_SATUAN] || 0;
+            var fileUrl = t[TRX.FILELINK] || '';
+            var docHtml = fileUrl
+              ? `<a href="${fileUrl}" target="_blank" style="color:var(--primary); font-weight:700; text-decoration:none;"><i class="fas fa-file"></i> Lihat</a>`
+              : '<span style="color:#ccc;">—</span>';
+            var actionBtns = (SESSION.role === ROLES.ADMIN) ? `
+              <button class="btn-action btn-edit" onclick="editProjectTrx('${t[TRX.ID]}')" title="Edit"><i class="fas fa-edit"></i></button>
+              <button class="btn-action btn-del" onclick="delProjectTrx('${t[TRX.ID]}')" title="Hapus"><i class="fas fa-trash"></i></button>
+            ` : '-';
+            var productName = t[TRX.SKU_NAME] || '-';
+            return `<tr>
+              <td><b>${t[TRX.ID] || '-'}</b></td>
+              <td>${t[TRX.TANGGAL] || '-'}</td>
+              <td><span class="badge ${(t[TRX.JENIS] || "").toString().toUpperCase() === CASH_TYPES.MASUK ? 'bg-masuk' : 'bg-keluar'}">${t[TRX.JENIS] || '-'}</span></td>
+              <td>${t[TRX.KATEGORI] || '-'}</td>
+              <td>${productName}</td>
+              <td style="text-align:right;">${qty.toLocaleString('id-ID')}</td>
+              <td style="text-align:right;">${formatRp(harga)}</td>
+              <td style="text-align:right; font-weight:700">${formatRp(jml)}</td>
+              <td style="text-align:center;">${docHtml}</td>
+              <td>${actionBtns}</td>
+            </tr>`;
+          }).join('');
+          projectTbody.innerHTML = rows;
+        }
+      }
+
+      var pageTitle = document.getElementById('page-title');
+      if (pageTitle && document.getElementById('page-project') && document.getElementById('page-project').style.display !== 'none') {
+        pageTitle.innerText = 'PROJECT: ' + projectName;
+      }
+
+      console.log('✅ Project data loaded for:', projectName);
+    } catch (e) {
+      console.error('loadProjectData error:', e);
+      var projectStats = document.getElementById('project-stats');
+      if (projectStats) {
+        projectStats.innerHTML = `<div class="stat-card" style="border-bottom-color:red;"><h3 style="color:red;">Gagal memuat data</h3><small>${e.message}</small></div>`;
+      }
+      var projectTbody = document.getElementById('project-tbody');
+      if (projectTbody) {
+        projectTbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color:red;">Error: ${e.message}</td></tr>`;
+      }
+    }
+  }
+
+  window.refreshProjectList = function() {
+    projectTransactionsCache = {};
+    projectSummaryCache = {};
+    sessionStorage.removeItem('project_list');
+    renderProjectSidebar();
+    renderProjectTabs();
+    if (currentProject) {
+      loadProjectData(currentProject);
+    }
+  };
+
+  window.editProjectTrx = function(id) {
+    editTrx(id);
+  };
+
+  window.delProjectTrx = function(id) {
+    const exists = DATA.transactions.some(t => t && t[TRX.ID] === id);
+    if (!exists) {
+      showToast('Data tidak ditemukan, mungkin sudah dihapus.', 'error');
+      return;
+    }
+    const transaction = DATA.transactions.find(t => t[TRX.ID] === id);
+    const detail = `ID: ${id}<br>Kategori: ${transaction[TRX.KATEGORI] || '-'}<br>Jumlah: ${formatRp(transaction[TRX.JUMLAH])}`;
+    showConfirmDialog(
+      'Apakah Anda yakin ingin menghapus transaksi project ini?',
+      detail,
+      function() {
+        toggleLoader(true, "Menghapus transaksi...");
+        google.script.run
+          .withSuccessHandler(function(res) {
+            toggleLoader(false);
+            if (res && res.success) {
+              DATA.transactions = DATA.transactions.filter(t => t[TRX.ID] !== id);
+              projectTransactionsCache = {};
+              projectSummaryCache = {};
+              if (currentProject) {
+                loadProjectData(currentProject);
+              }
+              renderKeuangan();
+              renderDashboard();
+              showToast('Data berhasil dihapus!', 'success');
+            } else {
+              showToast('Gagal menghapus: ' + (res?.error || 'Unknown error'), 'error');
+            }
+          })
+          .withFailureHandler(function(err) {
+            toggleLoader(false);
+            showToast('Error: ' + err.message, 'error');
+          })
+          .deleteTransaction(id);
+      }
+    );
+  };
+
+  window.openProjectTrxModal = function() {
+    try {
+      var modalTitle = safeGetElement('trx-modal-title');
+      if (modalTitle) modalTitle.innerText = "Tambah Transaksi Project";
+
+      populateForm(null, { referal: REFERAL_TYPES.PROJECT });
+
+      if (currentProject) {
+        var entitySelect = safeGetElement('in-plant');
+        if (entitySelect) {
+          setTimeout(function() {
+            for (var i = 0; i < entitySelect.options.length; i++) {
+              if (entitySelect.options[i].value.toUpperCase() === currentProject.toUpperCase()) {
+                entitySelect.selectedIndex = i;
+                break;
+              }
+            }
+            refreshProductDropdown();
+            refreshFundingDropdown();
+            refreshAkunDropdown();
+            fetchDefaultPrice(currentProject);
+          }, 100);
+        }
+      }
+      openModal('modal-trx');
+    } catch (e) {
+      console.error('openProjectTrxModal error:', e);
+      showToast('Terjadi kesalahan saat membuka form project. Silakan refresh halaman.', 'error');
+    }
+  };
+
+  // ========== FUNGSI FORM TRANSAKSI ==========
+  function displayFileInfo(fileUrl) {
+    const container = safeGetElement('file-current-info');
+    if (!container) return;
+    if (fileUrl && fileUrl.trim() !== '') {
+      let fileName = fileUrl.split('/').pop().split('?')[0] || 'file';
+      if (fileName.length > 30) {
+        fileName = fileName.substring(0, 27) + '...';
+      }
+      container.innerHTML = `
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span><i class="fas fa-file" style="color:var(--primary);"></i> ${fileName}</span>
+          <a href="${fileUrl}" target="_blank" class="btn-gold" style="padding:4px 12px; text-decoration:none; font-size:0.8rem;">Lihat File</a>
+          <a href="${fileUrl}" download class="btn-green" style="padding:4px 12px; text-decoration:none; font-size:0.8rem;">Download</a>
+        </div>
+      `;
+    } else {
+      container.innerHTML = `<span style="color:#999;">Belum ada file yang diupload.</span>`;
+    }
+  }
+
+  function populateForm(transactionData = null, defaults = {}) {
+    const form = safeGetElement('form-trx');
+    if (form) form.reset();
+    const trxId = safeGetElement('in-trx-id');
+    if (trxId) trxId.value = transactionData ? transactionData[TRX.ID] : "";
+    const tglInput = safeGetElement('in-trx-tgl');
+    if (tglInput) {
+      if (transactionData) {
+        tglInput.value = parseDateToInput(transactionData[TRX.TANGGAL]);
+      } else {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        tglInput.value = `${yyyy}-${mm}-${dd}`;
+      }
+    }
+    const referalEl = safeGetElement('in-referal');
+    const jenisEl = safeGetElement('in-trx-jenis');
+    if (referalEl) {
+      referalEl.value = defaults.referal || (transactionData ? transactionData[TRX.REFERAL] : REFERAL_TYPES.KOPERASI);
+    }
+    if (jenisEl) {
+      jenisEl.value = defaults.jenis || (transactionData ? transactionData[TRX.JENIS] : CASH_TYPES.MASUK);
+    }
+    refreshAllFields();
+
+    // Isi Customer/Supplier jika ada
+    if (transactionData) {
+      const customerId = transactionData[TRX.CUSTOMER_ID] || '';
+      const supplierId = transactionData[TRX.SUPPLIER_ID] || '';
+      if (customerId) {
+        const custSelect = document.getElementById('in-customer');
+        if (custSelect) {
+          custSelect.value = customerId;
+        }
+      }
+      if (supplierId) {
+        const suppSelect = document.getElementById('in-supplier');
+        if (suppSelect) {
+          suppSelect.value = supplierId;
+        }
+      }
+
+      // Isi field lainnya
+      const entitySelect = safeGetElement('in-plant');
+      if (entitySelect && transactionData[TRX.PLANTATION]) {
+        entitySelect.value = transactionData[TRX.PLANTATION];
+        refreshProductDropdown();
+        refreshFundingDropdown();
+        refreshAkunDropdown();
+      }
+      const katSelect = safeGetElement('in-trx-kat');
+      if (katSelect && transactionData[TRX.KATEGORI]) {
+        katSelect.value = transactionData[TRX.KATEGORI];
+      }
+      const productSelect = safeGetElement('in-trx-produk');
+      if (productSelect && transactionData[TRX.SKU_NAME]) {
+        productSelect.value = transactionData[TRX.SKU_NAME];
+      }
+      const sumberSelect = safeGetElement('in-trx-sumber');
+      if (sumberSelect && transactionData[TRX.METODE_BAYAR]) {
+        sumberSelect.value = transactionData[TRX.METODE_BAYAR];
+      }
+      const qtyInput = safeGetElement('in-trx-qty');
+      if (qtyInput) qtyInput.value = transactionData[TRX.QTY] || 0;
+      const jumlahInput = safeGetElement('in-trx-jml');
+      const hiddenJumlah = safeGetElement('in-trx-jml-hidden');
+      if (jumlahInput) {
+        if (transactionData[TRX.REFERAL] === REFERAL_TYPES.KOPERASI) {
+          jumlahInput.value = formatRp(transactionData[TRX.JUMLAH] || 0);
+          if (hiddenJumlah) hiddenJumlah.value = transactionData[TRX.JUMLAH] || 0;
+        } else {
+          jumlahInput.value = formatRp(transactionData[TRX.JUMLAH] || 0);
+          if (hiddenJumlah) hiddenJumlah.value = transactionData[TRX.JUMLAH] || 0;
+        }
+      }
+      const ketInput = safeGetElement('in-trx-ket');
+      if (ketInput) ketInput.value = transactionData[TRX.KETERANGAN] || '';
+      const fileHidden = safeGetElement('in-trx-file');
+      if (fileHidden) fileHidden.value = transactionData[TRX.FILELINK] || '';
+
+      const hargaInput = safeGetElement('trxHarga');
+      if (hargaInput) {
+        const hargaVal = transactionData[TRX.HARGA_SATUAN] || 0;
+        hargaInput.value = formatRp(hargaVal);
+      }
+
+      const akunVal = transactionData[TRX.AKUN] || '';
+      if (transactionData[TRX.REFERAL] === REFERAL_TYPES.PROJECT) {
+        const akunText = safeGetElement('in-trx-akun-text');
+        if (akunText) akunText.value = akunVal;
+      } else {
+        const akunSelect = safeGetElement('in-trx-akun-select');
+        if (akunSelect) {
+          for (let i = 0; i < akunSelect.options.length; i++) {
+            if (akunSelect.options[i].value === akunVal) {
+              akunSelect.selectedIndex = i;
+              break;
+            }
+          }
+        }
+      }
+      displayFileInfo(transactionData[TRX.FILELINK] || '');
+    } else {
+      const qtyInput = safeGetElement('in-trx-qty');
+      if (qtyInput) qtyInput.value = '';
+      const jumlahInput = safeGetElement('in-trx-jml');
+      const hiddenJumlah = safeGetElement('in-trx-jml-hidden');
+      if (jumlahInput) {
+        if (document.getElementById('in-referal')?.value === REFERAL_TYPES.KOPERASI) {
+          jumlahInput.value = '';
+          if (hiddenJumlah) hiddenJumlah.value = '';
+        } else {
+          jumlahInput.value = '';
+          if (hiddenJumlah) hiddenJumlah.value = '';
+        }
+      }
+      const hargaInput = safeGetElement('trxHarga');
+      if (hargaInput) hargaInput.value = '';
+      const ketInput = safeGetElement('in-trx-ket');
+      if (ketInput) ketInput.value = '';
+      const fileInput = safeGetElement('in-file');
+      if (fileInput) fileInput.value = '';
+      const fileHidden = safeGetElement('in-trx-file');
+      if (fileHidden) fileHidden.value = '';
+      displayFileInfo('');
+    }
+    refreshVisibility();
+    const referal = safeGetElement('in-referal')?.value;
+    if (referal === REFERAL_TYPES.PROJECT) {
+      toggleHargaProject(true);
+      const entity = safeGetElement('in-plant')?.value;
+      if (entity) fetchDefaultPrice(entity);
+    } else {
+      toggleHargaProject(false);
+    }
+  }
+
+  function openTrxModal() {
+    try {
+      const modalTitle = safeGetElement('trx-modal-title');
+      if (modalTitle) modalTitle.innerText = "Tambah Transaksi Baru";
+      populateForm(null);
+      openModal('modal-trx');
+    } catch (e) {
+      console.error('openTrxModal error:', e);
+      showToast('Terjadi kesalahan saat membuka form. Silakan refresh halaman dan coba lagi.', 'error');
+    }
+  }
+
+  function editTrx(id) {
+    try {
+      if (!DATA || !DATA.transactions) return;
+      const t = DATA.transactions.find(x => x && x[TRX.ID] === id);
+      if (!t) {
+        showToast('Data transaksi tidak ditemukan.', 'error');
+        return;
+      }
+      const modalTitle = safeGetElement('trx-modal-title');
+      if (modalTitle) modalTitle.innerText = "Edit Transaksi";
+      populateForm(t);
+      openModal('modal-trx');
+    } catch (e) {
+      console.error('editTrx error:', e);
+      showToast('Terjadi kesalahan saat membuka form edit. Silakan refresh halaman.', 'error');
+    }
+  }
+
+  const formTrx = safeGetElement('form-trx');
+  if (formTrx) {
+    formTrx.addEventListener('submit', function(e) {
+      e.preventDefault();
+      try {
+        const tgl = safeGetElement('in-trx-tgl')?.value;
+        const referal = safeGetElement('in-referal')?.value;
+        const entity = safeGetElement('in-plant')?.value;
+        const jenis = safeGetElement('in-trx-jenis')?.value;
+        const kategori = safeGetElement('in-trx-kat')?.value;
+        const produk = safeGetElement('in-trx-produk')?.value;
+        const sumber = safeGetElement('in-trx-sumber')?.value;
+        const qty = safeGetElement('in-trx-qty')?.value;
+        const hiddenJumlah = safeGetElement('in-trx-jml-hidden')?.value;
+        const akun = referal === REFERAL_TYPES.PROJECT
+          ? safeGetElement('in-trx-akun-text')?.value
+          : safeGetElement('in-trx-akun-select')?.value;
+        const keterangan = safeGetElement('in-trx-ket')?.value;
+        const hargaInput = safeGetElement('trxHarga');
+        const hargaSatuan = parseRupiah(hargaInput ? hargaInput.value : '');
+        const customerId = safeGetElement('in-customer')?.value || '';
+        const supplierId = safeGetElement('in-supplier')?.value || '';
+
+        if (!tgl || !referal || !entity || !jenis || !kategori || !sumber) {
+          showToast('Semua field wajib diisi (kecuali Lampiran)', 'error');
+          return;
+        }
+
+        let jumlah = 0;
+        if (referal === REFERAL_TYPES.PROJECT) {
+          if (!produk || produk === '') {
+            showToast('Untuk PROJECT, Nama Produk wajib dipilih', 'error');
+            return;
+          }
+          const qtyNum = parseInt(qty, 10);
+          if (isNaN(qtyNum) || qtyNum < 1) {
+            showToast('QTY minimal 1', 'error');
+            return;
+          }
+          if (hargaSatuan <= 0) {
+            showToast('Harga Satuan harus diisi dan lebih dari 0', 'error');
+            return;
+          }
+          jumlah = qtyNum * hargaSatuan;
+        } else {
+          jumlah = parseFloat(hiddenJumlah) || 0;
+          if (jumlah <= 0) {
+            showToast('Jumlah harus diisi dan lebih dari 0', 'error');
+            return;
+          }
+        }
+
+        // Validasi Customer/Supplier untuk PROJECT
+        if (referal === REFERAL_TYPES.PROJECT) {
+          if (jenis === CASH_TYPES.MASUK && !customerId) {
+            showToast('Untuk Pemasukan Project, Customer wajib dipilih', 'error');
+            return;
+          }
+          if (jenis === CASH_TYPES.KELUAR && !supplierId) {
+            showToast('Untuk Pengeluaran Project, Supplier wajib dipilih', 'error');
+            return;
+          }
+        }
+
+        let areaJenis = '';
+        if (referal === REFERAL_TYPES.PROJECT) {
+          areaJenis = 'PROJECT';
+        } else {
+          if (entity.toUpperCase().includes('PUSAT')) {
+            areaJenis = 'KOPERASI PUSAT';
+          } else {
+            areaJenis = 'KOPERASI CABANG';
+          }
+        }
+
+        toggleLoader(true, "Menyimpan transaksi...");
+
+        const fileInput = safeGetElement('in-file');
+        const formData = Object.fromEntries(new FormData(this));
+
+        formData.qty = qty || 0;
+        formData.namaBarang = produk || '';
+        formData.akunAnggota = akun || '';
+        formData.areaJenis = areaJenis;
+        formData.hargaSatuan = hargaSatuan;
+        formData.jumlah = jumlah;
+        formData.customerId = customerId;
+        formData.supplierId = supplierId;
+
+        const submitData = (fileData = null) => {
+          if (fileData) {
+            formData.fileData = fileData.data;
+            formData.mimeType = fileData.type;
+            formData.fileName = fileData.name;
+          }
+          google.script.run
+            .withSuccessHandler(res => {
+              toggleLoader(false);
+              if (res && res.success) {
+                closeModal('modal-trx');
+                showToast('Transaksi berhasil disimpan!', 'success');
+                if (referal === REFERAL_TYPES.PROJECT && entity) {
+                  projectTransactionsCache = {};
+                  projectSummaryCache = {};
+                }
+                fetchData(true);
+              } else showToast("Error: " + ((res && res.error) || 'Unknown error'), 'error');
+            })
+            .saveTransaction(formData);
+        };
+
+        if (fileInput && fileInput.files.length > 0) {
+          const file = fileInput.files[0];
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            submitData({ data: e.target.result.split(',')[1], type: file.type, name: file.name });
+          };
+          reader.readAsDataURL(file);
+        } else submitData();
+      } catch (e) {
+        console.error('submit transaction error:', e);
+        showToast('Terjadi kesalahan saat menyimpan transaksi.', 'error');
+        toggleLoader(false);
+      }
+    });
+  }
+
+  // ========== MEMBER CRUD ==========
+  function editMem(id) {
+    try {
+      if (SESSION.role === ROLES.ANGGOTA && SESSION.userId !== id) {
+        showToast('Anda hanya dapat mengedit profil sendiri.', 'error');
+        return;
+      }
+
+      let m = null;
+      if (SESSION.role === ROLES.ANGGOTA) {
+        if (DATA.profile && DATA.profile[MEM.ID].toString() === id.toString()) {
+          m = DATA.profile;
+        }
+      } else {
+        if (DATA.members) {
+          m = DATA.members.find(x => x && x[MEM.ID].toString() === id.toString());
+        }
+      }
+
+      if (!m) {
+        showToast('Anggota tidak ditemukan', 'error');
+        return;
+      }
+
+      let plantOptions = DATA.refs.plantKop || [];
+      if (!plantOptions || plantOptions.length === 0) {
+        if (DATA.refs && DATA.refs.areas) {
+          const kopAreas = DATA.refs.areas.filter(row =>
+            (row[AREAS_COLS.REFERAL] || '').toString().toUpperCase().trim() === 'KOPERASI'
+          );
+          plantOptions = getUniqueSorted(kopAreas, AREAS_COLS.ENTITY);
+        }
+      }
+      if (plantOptions && plantOptions.length > 0) {
+        fillSelect('in-mem-plant', plantOptions);
+      } else {
+        console.warn('Tidak ada opsi area kerja.');
+      }
+
+      const modalTitle = safeGetElement('mem-modal-title');
+      if (modalTitle) modalTitle.innerText = "Update Profil Anggota";
+
+      const memId = safeGetElement('in-mem-id');
+      if (memId) memId.value = m[MEM.ID];
+
+      const memIdDisplay = safeGetElement('in-mem-id-display');
+      if (memIdDisplay) memIdDisplay.value = m[MEM.ID];
+
+      const memRegDisplay = safeGetElement('in-mem-reg-display');
+      if (memRegDisplay) memRegDisplay.value = m[MEM.TGL_REG];
+
+      const memNama = safeGetElement('in-mem-nama');
+      if (memNama) memNama.value = m[MEM.NAMA];
+
+      const memGender = safeGetElement('in-mem-gender');
+      if (memGender) memGender.value = m[MEM.GENDER];
+
+      const memProv = safeGetElement('in-mem-prov');
+      if (memProv) memProv.value = m[MEM.PROVINSI];
+
+      const memKota = safeGetElement('in-mem-kota');
+      if (memKota) memKota.value = m[MEM.KOTA];
+
+      const memAlamat = safeGetElement('in-mem-alamat');
+      if (memAlamat) memAlamat.value = m[MEM.ALAMAT];
+
+      const memKerja = safeGetElement('in-mem-kerja');
+      if (memKerja) memKerja.value = m[MEM.PEKERJAAN];
+
+      const memPlant = safeGetElement('in-mem-plant');
+      if (memPlant) {
+        setTimeout(function() {
+          memPlant.value = m[MEM.PLANTATION] || '';
+        }, 100);
+      }
+
+      const memPass = safeGetElement('in-mem-pass');
+      if (memPass) memPass.value = m[MEM.PASSWORD] || '';
+
+      const memTgl = safeGetElement('in-mem-tgl');
+      if (memTgl) memTgl.value = parseDateToInput(m[MEM.TGL_LAHIR]);
+
+      openModal('modal-mem');
+    } catch (e) {
+      console.error('editMem error:', e);
+      showToast('Error: ' + e.message, 'error');
+    }
+  }
+
+  function openMemModal() {
+    try {
+      const form = safeGetElement('form-mem'); if (form) form.reset();
+      const modalTitle = safeGetElement('mem-modal-title'); if (modalTitle) modalTitle.innerText = "Tambah Anggota Baru";
+      const memId = safeGetElement('in-mem-id'); if (memId) memId.value = "";
+      const memIdDisplay = safeGetElement('in-mem-id-display'); if (memIdDisplay) memIdDisplay.value = "AUTO - [Format: mmyy-03001]";
+      const memRegDisplay = safeGetElement('in-mem-reg-display'); if (memRegDisplay) memRegDisplay.value = "Today";
+      if (DATA.refs && DATA.refs.plantKop) fillSelect('in-mem-plant', DATA.refs.plantKop);
+      openModal('modal-mem');
+    } catch (e) { console.error('openMemModal error:', e); showToast('Error: ' + e.message, 'error'); }
+  }
+  const formMem = safeGetElement('form-mem');
+  if (formMem) { formMem.addEventListener('submit', function(e) { e.preventDefault(); toggleLoader(true, "Menyimpan data anggota..."); const formData = new FormData(this); const obj = Object.fromEntries(formData); obj.areaJenis = obj.areaJenis || ''; google.script.run.withSuccessHandler((res) => { toggleLoader(false); if (!res || !res.success) showToast((res && res.error) || 'Gagal menyimpan', 'error'); else { closeModal('modal-mem'); showToast('Data anggota berhasil disimpan', 'success'); fetchData(true); } }).saveMember(obj); }); }
+  function delMem(id) {
+    const exists = DATA.members.some(m => m && m[MEM.ID].toString() === id.toString());
+    if (!exists) {
+      showToast('Data anggota tidak ditemukan, mungkin sudah dihapus.', 'error');
+      return;
+    }
+    const member = DATA.members.find(m => m[MEM.ID].toString() === id.toString());
+    const detail = `Nama: ${member[MEM.NAMA]}<br>ID: ${id}<br>Area: ${member[MEM.PLANTATION] || '-'}`;
+    showConfirmDialog(
+      'Apakah Anda yakin ingin menghapus anggota ini?',
+      detail,
+      function() {
+        toggleLoader(true, "Menghapus anggota...");
+        google.script.run
+          .withSuccessHandler(function(res) {
+            toggleLoader(false);
+            if (res && res.success) {
+              DATA.members = DATA.members.filter(m => m[MEM.ID].toString() !== id.toString());
+              renderAnggota();
+              renderDashboard();
+              showToast('Anggota berhasil dihapus!', 'success');
+            } else {
+              showToast('Gagal menghapus: ' + (res?.error || 'Unknown error'), 'error');
+            }
+          })
+          .withFailureHandler(function(err) {
+            toggleLoader(false);
+            showToast('Error: ' + err.message, 'error');
+          })
+          .deleteMember(id);
+      }
+    );
+  }
+  function editMyProfile() { if (!DATA || !DATA.profile) return; editMem(DATA.profile[MEM.ID]); }
+  function delTrx(id) {
+    const exists = DATA.transactions.some(t => t && t[TRX.ID] === id);
+    if (!exists) {
+      showToast('Data tidak ditemukan, mungkin sudah dihapus.', 'error');
+      return;
+    }
+    const transaction = DATA.transactions.find(t => t[TRX.ID] === id);
+    const detail = `ID: ${id}<br>Kategori: ${transaction[TRX.KATEGORI] || '-'}<br>Jumlah: ${formatRp(transaction[TRX.JUMLAH])}`;
+    showConfirmDialog(
+      'Apakah Anda yakin ingin menghapus transaksi ini?',
+      detail,
+      function() {
+        toggleLoader(true, "Menghapus transaksi...");
+        google.script.run
+          .withSuccessHandler(function(res) {
+            toggleLoader(false);
+            if (res && res.success) {
+              DATA.transactions = DATA.transactions.filter(t => t[TRX.ID] !== id);
+              const referal = transaction[TRX.REFERAL];
+              if (referal === REFERAL_TYPES.PROJECT) {
+                projectTransactionsCache = {};
+                projectSummaryCache = {};
+              }
+              renderKeuangan();
+              renderDashboard();
+              renderSimpananAdmin();
+              if (currentProject) loadProjectData(currentProject);
+              showToast('Data berhasil dihapus!', 'success');
+            } else {
+              showToast('Gagal menghapus: ' + (res?.error || 'Unknown error'), 'error');
+            }
+          })
+          .withFailureHandler(function(err) {
+            toggleLoader(false);
+            showToast('Error: ' + err.message, 'error');
+          })
+          .deleteTransaction(id);
+      }
+    );
+  }
+
+  // ========== MASTER DATA ==========
+  function showMasterData(type) {
+    if (SESSION.role !== ROLES.ADMIN) { showToast('Akses ditolak. Hanya ADMIN yang bisa mengakses Master Data.', 'error'); return; }
+    currentMasterDataType = type;
+    document.querySelectorAll('.page').forEach(p => { if (p) p.style.display = 'none'; });
+    const page = safeGetElement('page-masterdata'); if (page) page.style.display = 'block';
+    const titleEl = safeGetElement('page-title'); if (titleEl) titleEl.innerText = 'MASTER DATA MANAGEMENT';
+    loadMasterData(type);
+  }
+
+  function loadMasterData(type) {
+    toggleLoader(true, "Memuat master data...");
+    const apiFunctionName = (type === 'areas' || type === 'categories') ? 'getMasterDataFiltered' : 'getMasterData';
+    google.script.run.withSuccessHandler(data => { renderMasterDataTable(type, data); toggleLoader(false); }).withFailureHandler(err => { showToast('Gagal: ' + err.message, 'error'); toggleLoader(false); })[apiFunctionName](type);
+  }
+
+  function renderMasterDataTable(type, data) {
+    const { headers, data: rows } = data; const thead = safeGetElement('masterdata-thead'); const tbody = safeGetElement('masterdata-tbody');
+    if (!thead || !tbody) return;
+    const titles = {
+      areas: 'Master Areas',
+      categories: 'Master Categories',
+      products: 'Master Product (MSKU)',
+      prices: 'Master Price (MPRICE)',
+      customer: 'Master Customer',
+      supplier: 'Master Supplier'
+    };
+    const titleEl = safeGetElement('masterdata-title'); if (titleEl) titleEl.innerText = titles[type] || 'Master Data';
+    thead.innerHTML = `<tr>${headers ? headers.map(header => `<th>${header || '-'}</th>`).join('') : ''}<th>Aksi</th></tr>`;
+    tbody.innerHTML = rows && rows.length > 0 ? rows.map((row, rowIndex) => `<tr>${row ? row.map(cell => `<td>${cell || '-'}</td>`).join('') : ''}<td><button class="btn-action btn-edit" onclick="editMasterData('${type}', ${rowIndex})"><i class="fas fa-edit"></i></button><button class="btn-action btn-del" onclick="deleteMasterData('${type}', ${rowIndex})"><i class="fas fa-trash"></i></button></td></tr>`).join('') : '<tr><td colspan="100" style="text-align:center">Tidak ada data</td></tr>';
+  }
+
+  function editMasterData(type, rowIndex) {
+    toggleLoader(true, "Memuat data...");
+    google.script.run.withSuccessHandler(rowData => {
+      if (!rowData) { showToast('Data tidak ditemukan', 'error'); toggleLoader(false); return; }
+      google.script.run.withSuccessHandler(data => {
+        const modalTitle = safeGetElement('masterdata-modal-title'); if (modalTitle) modalTitle.innerText = `Edit Data ${type.toUpperCase()}`;
+        const masterId = safeGetElement('in-master-id'); if (masterId) masterId.value = rowIndex;
+        const masterType = safeGetElement('in-master-type'); if (masterType) masterType.value = type;
+        renderMasterDataForm(type, data.headers, rowData); toggleLoader(false); openModal('modal-masterdata');
+      }).getMasterData(type);
+    }).getMasterDataRow(type, rowIndex);
+  }
+
+  function renderMasterDataForm(type, headers, rowData = null) {
+    const formContainer = safeGetElement('masterdata-form-fields'); if (!formContainer) return; formContainer.innerHTML = '';
+    if (headers && headers.length > 0) { headers.forEach((header, index) => { if (!header) return; const value = rowData ? rowData[header] || '' : ''; formContainer.innerHTML += `<div class="form-group"><label>${header}</label><input type="text" name="${header}" value="${value.replace(/"/g, '&quot;')}" ${index === 0 ? 'required' : ''}></div>`; }); }
+  }
+
+  function addMasterData() {
+    const type = currentMasterDataType; toggleLoader(true, "Memuat form...");
+    google.script.run.withSuccessHandler(data => {
+      const modalTitle = safeGetElement('masterdata-modal-title'); if (modalTitle) modalTitle.innerText = `Tambah Data ${type.toUpperCase()}`;
+      const masterId = safeGetElement('in-master-id'); if (masterId) masterId.value = '';
+      const masterType = safeGetElement('in-master-type'); if (masterType) masterType.value = type;
+      renderMasterDataForm(type, data.headers); toggleLoader(false); openModal('modal-masterdata');
+    }).getMasterData(type);
+  }
+
+  function deleteMasterData(type, rowIndex) {
+    showConfirmDialog(
+      'Apakah Anda yakin ingin menghapus data ini?',
+      'Data akan dihapus permanen.',
+      function() {
+        toggleLoader(true, "Menghapus data...");
+        google.script.run
+          .withSuccessHandler(res => {
+            if (res && res.success) {
+              showToast('Data berhasil dihapus!', 'success');
+              loadMasterData(type);
+            } else {
+              showToast('Gagal: ' + ((res && res.error) || 'Unknown'), 'error');
+            }
+            toggleLoader(false);
+          })
+          .deleteMasterData(type, rowIndex);
+      }
+    );
+  }
+  const formMasterdata = safeGetElement('form-masterdata');
+  if (formMasterdata) {
+    formMasterdata.addEventListener('submit', function(e) {
+      e.preventDefault(); toggleLoader(true, "Menyimpan data...");
+      const formData = new FormData(this); const masterId = safeGetElement('in-master-id'); const masterType = safeGetElement('in-master-type');
+      const rowId = masterId ? masterId.value : ''; const type = masterType ? masterType.value : '';
+      const data = {}; for (let [key, value] of formData.entries()) { if (key !== 'id' && key !== 'type') data[key] = value; }
+      google.script.run.withSuccessHandler(res => { if (res && res.success) { closeModal('modal-masterdata'); showToast('Data berhasil disimpan', 'success'); loadMasterData(type); } else { showToast('Gagal: ' + ((res && res.error) || 'Unknown'), 'error'); } toggleLoader(false); }).saveMasterData({ type: type, rowId: rowId || null, data: data });
+    });
+  }
+  function filterMasterDataTable() { filterTable('search-masterdata', 'tbl-masterdata'); }
+
+  // ========== ID CARD GENERATOR ==========
+  function preloadIdCardTemplate() {
+    google.script.run.withSuccessHandler(res => {
+      if (res && res.success) { const img = new Image(); img.onload = () => { TEMPLATE_IMG_OBJ = img; }; img.src = "data:" + res.mimeType + ";base64," + res.data; }
+    }).getIdCardTemplate();
+  }
+  function showMyIdCard() { if (!SESSION.userId) return; prepareIdCard(SESSION.userId); }
+  async function prepareIdCard(memberId) {
+    if (SESSION.role === ROLES.ANGGOTA && memberId !== SESSION.userId) { showToast("Akses Ditolak: Anda hanya boleh mencetak ID Card sendiri.", 'error'); return; }
+    if (!TEMPLATE_IMG_OBJ) { showToast("Sedang memuat template... coba sesaat lagi.", 'warning'); return; }
+    const m = DATA.members ? DATA.members.find(x => x && x[MEM.ID].toString() === memberId.toString()) : (DATA.profile && DATA.profile[MEM.ID].toString() === memberId.toString() ? DATA.profile : null);
+    if (!m) { showToast("Data anggota tidak ditemukan", 'error'); return; }
+    toggleLoader(true, "Merender ID Card...");
+    try {
+      const canvas = document.getElementById('generator-canvas');
+      if (!canvas) { showToast("Canvas element tidak ditemukan", 'error'); toggleLoader(false); return; }
+      canvas.width = TEMPLATE_IMG_OBJ.width; canvas.height = TEMPLATE_IMG_OBJ.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(TEMPLATE_IMG_OBJ, 0, 0);
+      ctx.font = TEXT_CONFIG.font; ctx.fillStyle = TEXT_CONFIG.color;
+      ctx.fillText((m[MEM.NAMA] || "").toUpperCase(), TEXT_CONFIG.posisi.nama.x, TEXT_CONFIG.posisi.nama.y);
+      ctx.fillText(m[MEM.ID] || "", TEXT_CONFIG.posisi.memberId.x, TEXT_CONFIG.posisi.memberId.y);
+      ctx.fillText((m[MEM.PLANTATION] || "").toUpperCase(), TEXT_CONFIG.posisi.area.x, TEXT_CONFIG.posisi.area.y);
+      ctx.fillText(m[MEM.TGL_REG] || "", TEXT_CONFIG.posisi.joinDate.x, TEXT_CONFIG.posisi.joinDate.y);
+      const base64 = canvas.toDataURL("image/jpeg", 1.0);
+      const fileName = `ID_CARD_${m[MEM.NAMA]}_${m[MEM.ID]}.jpg`.replace(/\s+/g, '_');
+      const previewImg = safeGetElement('idcard-preview-img');
+      if (previewImg) previewImg.src = base64;
+      const idcardInfo = safeGetElement('idcard-info');
+      if (idcardInfo) idcardInfo.innerText = `${m[MEM.ID]} - ${m[MEM.NAMA]}`;
+      const btnDown = safeGetElement('btn-download-idcard');
+      if (btnDown) {
+        btnDown.href = base64;
+        btnDown.download = fileName;
+      }
+      openModal('modal-idcard-result');
+      toggleLoader(false);
+    } catch (e) {
+      toggleLoader(false);
+      showToast("Error Rendering: " + e.message, 'error');
+    }
+  }
+  async function generateAllCards() {
+    if (!DATA || !DATA.members) return;
+    if (!confirm(`Yakin ingin mengunduh ID Card untuk ${DATA.members.length} anggota secara massal? Browser akan mengunduh file satu persatu.`)) return;
+    toggleLoader(true, "Memproses Unduhan Massal...");
+    let successCount = 0;
+    for (let i = 0; i < DATA.members.length; i++) {
+      const m = DATA.members[i];
+      if (!m) continue;
+      const loaderText = safeGetElement('loader-text');
+      if (loaderText) loaderText.innerText = `Mengunduh (${i + 1}/${DATA.members.length}): ${m[MEM.NAMA]}`;
+      const canvas = document.getElementById('generator-canvas');
+      if (!canvas) continue;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(TEMPLATE_IMG_OBJ, 0, 0);
+      ctx.font = TEXT_CONFIG.font; ctx.fillStyle = TEXT_CONFIG.color;
+      ctx.fillText((m[MEM.NAMA] || "").toUpperCase(), TEXT_CONFIG.posisi.nama.x, TEXT_CONFIG.posisi.nama.y);
+      ctx.fillText(m[MEM.ID] || "", TEXT_CONFIG.posisi.memberId.x, TEXT_CONFIG.posisi.memberId.y);
+      ctx.fillText((m[MEM.PLANTATION] || "").toUpperCase(), TEXT_CONFIG.posisi.area.x, TEXT_CONFIG.posisi.area.y);
+      ctx.fillText(m[MEM.TGL_REG] || "", TEXT_CONFIG.posisi.joinDate.x, TEXT_CONFIG.posisi.joinDate.y);
+      const base64 = canvas.toDataURL("image/jpeg", 1.0);
+      const fileName = `ID_CARD_${m[MEM.NAMA]}_${m[MEM.ID]}.jpg`.replace(/\s+/g, '_');
+      const link = document.createElement('a');
+      link.href = base64;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      successCount++;
+      await new Promise(r => setTimeout(r, 600));
+    }
+    toggleLoader(false);
+    const loaderText = safeGetElement('loader-text');
+    if (loaderText) loaderText.innerText = "Sedang Memproses...";
+    showToast(`Selesai! Berhasil mengunduh ${successCount} ID Card ke perangkat Anda.`, 'success');
+  }
+
+  // ========== UI FUNCTIONS ==========
+  function showPage(pageId) {
+    document.querySelectorAll('.page').forEach(p => { if (p) p.style.display = 'none'; });
+    const page = safeGetElement('page-' + pageId); if (page) page.style.display = 'block';
+    if (window.innerWidth <= 768) { const sidebar = safeGetElement('sidebar'); if (sidebar) sidebar.classList.remove('active'); }
+    const titles = { home: 'DASHBOARD EKSEKUTIF', keuangan: 'MANAJEMEN KEUANGAN', anggota: 'DATABASE ANGGOTA', project: 'MONITORING PROJECT', masterdata: 'MASTER DATA MANAGEMENT' };
+    const titleEl = safeGetElement('page-title'); if (titleEl) titleEl.innerText = titles[pageId] || 'SI MANDIRI';
+    document.querySelectorAll('.nav-links li').forEach(li => { if (li) li.classList.remove('active'); });
+    const btn = safeGetElement('btn-' + pageId); if (btn) btn.classList.add('active');
+    if (pageId === 'project') { renderProjectTabs(); }
+  }
+
+  // ========== SWITCH FIN TAB ==========
+  function switchFinTab(tab) {
+    currentFinTab = tab;
+    const btns = document.querySelectorAll('#page-keuangan .tab-btn');
+    btns.forEach(b => { if (b) b.classList.toggle('active', b.innerText === tab); });
+
+    const isProject = (tab === 'PROJECT');
+    document.querySelectorAll('#tbl-trx .col-qty, #tbl-trx .col-harga').forEach(el => {
+      el.style.display = isProject ? 'table-cell' : 'none';
+    });
+
+    renderKeuangan();
+  }
+
+  function switchMemberTab(tabName) {
+    currentMemberTab = tabName; const dbBtn = safeGetElement('tab-btn-mem-db'); const simBtn = safeGetElement('tab-btn-mem-sim');
+    if (dbBtn) dbBtn.classList.toggle('active', tabName === 'DATABASE'); if (simBtn) simBtn.classList.toggle('active', tabName !== 'DATABASE');
+    const viewDb = safeGetElement('view-members-db'); const viewSim = safeGetElement('view-members-simpanan');
+    if (viewDb) viewDb.style.display = tabName === 'DATABASE' ? 'block' : 'none'; if (viewSim) viewSim.style.display = tabName !== 'DATABASE' ? 'block' : 'none';
+    if (tabName === 'SIMPANAN') renderSimpananAdmin();
+  }
+  function filterTable(inputId, tableId) {
+    const input = safeGetElement(inputId); const filter = input ? input.value.toUpperCase() : '';
+    const table = safeGetElement(tableId); if (!table) return;
+    const rows = table.getElementsByTagName("tr");
+    for (let i = 1; i < rows.length; i++) { if (rows[i]) { const txt = rows[i].textContent || rows[i].innerText; rows[i].style.display = txt.toUpperCase().indexOf(filter) > -1 ? "" : "none"; } }
+  }
+  function toggleSubmenu(submenuId) {
+    const submenu = safeGetElement(submenuId); if (!submenu) return;
+    const header = submenu.previousElementSibling; const arrow = header ? header.querySelector('.submenu-arrow') : null;
+    submenu.classList.toggle('active'); if (arrow) arrow.style.transform = submenu.classList.contains('active') ? 'rotate(180deg)' : 'rotate(0)';
+  }
+  function toggleSidebar() { const sidebar = document.getElementById('sidebar'); if (sidebar) sidebar.classList.toggle('active'); }
+  function openModal(id) { const modal = document.getElementById(id); if (modal) modal.style.display = 'block'; }
+  function closeModal(id) { const modal = document.getElementById(id); if (modal) modal.style.display = 'none'; }
+  function logout() {
+    SESSION = { role: null, user: null, userId: null }; MemberCache.clear();
+    safeSetDisplay('app-shell', 'none'); const formLogin = safeGetElement('form-login'); if (formLogin) formLogin.reset(); safeSetDisplay('login-overlay', 'flex');
+  }
+  function exitSystemApp() { document.getElementById('login-overlay').style.display = 'none'; document.getElementById('app-shell').style.display = 'none'; document.getElementById('portal-container').style.display = 'flex'; if (typeof loadPage === 'function') loadPage('home', document.querySelector('.nav-item')); }
+  function initMobileSidebarBehavior() {
+    if (window.innerWidth <= 768) {
+      document.querySelectorAll('.nav-links li, .submenu li').forEach(item => { if (item && !item.classList.contains('has-submenu')) { item.addEventListener('click', function() { setTimeout(() => { const sidebar = document.getElementById('sidebar'); if (sidebar) sidebar.classList.remove('active'); }, 300); }); } });
+      document.addEventListener('click', function(event) { const sidebar = document.getElementById('sidebar'); const menuToggle = document.querySelector('.menu-toggle'); if (sidebar && sidebar.classList.contains('active') && menuToggle && !sidebar.contains(event.target) && !menuToggle.contains(event.target)) sidebar.classList.remove('active'); });
+    }
+  }
+
+  // ========== LAPORAN KEUANGAN (MODUL) ==========
+  let currentReportType = 'jurnal';
+
+  function showReport(type) {
+    currentReportType = type;
+    document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
+    const page = document.getElementById('page-report');
+    if (page) page.style.display = 'block';
+    const titleEl = document.getElementById('page-title');
+    if (titleEl) {
+      const titles = {
+        'jurnal': 'JURNAL UMUM',
+        'ledger': 'BUKU BESAR',
+        'trial-balance': 'NERACA SALDO',
+        'profit-loss': 'LABA RUGI',
+        'balance-sheet': 'NERACA',
+        'cash-flow': 'ARUS KAS',
+        'shu': 'SHU KOPERASI',
+        'rekap-project': 'REKAP PROJECT',
+        'rekap-cabang': 'REKAP CABANG',
+        'rekap-plantation': 'REKAP PLANTATION',
+        'dashboard-keuangan': 'DASHBOARD KEUANGAN'
+      };
+      titleEl.innerText = titles[type] || 'LAPORAN KEUANGAN';
+    }
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    document.getElementById('report-start-date').value = start.toISOString().split('T')[0];
+    document.getElementById('report-end-date').value = end.toISOString().split('T')[0];
+    loadReport();
+  }
+
+  function loadReport() {
+    const start = document.getElementById('report-start-date').value;
+    const end = document.getElementById('report-end-date').value;
+    const filter = document.getElementById('report-filter').value;
+    toggleLoader(true, 'Memuat laporan...');
+    let functionName = '';
+    let params = {};
+    switch (currentReportType) {
+      case 'jurnal': functionName = 'getLaporanJurnal'; params = { startDate: start, endDate: end, filter: filter ? { referal: filter } : null }; break;
+      case 'ledger': functionName = 'getLaporanBukuBesar'; params = { kodeAkun: '1110', startDate: start, endDate: end }; break;
+      case 'trial-balance': functionName = 'getLaporanNeracaSaldo'; params = { startDate: start, endDate: end }; break;
+      case 'profit-loss': functionName = 'getLaporanLabaRugi'; params = { startDate: start, endDate: end }; break;
+      case 'balance-sheet': functionName = 'getLaporanNeraca'; params = { startDate: start, endDate: end }; break;
+      case 'cash-flow': functionName = 'getLaporanArusKas'; params = { startDate: start, endDate: end }; break;
+      case 'shu': functionName = 'getLaporanSHU'; params = { startDate: start, endDate: end }; break;
+      case 'rekap-project': functionName = 'getLaporanRekap'; params = { level: 'PROJECT', startDate: start, endDate: end }; break;
+      case 'rekap-cabang': functionName = 'getLaporanRekap'; params = { level: 'CABANG', startDate: start, endDate: end }; break;
+      case 'rekap-plantation': functionName = 'getLaporanRekap'; params = { level: 'PLANTATION', startDate: start, endDate: end }; break;
+      case 'dashboard-keuangan': functionName = 'getLaporanAnalitik'; params = { startDate: start, endDate: end }; break;
+      default: toggleLoader(false); return;
+    }
+    google.script.run
+      .withSuccessHandler(function(data) {
+        toggleLoader(false);
+        renderReport(data, currentReportType);
+      })
+      .withFailureHandler(function(err) {
+        toggleLoader(false);
+        showToast('Gagal memuat laporan: ' + err.message, 'error');
+      })
+      [functionName](params.startDate, params.endDate, params.filter || null);
+  }
+
+  function renderReport(data, type) {
+    const container = document.getElementById('report-content');
+    if (!container) return;
+    if (!data || data.error) {
+      container.innerHTML = '<p style="color:red;">Gagal memuat data: ' + (data.error || 'Unknown') + '</p>';
+      return;
+    }
+    let html = '';
+    switch (type) {
+      case 'jurnal': html = renderJurnal(data); break;
+      case 'ledger': html = renderBukuBesar(data); break;
+      case 'trial-balance': html = renderNeracaSaldo(data); break;
+      case 'profit-loss': html = renderLabaRugi(data); break;
+      case 'balance-sheet': html = renderNeraca(data); break;
+      case 'cash-flow': html = renderArusKas(data); break;
+      case 'shu': html = renderSHU(data); break;
+      case 'rekap-project':
+      case 'rekap-cabang':
+      case 'rekap-plantation': html = renderRekap(data); break;
+      case 'dashboard-keuangan': html = renderDashboardKeuangan(data); break;
+      default: html = '<p>Tipe laporan tidak dikenali.</p>';
+    }
+    container.innerHTML = html;
+  }
+
+  function renderJurnal(jurnal) {
+    if (!jurnal || jurnal.length === 0) return '<p>Tidak ada transaksi pada periode ini.</p>';
+    let rows = jurnal.map(j => `
+      <tr>
+        <td>${j.tanggal ? new Date(j.tanggal).toLocaleDateString('id-ID') : ''}</td>
+        <td>${j.id || ''}</td>
+        <td>${j.keterangan || ''}</td>
+        <td>${j.akun || ''} - ${j.namaAkun || ''}</td>
+        <td style="text-align:right;">${formatRp(j.debit)}</td>
+        <td style="text-align:right;">${formatRp(j.kredit)}</td>
+      </tr>
+    `).join('');
+    return `<div class="table-res"><table class="table-green-head">
+      <thead><tr><th>Tanggal</th><th>Ref</th><th>Keterangan</th><th>Akun</th><th>Debit</th><th>Kredit</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  function renderBukuBesar(data) {
+    if (!data || data.length === 0) return '<p>Tidak ada data untuk akun ini.</p>';
+    let rows = data.map(d => `
+      <tr>
+        <td>${new Date(d.tanggal).toLocaleDateString('id-ID')}</td>
+        <td>${d.id || ''}</td>
+        <td>${d.keterangan || ''}</td>
+        <td style="text-align:right;">${formatRp(d.debit)}</td>
+        <td style="text-align:right;">${formatRp(d.kredit)}</td>
+        <td style="text-align:right; font-weight:bold;">${formatRp(d.saldo)}</td>
+      </tr>
+    `).join('');
+    return `<div class="table-res"><table class="table-green-head">
+      <thead><tr><th>Tanggal</th><th>Ref</th><th>Keterangan</th><th>Debit</th><th>Kredit</th><th>Saldo</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  function renderNeracaSaldo(data) {
+    if (!data || data.length === 0) return '<p>Tidak ada data.</p>';
+    let rows = data.map(item => `
+      <tr>
+        <td>${item.kode}</td>
+        <td>${item.nama}</td>
+        <td style="text-align:right;">${formatRp(item.debit)}</td>
+        <td style="text-align:right;">${formatRp(item.kredit)}</td>
+      </tr>
+    `).join('');
+    return `<div class="table-res"><table class="table-green-head">
+      <thead><tr><th>Kode</th><th>Nama Akun</th><th>Debit</th><th>Kredit</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  function renderLabaRugi(data) {
+    let html = `<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">`;
+    html += `<div><h4>Pendapatan</h4><ul>`;
+    for (let k in data.detailPendapatan) {
+      html += `<li>${data.detailPendapatan[k].nama}: ${formatRp(data.detailPendapatan[k].saldo)}</li>`;
+    }
+    html += `<li><strong>Total Pendapatan: ${formatRp(data.pendapatan)}</strong></li></ul></div>`;
+    html += `<div><h4>Beban</h4><ul>`;
+    for (let k in data.detailBeban) {
+      html += `<li>${data.detailBeban[k].nama}: ${formatRp(data.detailBeban[k].saldo)}</li>`;
+    }
+    html += `<li><strong>Total Beban: ${formatRp(data.beban)}</strong></li></ul></div></div>`;
+    html += `<div style="margin-top:20px; font-size:1.2rem; font-weight:bold;">Laba/Rugi: ${formatRp(data.labaRugi)}</div>`;
+    return html;
+  }
+
+  function renderNeraca(data) {
+    let html = `<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">`;
+    html += `<div><h4>ASET</h4><ul>`;
+    data.detailAset.forEach(a => html += `<li>${a.nama}: ${formatRp(a.saldo)}</li>`);
+    html += `<li><strong>Total Aset: ${formatRp(data.aset)}</strong></li></ul></div>`;
+    html += `<div><h4>LIABILITAS</h4><ul>`;
+    data.detailLiabilitas.forEach(l => html += `<li>${l.nama}: ${formatRp(l.saldo)}</li>`);
+    html += `<li><strong>Total Liabilitas: ${formatRp(data.liabilitas)}</strong></li></ul></div>`;
+    html += `<div style="grid-column: span 2;"><h4>EKUITAS</h4><ul>`;
+    data.detailEkuitas.forEach(e => html += `<li>${e.nama}: ${formatRp(e.saldo)}</li>`);
+    html += `<li><strong>Total Ekuitas: ${formatRp(data.ekuitas)}</strong></li></ul></div>`;
+    html += `<div style="grid-column: span 2; font-weight:bold;">Total Aset = Total Liabilitas + Ekuitas? ${formatRp(data.aset)} = ${formatRp(data.liabilitas + data.ekuitas)}</div>`;
+    html += `</div>`;
+    return html;
+  }
+
+  function renderArusKas(data) {
+    return `<div>
+      <h4>Arus Kas Operasi: ${formatRp(data.operasi)}</h4>
+      <h4>Arus Kas Investasi: ${formatRp(data.investasi)}</h4>
+      <h4>Arus Kas Pendanaan: ${formatRp(data.pendanaan)}</h4>
+      <h4 style="font-weight:bold;">Kenaikan/Penurunan Kas: ${formatRp(data.operasi + data.investasi + data.pendanaan)}</h4>
+    </div>`;
+  }
+
+  function renderSHU(data) {
+    return `<div>
+      <h4>Laba Bersih: ${formatRp(data.labaBersih)}</h4>
+      <h4>Cadangan (25%): ${formatRp(data.cadangan)}</h4>
+      <h4 style="font-weight:bold;">SHU: ${formatRp(data.shu)}</h4>
+    </div>`;
+  }
+
+  function renderRekap(data) {
+    if (!data || data.length === 0) return '<p>Tidak ada data rekap.</p>';
+    let rows = data.map(item => `
+      <tr>
+        <td>${item.nama}</td>
+        <td style="text-align:right;">${formatRp(item.masuk)}</td>
+        <td style="text-align:right;">${formatRp(item.keluar)}</td>
+        <td style="text-align:right; font-weight:bold;">${formatRp(item.saldo)}</td>
+      </tr>
+    `).join('');
+    return `<div class="table-res"><table class="table-green-head">
+      <thead><tr><th>Nama</th><th>Masuk</th><th>Keluar</th><th>Saldo</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  function renderDashboardKeuangan(data) {
+    let html = `<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">`;
+    html += `<div><h4>Pendapatan Bulanan</h4><canvas id="chart-pendapatan" height="200"></canvas></div>`;
+    html += `<div><h4>Beban Bulanan</h4><canvas id="chart-beban" height="200"></canvas></div>`;
+    html += `<div style="grid-column: span 2;"><h4>Top 10 Kategori</h4><canvas id="chart-topkategori" height="200"></canvas></div>`;
+    html += `</div>`;
+    setTimeout(function() { renderCharts(data); }, 100);
+    return html;
+  }
+
+  function renderCharts(data) {
+    if (typeof Chart === 'undefined') { console.warn('Chart.js tidak tersedia'); return; }
+    const ctx1 = document.getElementById('chart-pendapatan');
+    if (ctx1) {
+      const labels = Object.keys(data.pendapatanBulanan || {});
+      const values = Object.values(data.pendapatanBulanan || {});
+      new Chart(ctx1.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels, datasets: [{ label: 'Pendapatan', data: values, backgroundColor: '#1a4d2e' }] },
+        options: { responsive: true }
+      });
+    }
+    const ctx2 = document.getElementById('chart-beban');
+    if (ctx2) {
+      const labels = Object.keys(data.bebanBulanan || {});
+      const values = Object.values(data.bebanBulanan || {});
+      new Chart(ctx2.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels, datasets: [{ label: 'Beban', data: values, backgroundColor: '#d4af37' }] },
+        options: { responsive: true }
+      });
+    }
+    const ctx3 = document.getElementById('chart-topkategori');
+    if (ctx3) {
+      const labels = (data.topKategori || []).map(d => d.kategori);
+      const values = (data.topKategori || []).map(d => d.saldo);
+      new Chart(ctx3.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels, datasets: [{ label: 'Saldo', data: values, backgroundColor: '#4f6f52' }] },
+        options: { responsive: true }
+      });
+    }
+  }
+
+  function exportReport(format) {
+    if (format === 'pdf') {
+      window.print();
+    } else if (format === 'excel') {
+      const table = document.querySelector('#report-content table');
+      if (!table) { showToast('Tidak ada data untuk diekspor', 'error'); return; }
+      let csv = '';
+      const rows = table.querySelectorAll('tr');
+      rows.forEach(row => {
+        const cols = row.querySelectorAll('td, th');
+        const rowData = Array.from(cols).map(col => col.innerText).join(',');
+        csv += rowData + '\n';
+      });
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'laporan.csv';
+      link.click();
+    }
+  }
+
+  // =====================================================================
+  // ================ FITUR PENDAFTARAN ANGGOTA (FRONTEND) ==============
+  // =====================================================================
+
+  window.openPendaftaranModal = function() {
+    const modal = document.getElementById('modal-pendaftaran');
+    if (modal) {
+      const form = document.getElementById('form-pendaftaran');
+      if (form) form.reset();
+      const statusMsg = document.getElementById('reg-status-message-pendaftaran');
+      if (statusMsg) statusMsg.innerHTML = '';
+      document.getElementById('file-bukti-list-pendaftaran').innerHTML = '';
+      document.getElementById('sukarelaContainerPendaftaran').style.display = 'none';
+      document.getElementById('totalDisplayPendaftaran').innerHTML = 'Rp 0';
+      document.getElementById('loadingPendaftaran').style.display = 'none';
+      modal.style.display = 'block';
+    }
+  };
+
+  window.closePendaftaranModal = function() {
+    const modal = document.getElementById('modal-pendaftaran');
+    if (modal) modal.style.display = 'none';
+  };
+
+  function calculateTotalPendaftaran() {
+    let total = 0;
+    const sim1 = document.getElementById('sim1');
+    const sim2 = document.getElementById('sim2');
+    const sim3 = document.getElementById('sim3');
+    const sukarelaAmount = document.getElementById('sukarelaAmountPendaftaran');
+
+    if (sim1 && sim1.checked) total += 500000;
+    if (sim2 && sim2.checked) total += 360000;
+    if (sim3 && sim3.checked) {
+      const val = parseFloat(sukarelaAmount ? sukarelaAmount.value : 0);
+      if (!isNaN(val) && val > 0) total += val;
+    }
+
+    const totalDisplay = document.getElementById('totalDisplayPendaftaran');
+    if (totalDisplay) {
+      totalDisplay.innerHTML = 'Rp ' + total.toLocaleString('id-ID');
+    }
+
+    const hidden = document.getElementById('jenisSimpananHiddenPendaftaran');
+    if (hidden) {
+      const selected = [];
+      if (sim1 && sim1.checked) selected.push('Pokok');
+      if (sim2 && sim2.checked) selected.push('Wajib');
+      if (sim3 && sim3.checked) selected.push('Sukarela');
+      hidden.value = selected.join(', ');
+    }
+  }
+
+  function toggleSukarelaPendaftaran() {
+    const sim3 = document.getElementById('sim3');
+    const container = document.getElementById('sukarelaContainerPendaftaran');
+    if (container) {
+      container.style.display = (sim3 && sim3.checked) ? 'block' : 'none';
+    }
+    calculateTotalPendaftaran();
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const fileBuktiInput = document.getElementById('reg-file-bukti');
+    if (fileBuktiInput) {
+      fileBuktiInput.addEventListener('change', function() {
+        const list = document.getElementById('file-bukti-list-pendaftaran');
+        if (list) {
+          list.innerHTML = '';
+          if (this.files.length > 0) {
+            let html = '<strong>File terpilih:</strong> ';
+            for (let i = 0; i < this.files.length; i++) {
+              html += this.files[i].name + (i < this.files.length - 1 ? ', ' : '');
+            }
+            list.innerHTML = html;
+          }
+        }
+      });
+    }
+
+    document.querySelectorAll('#sim1, #sim2, #sim3').forEach(el => {
+      if (el) {
+        el.addEventListener('change', function() {
+          calculateTotalPendaftaran();
+          if (this.id === 'sim3') toggleSukarelaPendaftaran();
+        });
+      }
+    });
+
+    const sukarelaInput = document.getElementById('sukarelaAmountPendaftaran');
+    if (sukarelaInput) {
+      sukarelaInput.addEventListener('input', calculateTotalPendaftaran);
+    }
+
+    calculateTotalPendaftaran();
+  });
+
+  function submitPendaftaran() {
+    const statusMsg = document.getElementById('reg-status-message-pendaftaran');
+    if (!statusMsg) return;
+
+    const form = document.getElementById('form-pendaftaran');
+    const formData = new FormData(form);
+    const data = {};
+
+    for (let [key, value] of formData.entries()) {
+      if (key === 'fileKTP' || key === 'fileBukti') {
+        continue;
+      }
+      data[key] = value;
+    }
+
+    data.namaLengkap = document.getElementById('reg-nama')?.value || '';
+    data.nik = document.getElementById('reg-nik')?.value || '';
+    data.tempatLahir = document.getElementById('reg-tempat-lahir')?.value || '';
+    data.tanggalLahir = document.getElementById('reg-tgl-lahir')?.value || '';
+    data.jenisKelamin = document.getElementById('reg-jk')?.value || '';
+    data.alamat = document.getElementById('reg-alamat')?.value || '';
+    data.kota = document.getElementById('reg-kota')?.value || '';
+    data.provinsi = document.getElementById('reg-provinsi')?.value || '';
+    data.whatsapp = document.getElementById('reg-wa')?.value || '';
+    data.email = document.getElementById('reg-email')?.value || '';
+    data.statusAnggota = document.getElementById('reg-status')?.value || '';
+    data.profesi = document.getElementById('reg-profesi')?.value || '';
+    data.jumlahTransfer = document.getElementById('reg-jumlah-transfer')?.value || '';
+    data.tanggalTransfer = document.getElementById('reg-tgl-transfer')?.value || '';
+    data.jenisSimpanan = document.getElementById('jenisSimpananHiddenPendaftaran')?.value || '';
+
+    if (!data.namaLengkap || data.namaLengkap.trim() === '') {
+      statusMsg.innerHTML = '<span style="color:red;">Nama lengkap wajib diisi.</span>';
+      return;
+    }
+    if (!/^\d{16}$/.test(data.nik)) {
+      statusMsg.innerHTML = '<span style="color:red;">NIK harus 16 digit angka.</span>';
+      return;
+    }
+    if (!data.whatsapp || data.whatsapp.trim() === '') {
+      statusMsg.innerHTML = '<span style="color:red;">Nomor WhatsApp wajib diisi.</span>';
+      return;
+    }
+    const jumlah = parseFloat(data.jumlahTransfer);
+    if (isNaN(jumlah) || jumlah < 860000) {
+      statusMsg.innerHTML = '<span style="color:red;">Jumlah transfer minimal Rp 860.000.</span>';
+      return;
+    }
+
+    const setuju = document.getElementById('setujuPendaftaran');
+    if (!setuju || !setuju.checked) {
+      statusMsg.innerHTML = '<span style="color:red;">Anda harus menyetujui pernyataan di atas.</span>';
+      return;
+    }
+
+    const fileKTP = document.getElementById('reg-file-ktp');
+    if (!fileKTP || fileKTP.files.length === 0) {
+      statusMsg.innerHTML = '<span style="color:red;">File KTP wajib diupload.</span>';
+      return;
+    }
+
+    const fileBukti = document.getElementById('reg-file-bukti');
+    if (!fileBukti || fileBukti.files.length === 0) {
+      statusMsg.innerHTML = '<span style="color:red;">File bukti transfer wajib diupload.</span>';
+      return;
+    }
+
+    statusMsg.innerHTML = '<span style="color:#1a4d2e;"><i class="fas fa-spinner fa-spin"></i> Mengirim data...</span>';
+    document.getElementById('loadingPendaftaran').style.display = 'block';
+    document.getElementById('btnSubmitPendaftaran').disabled = true;
+
+    const readerKTP = new FileReader();
+    readerKTP.onload = function(e) {
+      data.fileKTP = e.target.result;
+
+      const filesBukti = fileBukti.files;
+      const fileDataArray = [];
+
+      if (filesBukti.length === 0) {
+        statusMsg.innerHTML = '<span style="color:red;">File bukti transfer wajib diupload.</span>';
+        document.getElementById('loadingPendaftaran').style.display = 'none';
+        document.getElementById('btnSubmitPendaftaran').disabled = false;
+        return;
+      }
+
+      let completed = 0;
+      for (let i = 0; i < filesBukti.length; i++) {
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          fileDataArray.push(ev.target.result);
+          completed++;
+          if (completed === filesBukti.length) {
+            data.fileBukti = fileDataArray;
+            kirimPendaftaranBaru(data);
+          }
+        };
+        reader.readAsDataURL(filesBukti[i]);
+      }
+    };
+    readerKTP.readAsDataURL(fileKTP.files[0]);
+  }
+
+  function kirimPendaftaranBaru(data) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        document.getElementById('loadingPendaftaran').style.display = 'none';
+        document.getElementById('btnSubmitPendaftaran').disabled = false;
+        const statusMsg = document.getElementById('reg-status-message-pendaftaran');
+        if (!statusMsg) return;
+        if (result === 'SUCCESS') {
+          statusMsg.innerHTML = '<span style="color:#1e7e34;"><i class="fas fa-check-circle"></i> Pendaftaran berhasil! Data Anda akan diverifikasi oleh admin.</span>';
+          document.getElementById('form-pendaftaran').reset();
+          document.getElementById('file-bukti-list-pendaftaran').innerHTML = '';
+          document.getElementById('sukarelaContainerPendaftaran').style.display = 'none';
+          document.getElementById('totalDisplayPendaftaran').innerHTML = 'Rp 0';
+          setTimeout(function() {
+            closeModal('modal-pendaftaran');
+          }, 3000);
+        } else {
+          statusMsg.innerHTML = '<span style="color:red;">Gagal: ' + result + '</span>';
+        }
+      })
+      .withFailureHandler(function(err) {
+        document.getElementById('loadingPendaftaran').style.display = 'none';
+        document.getElementById('btnSubmitPendaftaran').disabled = false;
+        const statusMsg = document.getElementById('reg-status-message-pendaftaran');
+        if (statusMsg) {
+          statusMsg.innerHTML = '<span style="color:red;">Error: ' + err.message + '</span>';
+        }
+      })
+      .processForm(data);
+  }
+
+  // ========== EVENT LISTENER ==========
+  document.addEventListener('DOMContentLoaded', function() {
+    const projectSelect = document.getElementById('project-select');
+    if (projectSelect) { }
+
+    const searchTrx = document.getElementById('search-trx');
+    if (searchTrx) {
+      searchTrx.addEventListener('input', function() {
+        renderKeuangan();
+      });
+    }
+
+    const referalEl = safeGetElement('in-referal');
+    if (referalEl) {
+      referalEl.addEventListener('change', function() {
+        refreshEntityDropdown();
+        refreshProductDropdown();
+        refreshFundingDropdown();
+        refreshAkunDropdown();
+        refreshVisibility();
+        handleReferalChange();
+      });
+    }
+    const entitySelect = safeGetElement('in-plant');
+    if (entitySelect) {
+      entitySelect.addEventListener('change', function() {
+        refreshProductDropdown();
+        refreshFundingDropdown();
+        refreshAkunDropdown();
+        const referal = safeGetElement('in-referal')?.value;
+        if (referal === REFERAL_TYPES.PROJECT && this.value) {
+          fetchDefaultPrice(this.value);
+        }
+      });
+    }
+    const jenisEl = safeGetElement('in-trx-jenis');
+    if (jenisEl) {
+      jenisEl.addEventListener('change', function() {
+        refreshCategoryDropdown();
+        refreshVisibility();
+      });
+    }
+
+    const qtyInput = document.getElementById('in-trx-qty');
+    const hargaInput = document.getElementById('trxHarga');
+    if (qtyInput) qtyInput.addEventListener('input', calculateProjectTotal);
+    if (hargaInput) hargaInput.addEventListener('input', calculateProjectTotal);
+
+    setTimeout(function() {
+      const isProject = (currentFinTab === 'PROJECT');
+      document.querySelectorAll('#tbl-trx .col-qty, #tbl-trx .col-harga').forEach(el => {
+        el.style.display = isProject ? 'table-cell' : 'none';
+      });
+    }, 100);
+  });
+
+  window.onload = function() { if (typeof loadPage === 'function') { const firstNav = document.querySelector('.nav-item'); loadPage('home', firstNav); } initMobileSidebarBehavior(); };
+  window.addEventListener('resize', function() { initMobileSidebarBehavior(); });
+</script>
