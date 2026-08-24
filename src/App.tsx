@@ -32,7 +32,6 @@ import {
 } from './components/portal/PublicPortalViews';
 import { MemberPortalView } from './components/portal/MemberPortalView';
 import { PublicRegisterModal } from './components/portal/PublicRegisterModal';
-import { WhatsAppStickyButton } from './components/common/WhatsAppStickyButton';
 
 import {
   Building2,
@@ -629,12 +628,6 @@ function AppContent() {
         onSuccess={() => {
           showToast('Data pendaftaran Anda telah tersimpan di sistem.', 'success');
         }}
-      />
-
-      {/* Sticky Click-to-Chat WhatsApp Button (0821-4898-8520) */}
-      <WhatsAppStickyButton
-        phoneNumber="082148988520"
-        activePage={activePage}
       />
 
       {/* Internal Portal Login Modal */}
