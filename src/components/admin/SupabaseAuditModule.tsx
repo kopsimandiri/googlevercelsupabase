@@ -219,7 +219,7 @@ export const SupabaseAuditModule: React.FC = () => {
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-lg sm:text-xl font-bold font-serif text-white">
-                  Audit & Manajemen Database Supabase (9 Tabel Resmi)
+                  Audit & Manajemen Database Supabase (11 Tabel Resmi)
                 </h2>
                 <Badge
                   variant={isSupabaseConfigured ? 'gold' : 'neutral'}
@@ -229,7 +229,7 @@ export const SupabaseAuditModule: React.FC = () => {
                 </Badge>
               </div>
               <p className="text-xs text-stone-300 mt-1 max-w-2xl leading-relaxed">
-                Pemeriksaan real-time untuk 9 tabel operasional: DDL Schema, kuantitas baris, status RLS, latensi koneksi (ms), serta modul CRUD penuh.
+                Pemeriksaan real-time untuk seluruh 11 tabel operasional: DDL Schema, kuantitas baris, status RLS, latensi koneksi (ms), serta modul CRUD penuh.
               </p>
             </div>
           </div>
@@ -245,7 +245,7 @@ export const SupabaseAuditModule: React.FC = () => {
               className="bg-white/10 text-white border-white/20 hover:bg-white/20 text-xs"
               leftIcon={<Code2 className="w-3.5 h-3.5" />}
             >
-              Lihat DDL SQL (9 Tabel)
+              Lihat DDL SQL (11 Tabel)
             </Button>
             <Button
               variant="primary"
@@ -320,12 +320,12 @@ export const SupabaseAuditModule: React.FC = () => {
         </div>
       )}
 
-      {/* 9 Tables Audit Summary Grid */}
+      {/* 11 Tables Audit Summary Grid */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-bold uppercase tracking-wider text-stone-700 font-mono flex items-center gap-1.5">
             <Server className="w-3.5 h-3.5 text-primary-800" />
-            Daftar Audit 9 Tabel Schema
+            Daftar Audit 11 Tabel Schema
           </h3>
           <span className="text-[11px] text-stone-500">Klik tabel untuk membuka kontrol CRUD</span>
         </div>

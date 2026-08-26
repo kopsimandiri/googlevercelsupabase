@@ -362,6 +362,18 @@ export interface UserRoleRecord {
   created_at?: string;
 }
 
+// 11. transaction_categories (8 kolom)
+export interface TransactionCategoryRecord {
+  id: number | string;
+  type: string;
+  category_code: string;
+  name: string;
+  account_code?: string;
+  account_name?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export type SupabaseTableName =
   | 'areas'
   | 'chart_of_accounts'
@@ -372,6 +384,7 @@ export type SupabaseTableName =
   | 'role_permissions'
   | 'suppliers'
   | 'transactions'
+  | 'transaction_categories'
   | 'user_roles';
 
 
