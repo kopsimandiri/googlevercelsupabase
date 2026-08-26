@@ -567,7 +567,7 @@ export const SupabaseAuditModule: React.FC = () => {
                 <Code2 className="w-5 h-5 text-accent-gold" />
                 <div>
                   <h3 className="text-sm sm:text-base font-bold">
-                    DDL SQL Script: {selectedDdlTable === 'ALL' ? 'Semua 9 Tabel' : selectedDdlTable}
+                    DDL SQL Script: {selectedDdlTable === 'ALL' ? 'Semua 11 Tabel' : selectedDdlTable}
                   </h3>
                   <p className="text-xs text-stone-300">
                     Jalankan script ini di menu SQL Editor pada Supabase Dashboard Anda.
@@ -600,7 +600,7 @@ export const SupabaseAuditModule: React.FC = () => {
                       : 'bg-stone-200 text-stone-700 hover:bg-stone-300'
                   }`}
                 >
-                  Semua (9 Tabel)
+                  Semua (11 Tabel)
                 </button>
                 <button
                   onClick={() => setSelectedDdlTable(activeTable)}

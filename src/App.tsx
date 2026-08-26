@@ -557,12 +557,12 @@ function AppContent() {
           </PageContainer>
         );
 
-      // MODULE 9: SUPABASE AUDIT & MASTER DATA (9 TABEL)
+      // MODULE 9: SUPABASE AUDIT & MASTER DATA (11 TABEL)
       case 'DATABASE_AUDIT':
         return (
           <PageContainer
-            title="Audit Menyeluruh & Master Data Supabase (9 Tabel)"
-            subtitle="Pemeriksaan status koneksi live, skema kolom, latensi respon, sinkronisasi cloud, dan modul CRUD 9 tabel"
+            title="Audit Menyeluruh & Master Data Supabase (11 Tabel)"
+            subtitle="Pemeriksaan status koneksi live, skema kolom, latensi respon, sinkronisasi cloud, dan modul CRUD 11 tabel"
             breadcrumbs={['Portal Internal', '9. Supabase Audit & Master Data']}
             idPrefix="supabase-audit-view"
           >

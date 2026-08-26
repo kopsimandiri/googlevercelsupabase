@@ -417,7 +417,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <ChevronRight className="w-3 h-3 text-stone-400" />
                 </button>
 
-                {/* 9. Master Data & Supabase Audit (9 Tabel) */}
+                {/* 9. Master Data & Supabase Audit (11 Tabel) */}
                 <button
                   onClick={() => handleNavClick('DATABASE_AUDIT')}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
@@ -431,7 +431,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className="text-accent-gold font-semibold">9. Supabase Audit & Master Data</span>
                   </div>
                   <span className="text-[9px] bg-accent-gold/20 text-accent-gold border border-accent-gold/40 px-1 rounded font-bold">
-                    9 Tab
+                    11 Tab
                   </span>
                 </button>
 
