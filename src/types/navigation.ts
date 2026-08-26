@@ -11,7 +11,9 @@ export type NavSection =
   | 'PORTOFOLIO'
   | 'HISTORY'
   | 'TEAM'
-  | 'DATABASE_AUDIT';
+  | 'DATABASE_AUDIT'
+  | 'NEWS_ADMIN'
+  | 'NEWS_LIST';
 
 export type ReportSubSection =
   | 'DASHBOARD'
@@ -36,7 +38,10 @@ export type ActivePage =
   | 'HISTORY'
   | 'TEAM'
   | 'DATABASE_AUDIT'
-  | 'MEMBER_PORTAL';
+  | 'MEMBER_PORTAL'
+  | 'NEWS_ADMIN'
+  | 'NEWS_LIST'
+  | 'NEWS_DETAIL';
 
 export type UserRole = 'ADMIN' | 'DIRECTOR' | 'ANGGOTA';
 

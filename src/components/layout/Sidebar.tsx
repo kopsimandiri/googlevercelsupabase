@@ -23,6 +23,7 @@ import {
   Shield,
   ChevronRight,
   Database,
+  Newspaper,
 } from 'lucide-react';
 import { ActivePage } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
@@ -184,6 +185,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Users className="w-4 h-4 shrink-0 text-white" />
                 <span>Dewan Pengawas & Pengurus</span>
+              </button>
+
+              {/* Kanal Berita & Warta */}
+              <button
+                onClick={() => handleNavClick('NEWS_LIST')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all ${
+                  activePage === 'NEWS_LIST' || activePage === 'NEWS_DETAIL'
+                    ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                    : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                }`}
+              >
+                <Newspaper className="w-4 h-4 shrink-0 text-amber-300" />
+                <span className="flex-1 text-left">Kanal Berita & Warta</span>
+                <span className="text-[9px] bg-emerald-700 text-emerald-100 px-1.5 py-0.2 rounded font-bold">
+                  Update
+                </span>
               </button>
 
               {/* Tombol Pendaftaran Anggota Baru Online */}
@@ -415,6 +432,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                   <span className="text-[9px] bg-accent-gold/20 text-accent-gold border border-accent-gold/40 px-1 rounded font-bold">
                     9 Tab
+                  </span>
+                </button>
+
+                {/* 10. Kelola Berita & CMS */}
+                <button
+                  onClick={() => handleNavClick('NEWS_ADMIN')}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                    activePage === 'NEWS_ADMIN'
+                      ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                      : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Newspaper className="w-4 h-4 shrink-0 text-emerald-300" />
+                    <span className="text-stone-100 font-semibold">10. Kelola Berita (CMS)</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-700/60 text-emerald-200 border border-emerald-500/40 px-1 rounded font-bold">
+                    CMS
                   </span>
                 </button>
               </div>

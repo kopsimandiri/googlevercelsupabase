@@ -32,6 +32,11 @@ import {
 } from './components/portal/PublicPortalViews';
 import { MemberPortalView } from './components/portal/MemberPortalView';
 import { PublicRegisterModal } from './components/portal/PublicRegisterModal';
+import { NewsAdminModule } from './components/news/NewsAdminModule';
+import { NewsListView } from './components/portal/NewsListView';
+import { NewsDetailView } from './components/portal/NewsDetailView';
+import { HomeNewsSection } from './components/portal/HomeNewsSection';
+import { NewsArticle } from './types/news';
 
 import {
   Building2,
@@ -62,6 +67,7 @@ function AppContent() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
+  const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
 
   const { isAuthenticated, role, user, isLoading } = useAuth();
   const { showToast } = useNotification();
@@ -262,6 +268,15 @@ function AppContent() {
                   ))}
                 </div>
               </div>
+
+              {/* Warta & Berita Sektor Riil Terkini (Tahap 5) */}
+              <HomeNewsSection
+                onNavigateNewsList={() => handleNavigate('NEWS_LIST')}
+                onSelectArticle={(article) => {
+                  setSelectedArticle(article);
+                  handleNavigate('NEWS_DETAIL');
+                }}
+              />
 
               {/* Call To Action Box Pendaftaran */}
               <div className="p-6 sm:p-8 bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -575,6 +590,69 @@ function AppContent() {
             >
               <MemberPortalView />
             </RoleGuard>
+          </PageContainer>
+        );
+
+      // MODULE 10: CMS KELOLA BERITA (ADMIN ONLY)
+      case 'NEWS_ADMIN':
+        return (
+          <PageContainer
+            title="Pengelolaan Berita & Warta Sektor Riil (CMS)"
+            subtitle="Penyusunan draft narasi, pelengkapan fakta riil [ISI: ...], dan publikasi artikel resmi koperasi"
+            breadcrumbs={['Portal Internal', '10. Kelola Berita (CMS)']}
+            idPrefix="news-admin-page"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN']}
+              onRequestLogin={() => setShowLoginModal(true)}
+            >
+              <NewsAdminModule />
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      // PORTAL PUBLIK: KANAL BERITA LENGKAP
+      case 'NEWS_LIST':
+        return (
+          <PageContainer
+            title="Kanal Berita & Warta Sektor Riil"
+            subtitle="Warta kemitraan strategis, inisiatif program, dampak ekonomi, dan laporan perkembangan proyek KOPSIM Mandiri"
+            breadcrumbs={['Portal Publik', 'Kanal Berita']}
+            idPrefix="news-list-page"
+          >
+            <NewsListView
+              onSelectArticle={(article) => {
+                setSelectedArticle(article);
+                handleNavigate('NEWS_DETAIL');
+              }}
+              onNavigatePortfolio={() => handleNavigate('PORTOFOLIO')}
+            />
+          </PageContainer>
+        );
+
+      // PORTAL PUBLIK: DETAIL ARTIKEL BERITA
+      case 'NEWS_DETAIL':
+        return (
+          <PageContainer
+            title={selectedArticle ? selectedArticle.judul : 'Detail Artikel Berita'}
+            subtitle="Warta Resmi Koperasi Syarikat Islam Mandiri"
+            breadcrumbs={['Portal Publik', 'Kanal Berita', 'Detail']}
+            idPrefix="news-detail-page"
+          >
+            {selectedArticle ? (
+              <NewsDetailView
+                article={selectedArticle}
+                onBack={() => handleNavigate('NEWS_LIST')}
+                onNavigatePortfolio={() => handleNavigate('PORTOFOLIO')}
+              />
+            ) : (
+              <div className="p-8 text-center bg-white rounded-2xl border border-stone-200">
+                <p className="text-stone-600 mb-4 text-xs">Artikel tidak ditemukan atau belum dipilih.</p>
+                <Button variant="primary" size="sm" onClick={() => handleNavigate('NEWS_LIST')}>
+                  Kembali ke Daftar Berita
+                </Button>
+              </div>
+            )}
           </PageContainer>
         );
 
