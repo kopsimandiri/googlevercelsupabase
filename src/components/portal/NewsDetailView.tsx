@@ -3,7 +3,7 @@ import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { NewsArticle, NEWS_CATEGORIES } from '../../types/news';
-import { formatDateIndo } from '../../utils/formatters';
+import { formatDateIndo, normalizeImageUrl } from '../../utils/formatters';
 import {
   ArrowLeft,
   Calendar,
@@ -71,10 +71,14 @@ export const NewsDetailView: React.FC<NewsDetailViewProps> = ({
         {article.foto_url && (
           <div className="relative w-full h-72 sm:h-96 bg-stone-900 overflow-hidden">
             <img
-              src={article.foto_url}
+              src={normalizeImageUrl(article.foto_url)}
               alt={article.judul}
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src =
+                  '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+              }}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-transparent to-transparent" />
             <div className="absolute bottom-4 left-6 right-6">

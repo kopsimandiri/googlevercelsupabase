@@ -4,7 +4,7 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { newsService } from '../../services/newsService';
 import { NewsArticle, NewsCategory, NEWS_CATEGORIES } from '../../types/news';
-import { formatDateIndo } from '../../utils/formatters';
+import { formatDateIndo, normalizeImageUrl } from '../../utils/formatters';
 import {
   Newspaper,
   Calendar,
@@ -160,12 +160,13 @@ export const NewsListView: React.FC<NewsListViewProps> = ({
                 <div className="relative h-48 bg-stone-100 overflow-hidden">
                   {art.foto_url ? (
                     <img
-                      src={art.foto_url}
+                      src={normalizeImageUrl(art.foto_url)}
                       alt={art.judul}
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
+                        (e.currentTarget as HTMLImageElement).src =
+                          '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
                       }}
                     />
                   ) : (

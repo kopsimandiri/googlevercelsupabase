@@ -37,6 +37,11 @@ import {
   Edit3,
   Camera,
   Upload,
+  Paperclip,
+  ExternalLink,
+  Eye,
+  X,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 export const MemberPortalView: React.FC = () => {
@@ -65,6 +70,7 @@ export const MemberPortalView: React.FC = () => {
   const [showKtaModal, setShowKtaModal] = useState<boolean>(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState<boolean>(false);
+  const [selectedProof, setSelectedProof] = useState<{ url: string; title: string } | null>(null);
 
   const memberNo = user?.memberNo || user?.memberId || user?.id || '0824-03001';
 
@@ -473,6 +479,7 @@ export const MemberPortalView: React.FC = () => {
                     <th className="py-3 px-4">Kategori Simpanan</th>
                     <th className="py-3 px-4">Keterangan</th>
                     <th className="py-3 px-4 text-right">Jumlah Setoran</th>
+                    <th className="py-3 px-4 text-center">Bukti / Lampiran</th>
                     <th className="py-3 px-4 text-center">Status</th>
                   </tr>
                 </thead>
@@ -516,6 +523,37 @@ export const MemberPortalView: React.FC = () => {
                             {formatRupiah(trx.jumlah)}
                           </td>
                           <td className="py-3 px-4 text-center">
+                            {trx.filelink ? (
+                              <div className="inline-flex items-center gap-1.5 justify-center">
+                                <a
+                                  href={trx.filelink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 hover:text-emerald-950 border border-emerald-200 transition-colors shadow-2xs"
+                                  title="Buka Link Lampiran Bukti"
+                                >
+                                  <Paperclip className="w-3.5 h-3.5 text-emerald-700" />
+                                  <span>Lihat</span>
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedProof({
+                                      url: trx.filelink!,
+                                      title: `Bukti Transaksi - ${trx.kategori || 'Setoran'} (${formatDateIndo(trx.tanggal || '')})`,
+                                    })
+                                  }
+                                  className="p-1 text-stone-500 hover:text-emerald-800 hover:bg-stone-100 rounded transition-colors"
+                                  title="Pratinjau Foto Bukti"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-stone-400 font-mono">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                               BERHASIL
                             </span>
@@ -539,6 +577,9 @@ export const MemberPortalView: React.FC = () => {
                           {formatRupiah(savingsSummary.pokok)}
                         </td>
                         <td className="py-3 px-4 text-center">
+                          <span className="text-stone-400 font-mono text-[11px]">-</span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                             BERHASIL
                           </span>
@@ -557,6 +598,9 @@ export const MemberPortalView: React.FC = () => {
                         <td className="py-3 px-4 text-stone-600">Setoran Simpanan Wajib paket 3 tahun</td>
                         <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
                           {formatRupiah(savingsSummary.wajib)}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className="text-stone-400 font-mono text-[11px]">-</span>
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
@@ -578,6 +622,9 @@ export const MemberPortalView: React.FC = () => {
                           <td className="py-3 px-4 text-stone-600">Penempatan Simpanan Manasuka Berjangka</td>
                           <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
                             {formatRupiah(savingsSummary.sukarela)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="text-stone-400 font-mono text-[11px]">-</span>
                           </td>
                           <td className="py-3 px-4 text-center">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
@@ -925,6 +972,94 @@ export const MemberPortalView: React.FC = () => {
             showToast('Password baru siap digunakan untuk login berikutnya.', 'success', 'Password Tersimpan');
           }}
         />
+      )}
+
+      {/* Modal Pratinjau Foto Lampiran Bukti Setoran */}
+      {selectedProof && (
+        <div
+          id="proof-preview-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-950/80 backdrop-blur-xs"
+        >
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-xl w-full p-4 sm:p-5 space-y-3.5 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-2.5 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                  <Paperclip className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-stone-900 text-sm">{selectedProof.title}</h4>
+                  <p className="text-[11px] text-stone-500">Lampiran bukti transaksi pembukuan koperasi</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedProof(null)}
+                className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 flex flex-col items-center justify-center p-2 bg-stone-50 rounded-xl border border-stone-200">
+              {selectedProof.url.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i) ||
+              selectedProof.url.startsWith('data:image/') ||
+              selectedProof.url.includes('drive.google.com') ||
+              selectedProof.url.includes('supabase.co/storage') ||
+              selectedProof.url.includes('images') ? (
+                <img
+                  src={selectedProof.url}
+                  alt="Bukti Setoran"
+                  className="max-h-[60vh] max-w-full rounded-lg object-contain shadow-xs"
+                  onError={(e) => {
+                    // Fallback to text link if image fails to render inline
+                    (e.target as HTMLElement).style.display = 'none';
+                    const fallback = document.getElementById('proof-fallback-view');
+                    if (fallback) fallback.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+
+              <div
+                id="proof-fallback-view"
+                className="flex flex-col items-center justify-center py-6 text-center space-y-2"
+                style={{
+                  display:
+                    selectedProof.url.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i) ||
+                    selectedProof.url.startsWith('data:image/')
+                      ? 'none'
+                      : 'flex',
+                }}
+              >
+                <ImageIcon className="w-10 h-10 text-stone-400" />
+                <span className="text-xs text-stone-600 font-medium max-w-xs break-all">
+                  {selectedProof.url}
+                </span>
+                <p className="text-[11px] text-stone-400">
+                  Dokumen lampiran siap dibuka melalui tautan langsung.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-stone-100 shrink-0">
+              <a
+                href={selectedProof.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Buka di Tab Baru / Unduh</span>
+              </a>
+
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setSelectedProof(null)}
+              >
+                Tutup
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

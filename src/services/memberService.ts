@@ -227,6 +227,319 @@ export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extr
 }
 
 export const memberService = {
+  async getStoredMembersAsync(): Promise<MemberRecord[]> {
+    return this.getStoredMembers();
+  },
+
+  /**
+   * Fetches official master areas from Supabase public.areas (with local fallback)
+   */
+  async getAreasMaster(): Promise<any[]> {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('areas')
+          .select('id, area_code, area_name, province, city, kopwil, referral_type')
+          .order('area_code', { ascending: true });
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data;
+        }
+      } catch (err) {
+        console.warn('[memberService] Supabase getAreasMaster error:', err);
+      }
+    }
+
+    // Fallback from masterDataService
+    try {
+      const stored = localStorage.getItem('KOPSIM_TABLE_AREAS');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+
+    return [
+      {
+        id: 'AREA-01',
+        area_code: 'JKT-01',
+        area_name: 'Pusat Jakarta - Menteng',
+        province: 'DKI Jakarta',
+        city: 'Jakarta Pusat',
+        kopwil: 'KOPWIL I - DKI JAKARTA',
+        referral_type: 'KOPERASI',
+      },
+      {
+        id: 'AREA-02',
+        area_code: 'JBR-01',
+        area_name: 'Cabang Jawa Barat - Cianjur & Bandung',
+        province: 'Jawa Barat',
+        city: 'Cianjur',
+        kopwil: 'KOPWIL II - JAWA BARAT',
+        referral_type: 'KOPERASI',
+      },
+      {
+        id: 'AREA-03',
+        area_code: 'JTM-01',
+        area_name: 'Cabang Jawa Timur - Surabaya & Madura',
+        province: 'Jawa Timur',
+        city: 'Surabaya',
+        kopwil: 'KOPWIL III - JAWA TIMUR',
+        referral_type: 'PROJECT',
+      },
+      {
+        id: 'AREA-04',
+        area_code: 'JTG-01',
+        area_name: 'Cabang Jawa Tengah - Solo & Semarang',
+        province: 'Jawa Tengah',
+        city: 'Surakarta (Solo)',
+        kopwil: 'KOPWIL IV - JAWA TENGAH',
+        referral_type: 'KOPERASI',
+      },
+      {
+        id: 'AREA-05',
+        area_code: 'SMT-01',
+        area_name: 'Cabang Sumatera Utara - Medan',
+        province: 'Sumatera Utara',
+        city: 'Medan',
+        kopwil: 'KOPWIL V - SUMATERA',
+        referral_type: 'KOPERASI',
+      },
+    ];
+  },
+
+  /**
+   * Generates safe, sequential next member_no (Format: {MMYY}-{XXXXX})
+   * Checks both live Supabase records and local storage to guarantee uniqueness.
+   */
+  async generateNextMemberNo(): Promise<string> {
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yy = String(now.getFullYear()).slice(-2);
+    const prefix = `${mm}${yy}`;
+
+    let maxSeq = 3000;
+
+    // Check local stored members
+    const local = this.getStoredMembers();
+    local.forEach((m) => {
+      const num = m.id || (m as any).member_no || '';
+      if (num && num.includes('-')) {
+        const parts = num.split('-');
+        if (parts.length === 2) {
+          const seq = parseInt(parts[1], 10);
+          if (!isNaN(seq) && seq > maxSeq) {
+            maxSeq = seq;
+          }
+        }
+      }
+    });
+
+    // Check Supabase public.members
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from(MEMBERS_TABLE_NAME)
+          .select('id, member_no');
+
+        if (!error && Array.isArray(data)) {
+          data.forEach((row: any) => {
+            const num = row.member_no || row.id || '';
+            if (num && num.includes('-')) {
+              const parts = num.split('-');
+              if (parts.length === 2) {
+                const seq = parseInt(parts[1], 10);
+                if (!isNaN(seq) && seq > maxSeq) {
+                  maxSeq = seq;
+                }
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('[memberService] generateNextMemberNo query warning:', err);
+      }
+    }
+
+    const nextSeqStr = String(maxSeq + 1).padStart(5, '0');
+    return `${prefix}-${nextSeqStr}`;
+  },
+
+  /**
+   * Checks if username is already taken in Supabase public.members or local storage
+   */
+  async checkUsernameAvailable(username: string): Promise<{ available: boolean; message?: string }> {
+    const cleanUser = (username || '').trim().toLowerCase();
+    if (!cleanUser) {
+      return { available: false, message: 'Username tidak boleh kosong.' };
+    }
+
+    // Check local storage
+    const local = this.getStoredMembers();
+    const isLocalTaken = local.some(
+      (m) =>
+        (m.username && m.username.toLowerCase() === cleanUser) ||
+        (m.id && m.id.toLowerCase() === cleanUser)
+    );
+    if (isLocalTaken) {
+      return { available: false, message: `Username '${cleanUser}' sudah digunakan.` };
+    }
+
+    // Check Supabase
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from(MEMBERS_TABLE_NAME)
+          .select('id, username')
+          .ilike('username', cleanUser)
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          return { available: false, message: `Username '${cleanUser}' sudah terdaftar di Supabase.` };
+        }
+      } catch (err) {
+        console.warn('[memberService] checkUsernameAvailable warning:', err);
+      }
+    }
+
+    return { available: true };
+  },
+
+  /**
+   * Comprehensive Admin Add Member Feature:
+   * Directly inserts all 18 columns into public.members on Supabase
+   * Maps work_area to public.areas.area_code
+   */
+  async addNewMemberAdmin(payload: {
+    member_no: string;
+    registered_at: string;
+    full_name: string;
+    gender: 'L' | 'P';
+    nik: string;
+    birth_place: string;
+    birth_date: string;
+    occupation: string;
+    province: string;
+    city: string;
+    address: string;
+    work_area: string; // area_code (e.g. JKT-01, JBR-01)
+    username: string;
+    password?: string;
+    status?: string;
+    simpanan_pokok?: number;
+    simpanan_wajib?: number;
+    simpanan_sukarela?: number;
+  }): Promise<{ success: boolean; data?: MemberRecord; error?: string; source: 'SUPABASE' | 'LOCAL' }> {
+    if (!payload.full_name.trim()) throw new Error('Nama lengkap anggota wajib diisi.');
+    if (!payload.member_no.trim()) throw new Error('Nomor Anggota (NRA) wajib diisi.');
+    if (!payload.nik.trim() || payload.nik.length !== 16) {
+      throw new Error('NIK harus 16 digit angka.');
+    }
+    if (!payload.work_area.trim()) throw new Error('Area Kerja wajib dipilih dari master data.');
+
+    const cleanUsername = (payload.username || payload.full_name.toLowerCase().replace(/[^a-z0-9]/g, '_'))
+      .trim()
+      .toLowerCase();
+
+    const nowStr = new Date().toISOString();
+    const idVal = payload.member_no.trim();
+
+    // 1. Prepare exact Supabase public.members 18 columns row
+    const dbRow = {
+      id: idVal,
+      member_no: idVal,
+      registered_at: payload.registered_at || nowStr.split('T')[0],
+      full_name: payload.full_name.trim(),
+      gender: payload.gender === 'P' ? 'P' : 'L',
+      province: payload.province || 'DKI Jakarta',
+      city: payload.city || 'Jakarta Pusat',
+      address: payload.address || '',
+      occupation: payload.occupation || 'Anggota Koperasi',
+      username: cleanUsername,
+      birth_date: payload.birth_date || '1990-01-01',
+      birth_place: payload.birth_place || payload.city || 'Jakarta',
+      nik: payload.nik.trim(),
+      work_area: payload.work_area.trim(), // Sesuai aturan: simpan area_code (misal: JKT-01)
+      legacy_password_hash: payload.password ? payload.password.trim() : 'kopsim123',
+      status: payload.status || 'AKTIF',
+      created_at: nowStr,
+      updated_at: nowStr,
+    };
+
+    // 2. Prepare UI MemberRecord
+    const newMemberRecord: MemberRecord = {
+      id: idVal,
+      tgl_reg: dbRow.registered_at,
+      nama: dbRow.full_name,
+      gender: dbRow.gender as 'L' | 'P',
+      provinsi: dbRow.province,
+      kota: dbRow.city,
+      alamat: dbRow.address,
+      pekerjaan: dbRow.occupation,
+      plantation: dbRow.work_area,
+      tgl_lahir: dbRow.birth_date,
+      area_jenis: dbRow.work_area.toUpperCase().includes('JKT') || dbRow.work_area.toUpperCase().includes('PUSAT')
+        ? 'KOPERASI PUSAT'
+        : 'KOPERASI CABANG',
+      simpanan_pokok: payload.simpanan_pokok ?? 500000,
+      simpanan_wajib: payload.simpanan_wajib ?? 360000,
+      simpanan_sukarela: payload.simpanan_sukarela ?? 0,
+      nik: dbRow.nik,
+      tempat_lahir: dbRow.birth_place,
+      username: dbRow.username,
+      legacy_password_hash: dbRow.legacy_password_hash,
+      status: dbRow.status,
+    };
+
+    let savedToSupabase = false;
+    const client = getSupabaseClient();
+
+    if (client) {
+      try {
+        console.log(`[memberService] Menyimpan anggota baru ke Supabase public.members...`, dbRow);
+        const { error: insertError } = await client
+          .from(MEMBERS_TABLE_NAME)
+          .insert([dbRow]);
+
+        if (!insertError) {
+          savedToSupabase = true;
+          console.log(`[memberService] Berhasil menyimpan ke Supabase public.members.`);
+        } else {
+          console.warn(`[memberService] Supabase insert notice:`, insertError.message);
+          // Try upsert
+          const { error: upsertErr } = await client
+            .from(MEMBERS_TABLE_NAME)
+            .upsert([dbRow], { onConflict: 'id' });
+          if (!upsertErr) savedToSupabase = true;
+        }
+      } catch (err) {
+        console.warn(`[memberService] Supabase insert exception:`, err);
+      }
+    }
+
+    // 3. Save to local storage cache
+    try {
+      const stored = this.getStoredMembers();
+      // remove duplicate if exists
+      const filtered = stored.filter((m) => m.id !== idVal);
+      filtered.unshift(newMemberRecord);
+      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(filtered));
+    } catch (e) {
+      console.warn('Local storage save exception:', e);
+    }
+
+    return {
+      success: true,
+      data: newMemberRecord,
+      source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
+    };
+  },
+
   getStoredMembers(): MemberRecord[] {
     try {
       const stored = localStorage.getItem(STORAGE_MEMBERS_KEY);

@@ -14,7 +14,7 @@ import {
   NewsStatus,
   NEWS_CATEGORIES,
 } from '../../types/news';
-import { formatDateIndo } from '../../utils/formatters';
+import { formatDateIndo, normalizeImageUrl } from '../../utils/formatters';
 import {
   Newspaper,
   Plus,
@@ -38,9 +38,16 @@ import {
   Lock,
   RefreshCw,
   Info,
+  ImageIcon,
+  Globe,
 } from 'lucide-react';
 
 const PRESET_ASSETS = [
+  {
+    name: 'Kemitraan Strategis (all.jpeg)',
+    url: '/assets/berita/all.jpeg',
+    kategori: 'kemitraan',
+  },
   {
     name: 'Ikan Layang Ambon',
     url: '/assets/portfolio/perikanan-ikan-layang-ambon.jpg',
@@ -251,6 +258,52 @@ export const NewsAdminModule: React.FC = () => {
     }
   };
 
+  const handleTogglePublish = async (art: NewsArticle) => {
+    try {
+      if (art.status === 'draft') {
+        const phs = newsService.scanPlaceholders(art);
+        if (phs.length > 0) {
+          showToast(
+            `Tidak dapat menerbitkan: terdapat ${phs.length} placeholder [ISI: ...] yang belum dilengkapi!`,
+            'error',
+            'Placeholder Ditemukan'
+          );
+          return;
+        }
+      }
+      const updated = await newsService.togglePublishStatus(art.id);
+      showToast(
+        updated.status === 'terbit'
+          ? `Artikel "${art.judul}" berhasil diterbitkan ke portal publik!`
+          : `Artikel "${art.judul}" dikembalikan ke status Draft.`,
+        'success'
+      );
+      fetchArticles();
+    } catch (err: any) {
+      showToast(err.message || 'Gagal mengubah status publikasi', 'error');
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Ukuran foto maksimal 5 MB', 'warning');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (uploadEvent) => {
+      const dataUrl = uploadEvent.target?.result as string;
+      if (dataUrl) {
+        setFormData((prev) => ({ ...prev, foto_url: dataUrl }));
+        showToast('Foto sampul berhasil dipilih dan dimuat!', 'success');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleCopySql = () => {
     navigator.clipboard.writeText(NEWS_ARTICLES_SQL_DDL);
     setCopiedSql(true);
@@ -447,86 +500,131 @@ export const NewsAdminModule: React.FC = () => {
             const catMeta = NEWS_CATEGORIES[art.kategori] || NEWS_CATEGORIES.kemitraan;
             const phs = newsService.scanPlaceholders(art);
             const isDraft = art.status === 'draft';
+            const normalizedImg = normalizeImageUrl(art.foto_url);
 
             return (
               <div
                 key={art.id}
                 className="p-4 sm:p-5 bg-white rounded-2xl border border-stone-200 shadow-2xs hover:border-emerald-700 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
               >
-                <div className="space-y-2 flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* Status Badge */}
-                    {isDraft ? (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-stone-100 text-stone-700 border border-stone-300 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-stone-400"></span>
-                        Draft
-                      </span>
+                {/* Left: Thumbnail & Info */}
+                <div className="flex items-start gap-4 flex-1 min-w-0">
+                  {/* Thumbnail */}
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl bg-stone-100 overflow-hidden shrink-0 border border-stone-200 relative group">
+                    {normalizedImg ? (
+                      <img
+                        src={normalizedImg}
+                        alt={art.judul}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+                        }}
+                      />
                     ) : (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                        Terbit
-                      </span>
-                    )}
-
-                    {/* Category Badge */}
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${catMeta.badgeClass}`}>
-                      {catMeta.label}
-                    </span>
-
-                    {/* Project ID Tag */}
-                    {art.project_id && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-teal-50 text-teal-800 border border-teal-200 flex items-center gap-1">
-                        <FolderGit2 className="w-3 h-3" />
-                        {art.project_id}
-                      </span>
-                    )}
-
-                    {/* Date & Location */}
-                    <span className="text-[11px] text-stone-500 flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-stone-400" />
-                      {formatDateIndo(art.tanggal)}
-                    </span>
-
-                    {art.lokasi && (
-                      <span className="text-[11px] text-stone-500 flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-stone-400" />
-                        {art.lokasi}
-                      </span>
+                      <div className="w-full h-full flex items-center justify-center bg-stone-200 text-stone-400">
+                        <ImageIcon className="w-6 h-6" />
+                      </div>
                     )}
                   </div>
 
-                  <h3 className="text-sm sm:text-base font-bold text-stone-900 font-serif">
-                    {art.judul}
-                  </h3>
-
-                  <p className="text-xs text-stone-600 line-clamp-2 leading-relaxed">
-                    {art.ringkasan}
-                  </p>
-
-                  {/* Warning Placeholder Notification */}
-                  {phs.length > 0 && (
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-[11px]">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                      <span>
-                        Terdapat <strong>{phs.length} placeholder</strong> belum diisi:
-                        <span className="font-mono ml-1 text-amber-800">
-                          {phs.slice(0, 3).join(', ')}
-                          {phs.length > 3 ? ' ...' : ''}
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Status Badge */}
+                      {isDraft ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-stone-100 text-stone-700 border border-stone-300 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-stone-400"></span>
+                          Draft
                         </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+                          Terbit
+                        </span>
+                      )}
+
+                      {/* Category Badge */}
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${catMeta.badgeClass}`}>
+                        {catMeta.label}
                       </span>
+
+                      {/* Project ID Tag */}
+                      {art.project_id && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-teal-50 text-teal-800 border border-teal-200 flex items-center gap-1">
+                          <FolderGit2 className="w-3 h-3" />
+                          {art.project_id}
+                        </span>
+                      )}
+
+                      {/* Date & Location */}
+                      <span className="text-[11px] text-stone-500 flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-stone-400" />
+                        {formatDateIndo(art.tanggal)}
+                      </span>
+
+                      {art.lokasi && (
+                        <span className="text-[11px] text-stone-500 flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-stone-400" />
+                          {art.lokasi}
+                        </span>
+                      )}
                     </div>
-                  )}
+
+                    <h3 className="text-sm sm:text-base font-bold text-stone-900 font-serif line-clamp-1">
+                      {art.judul}
+                    </h3>
+
+                    <p className="text-xs text-stone-600 line-clamp-2 leading-relaxed">
+                      {art.ringkasan}
+                    </p>
+
+                    {/* Warning Placeholder Notification */}
+                    {phs.length > 0 && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-[11px]">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                        <span>
+                          Terdapat <strong>{phs.length} placeholder</strong> belum diisi:
+                          <span className="font-mono ml-1 text-amber-800">
+                            {phs.slice(0, 3).join(', ')}
+                            {phs.length > 3 ? ' ...' : ''}
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-center">
+                  {/* Quick Publish / Unpublish Toggle */}
+                  <Button
+                    variant={isDraft ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => handleTogglePublish(art)}
+                    leftIcon={
+                      isDraft ? (
+                        <Globe className="w-3.5 h-3.5" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-stone-500" />
+                      )
+                    }
+                    className={
+                      isDraft
+                        ? 'bg-emerald-800 hover:bg-emerald-700 text-white text-xs'
+                        : 'text-stone-700 border-stone-300 text-xs'
+                    }
+                  >
+                    {isDraft ? 'Terbitkan' : 'Jadikan Draft'}
+                  </Button>
+
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => handleOpenEdit(art)}
                     leftIcon={<Edit className="w-3.5 h-3.5" />}
                   >
-                    Edit & Lengkapi
+                    Edit
                   </Button>
 
                   <Button
@@ -712,36 +810,93 @@ export const NewsAdminModule: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-stone-700 mb-1">URL Foto Sampul</label>
+                  <label className="block font-bold text-stone-700 mb-1">
+                    URL / Path Foto Sampul
+                  </label>
                   <input
                     type="text"
-                    placeholder="/assets/portfolio/..."
+                    placeholder="/assets/berita/all.jpeg"
                     value={formData.foto_url}
                     onChange={(e) => setFormData({ ...formData, foto_url: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:ring-2 focus:ring-emerald-700 bg-white"
+                    className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:ring-2 focus:ring-emerald-700 bg-white font-mono text-[11px]"
                   />
                 </div>
               </div>
 
-              {/* Preset Image Picker */}
-              <div className="space-y-1.5">
-                <span className="block font-bold text-stone-700">Pilih Foto Aset Tersedia:</span>
-                <div className="flex flex-wrap gap-2">
-                  {PRESET_ASSETS.map((asset, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, foto_url: asset.url })}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] border transition-all flex items-center gap-1.5 ${
-                        formData.foto_url === asset.url
-                          ? 'bg-emerald-800 text-white border-emerald-900 font-bold'
-                          : 'bg-stone-100 text-stone-700 border-stone-200 hover:bg-stone-200'
-                      }`}
-                    >
-                      <span>{asset.name}</span>
-                    </button>
-                  ))}
+              {/* Image Uploader & Live Preview */}
+              <div className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="block font-bold text-stone-800 text-xs">
+                      Foto Sampul Artikel
+                    </span>
+                    <span className="text-[11px] text-stone-500">
+                      Pilih dari preset aset, unggah file lokal, atau ketik path URL.
+                    </span>
+                  </div>
+
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-stone-300 hover:border-emerald-700 rounded-lg text-xs font-semibold text-stone-700 hover:text-emerald-800 cursor-pointer shadow-2xs transition-all">
+                    <Upload className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>Unggah Foto</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
+
+                {/* Preset Image Picker */}
+                <div className="space-y-1">
+                  <span className="block font-semibold text-stone-600 text-[11px]">
+                    Preset Foto Tersedia:
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PRESET_ASSETS.map((asset, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, foto_url: asset.url })}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] border transition-all flex items-center gap-1.5 ${
+                          formData.foto_url === asset.url
+                            ? 'bg-emerald-800 text-white border-emerald-900 font-bold shadow-xs'
+                            : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100'
+                        }`}
+                      >
+                        <span>{asset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Live Preview Box */}
+                {formData.foto_url && (
+                  <div className="pt-2 border-t border-stone-200 flex items-center gap-3">
+                    <div className="w-24 h-16 rounded-lg bg-stone-200 overflow-hidden border border-stone-300 shrink-0">
+                      <img
+                        src={normalizeImageUrl(formData.foto_url)}
+                        alt="Preview Foto Sampul"
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+                        }}
+                      />
+                    </div>
+                    <div className="text-[11px] text-stone-600 space-y-0.5 min-w-0">
+                      <span className="font-bold text-stone-800 block">Pratinjau Foto Sampul:</span>
+                      <p className="font-mono text-stone-500 truncate text-[10px]">
+                        {normalizeImageUrl(formData.foto_url)}
+                      </p>
+                      <span className="text-[10px] text-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        Format path terverifikasi aman
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

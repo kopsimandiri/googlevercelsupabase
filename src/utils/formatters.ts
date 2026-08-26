@@ -56,3 +56,28 @@ export function maskNik(nik?: string | null): string {
   const lastTwo = clean.slice(-2);
   return `${firstFour}${'*'.repeat(Math.max(0, clean.length - 6))}${lastTwo}`;
 }
+
+export function normalizeImageUrl(url?: string | null): string {
+  if (!url) return '';
+  // Convert Windows backslashes to forward slashes
+  let clean = url.trim().replace(/\\/g, '/');
+  
+  // Handle data URIs and absolute web URLs directly
+  if (clean.startsWith('data:') || clean.startsWith('http://') || clean.startsWith('https://')) {
+    return clean;
+  }
+
+  // Remove leading /public/ or public/
+  if (clean.startsWith('/public/')) {
+    clean = clean.replace(/^\/public\//, '/');
+  } else if (clean.startsWith('public/')) {
+    clean = clean.replace(/^public\//, '/');
+  }
+
+  // Ensure single leading slash for relative web assets
+  if (!clean.startsWith('/')) {
+    clean = '/' + clean;
+  }
+
+  return clean;
+}

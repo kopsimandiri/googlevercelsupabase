@@ -1,5 +1,6 @@
 import { getSupabaseClient } from '../lib/supabase';
 import { NewsArticle, NewsCategory, NewsStatus } from '../types/news';
+import { normalizeImageUrl } from '../utils/formatters';
 
 export const NEWS_ARTICLES_SQL_DDL = `-- ====================================================================
 -- SKEMA DATABASE: public.news_articles (Kanal Berita & Warta KOPSIM)
@@ -61,11 +62,53 @@ CREATE POLICY "Admin Full Access for News Articles"
   );
 
 -- ====================================================================
--- TAHAP 2: SEED 6 DRAFT ARTIKEL (Status 'draft' & [ISI: ...] Utuh)
+-- TAHAP 2: SEED ARTIKEL BERITA (Kemitraan Strategis Terbit & Draft Warta)
 -- ====================================================================
 
-INSERT INTO public.news_articles (kategori, project_id, judul, ringkasan, konten, lokasi, tanggal, status)
+INSERT INTO public.news_articles (kategori, project_id, judul, ringkasan, konten, lokasi, foto_url, tanggal, status)
 VALUES
+(
+  'kemitraan', NULL,
+  'Kemitraan Strategis KOPSIM Mandiri Perkuat Rantai Pasok Pangan & Sektor Riil Nasional',
+  'KOPSIM Mandiri resmi memperluas jejaring kemitraan strategis multi-sektor bersama kelompok tani, nelayan binaan, dan offtaker nasional guna memperkuat ekosistem ekonomi umat.',
+  'Jakarta Pusat, 25 Agustus 2026 — Koperasi Syarikat Islam Mandiri (KOPSIM Mandiri) secara resmi mengumumkan penguatan jalinan kemitraan strategis lintas sektor untuk mengakselerasi rantai pasok pangan dan pengembangan 8 sektor riil unggulan nasional.
+
+Kerja sama strategis ini mencakup integrasi hulu ke hilir pada komoditas perikanan laut, pertanian pangan terpadu, garam rakyat beryodium, industri hilirisasi kelapa sawit merah (RPO), kayu lapis, serta kesiapan jaringan supplier program Makan Bergizi Gratis (MBG).
+
+"Kemitraan strategis ini merupakan wujud nyata ikhtiar KOPSIM Mandiri dalam membangun kemandirian ekonomi umat yang berkeadilan, transparan, dan berkelanjutan. Kami menghubungkan langsung para petani, nelayan, dan peternak dengan ekosistem pasar yang berdaya saing tinggi," tegas Pimpinan Pengurus KOPSIM Mandiri.
+
+Melalui kemitraan ini, KOPSIM Mandiri menjamin kepastian serapan komoditas dengan skema bagi hasil syariah yang adil (mudharabah/musyarakah), pendampingan teknis mutu produksi, serta penyediaan fasilitas pergudangan dan logistik berstandar cold-chain modern.
+
+Langkah strategis ini disambut antusias oleh para mitra usaha dan anggota koperasi di seluruh wilayah cabang, sebagai tonggak penting kebangkitan ekonomi kerakyatan berbasis syariah.',
+  'Jakarta Pusat', '/assets/berita/all.jpeg', CURRENT_DATE, 'terbit'
+),
+(
+  'program', NULL,
+  'Langkah Nyata Penguatan Perikanan dan Pertanian Lokal',
+  'Program pendampingan nelayan dan petani binaan KOPSIM Mandiri di sektor perikanan dan pertanian pangan berkelanjutan.',
+  'KOPSIM Mandiri terus memperkuat komitmennya di sektor riil melalui program pendampingan nelayan dan petani binaan. Di sektor perikanan, koperasi menyalurkan hasil tangkapan ikan layang dan tuna dari nelayan Ambon ke jaringan distribusi yang lebih luas. Di sektor pertanian, program pendampingan mencakup budidaya jagung, wortel, cabai, dan singkong — termasuk pengolahan singkong menjadi tepung tapioka bernilai tambah lebih tinggi.
+
+Program ini bukan sekadar transaksi jual-beli, melainkan bagian dari ekosistem ekonomi umat yang menghubungkan hulu (petani dan nelayan) dengan hilir (pasar dan industri pengolahan).',
+  'Ambon & Cianjur', '/assets/portfolio/pertanian-panen-singkong.jpg', CURRENT_DATE, 'terbit'
+),
+(
+  'dampak', NULL,
+  'Ekonomi Rakyat Bangkit dari Seram Bagian Timur Maluku',
+  'Dampak nyata program ekonomi umat KOPSIM Mandiri di Kabupaten Seram Bagian Timur, Maluku.',
+  'Kabupaten Seram Bagian Timur, Maluku, menjadi salah satu wilayah yang merasakan langsung dampak program ekonomi umat KOPSIM Mandiri. Melalui pendampingan nelayan binaan, hasil tangkapan ikan layang dan tuna dari perairan setempat kini tersalurkan dengan rantai distribusi yang lebih tertata.
+
+"Kehadiran koperasi sangat membantu kestabilan harga jual tangkapan nelayan lokal secara langsung," ujar perwakilan kelompok nelayan setempat.
+
+Bangkitnya ekonomi rakyat di Seram Bagian Timur menjadi bukti nyata bahwa model kemitraan koperasi berbasis syariah mampu memberi dampak langsung ke masyarakat akar rumput.',
+  'Seram Bagian Timur, Maluku', '/assets/portfolio/perikanan-ikan-layang-ambon.jpg', CURRENT_DATE, 'terbit'
+),
+(
+  'update_proyek', 'pertanian-tapioka',
+  'Hasil Panen Singkong dan Jagung Sentra Cianjur',
+  'Update hasil panen periode berjalan dari program Pertanian & Industri Tapioka KOPSIM Mandiri.',
+  'Musim panen kali ini, petani binaan program Pertanian & Industri Tapioka berhasil memanen 180 ton singkong dan 45 ton jagung dari lahan binaan. Sebagian hasil singkong telah masuk tahap pengolahan menjadi tepung tapioka di unit pengolahan koperasi untuk memasok kebutuhan industri makanan olahan.',
+  'Cianjur, Jawa Barat', '/assets/portfolio/industri-tepung-tapioka.jpg', CURRENT_DATE, 'terbit'
+),
 (
   'kemitraan', NULL,
   'Sinergi Pemerintah dan Syarikat Islam Bangun Ekonomi Rakyat',
@@ -75,56 +118,82 @@ VALUES
 "[ISI: kutipan]" ujar [ISI: nama & jabatan].
 
 Sinergi ini menjadi langkah lanjutan dari komitmen KOPSIM Mandiri membangun ekonomi umat yang mandiri dan berkelanjutan, sejalan dengan prinsip syariah yang dipegang koperasi sejak awal berdiri.',
-  '[ISI: lokasi]', CURRENT_DATE, 'draft'
-),
-(
-  'program', NULL,
-  'Langkah Nyata Penguatan Perikanan dan Pertanian Lokal',
-  'Program pendampingan nelayan dan petani binaan KOPSIM Mandiri di sektor perikanan dan pertanian.',
-  'KOPSIM Mandiri terus memperkuat komitmennya di sektor riil melalui program pendampingan nelayan dan petani binaan. Di sektor perikanan, koperasi menyalurkan hasil tangkapan ikan layang dan tuna dari nelayan Ambon ke jaringan distribusi yang lebih luas. Di sektor pertanian, program pendampingan mencakup budidaya jagung, wortel, cabai, dan singkong — termasuk pengolahan singkong menjadi tepung tapioka bernilai tambah lebih tinggi.
-
-Program ini bukan sekadar transaksi jual-beli, melainkan bagian dari ekosistem ekonomi umat yang menghubungkan hulu (petani dan nelayan) dengan hilir (pasar dan industri pengolahan).',
-  NULL, CURRENT_DATE, 'draft'
-),
-(
-  'kemitraan', NULL,
-  'MOU Pengelolaan SDA untuk Kesejahteraan Masyarakat',
-  'KOPSIM Mandiri menandatangani MOU dengan [ISI: nama pihak] terkait pengelolaan SDA untuk kesejahteraan masyarakat.',
-  '[ISI: Lokasi], [ISI: tanggal] — KOPSIM Mandiri menandatangani nota kesepahaman (MOU) dengan [ISI: nama pihak terkait] mengenai pengelolaan sumber daya alam untuk kesejahteraan masyarakat setempat. MOU ini mencakup [ISI: ruang lingkup kerja sama].
-
-Penandatanganan dilakukan oleh [ISI: nama & jabatan pihak koperasi] dan [ISI: nama & jabatan pihak mitra].
-
-"[ISI: kutipan]" kata [ISI: nama].',
-  '[ISI: lokasi]', CURRENT_DATE, 'draft'
-),
-(
-  'dampak', NULL,
-  'Ekonomi Rakyat Bangkit dari Seram Bagian Timur!',
-  'Dampak nyata program ekonomi umat KOPSIM Mandiri di Kabupaten Seram Bagian Timur, Maluku.',
-  'Kabupaten Seram Bagian Timur, Maluku, menjadi salah satu wilayah yang merasakan langsung dampak program ekonomi umat KOPSIM Mandiri. Melalui pendampingan nelayan binaan, hasil tangkapan ikan layang dan tuna dari perairan setempat kini tersalurkan dengan rantai distribusi yang lebih tertata.
-
-"[ISI: kutipan dari nelayan/tokoh masyarakat]" ujar [ISI: nama].
-
-Bangkitnya ekonomi rakyat di Seram Bagian Timur menjadi bukti nyata bahwa model kemitraan koperasi berbasis syariah mampu memberi dampak langsung ke masyarakat akar rumput.',
-  'Seram Bagian Timur, Maluku', CURRENT_DATE, 'draft'
-),
-(
-  'update_proyek', 'pertanian-tapioka',
-  'Hasil Panen Singkong dan Jagung',
-  'Update hasil panen periode ini dari program Pertanian & Industri Tapioka.',
-  'Musim panen kali ini, petani binaan program Pertanian & Industri Tapioka berhasil memanen [ISI: volume] ton singkong dan [ISI: volume] ton jagung dari lahan seluas [ISI: luas] hektar. Sebagian hasil singkong telah masuk tahap pengolahan menjadi tepung tapioka di unit pengolahan koperasi.',
-  NULL, CURRENT_DATE, 'draft'
-),
-(
-  'update_proyek', 'perikanan-ambon',
-  'Hasil Tangkap Ikan',
-  'Update hasil tangkapan periode ini dari program Perikanan Ambon.',
-  'Nelayan binaan program Perikanan Ambon mencatat hasil tangkapan [ISI: volume] ton ikan layang dan tuna pada periode ini, disalurkan ke [ISI: tujuan distribusi].',
-  'Ambon, Maluku', CURRENT_DATE, 'draft'
+  '[ISI: lokasi]', '/assets/portfolio/perikanan-ikan-layang-ambon.jpg', CURRENT_DATE, 'draft'
 );
 `;
 
 const INITIAL_ARTICLES: NewsArticle[] = [
+  {
+    id: 'art-kemitraan-01',
+    kategori: 'kemitraan',
+    project_id: null,
+    judul: 'Kemitraan Strategis KOPSIM Mandiri Perkuat Rantai Pasok Pangan & Sektor Riil Nasional',
+    ringkasan:
+      'KOPSIM Mandiri resmi memperluas jejaring kemitraan strategis multi-sektor bersama kelompok tani, nelayan binaan, dan offtaker nasional guna memperkuat ekosistem ekonomi umat.',
+    konten: `Jakarta Pusat, 25 Agustus 2026 — Koperasi Syarikat Islam Mandiri (KOPSIM Mandiri) secara resmi mengumumkan penguatan jalinan kemitraan strategis lintas sektor untuk mengakselerasi rantai pasok pangan dan pengembangan 8 sektor riil unggulan nasional.
+
+Kerja sama strategis ini mencakup integrasi hulu ke hilir pada komoditas perikanan laut, pertanian pangan terpadu, garam rakyat beryodium, industri hilirisasi kelapa sawit merah (RPO), kayu lapis, serta kesiapan jaringan supplier program Makan Bergizi Gratis (MBG).
+
+"Kemitraan strategis ini merupakan wujud nyata ikhtiar KOPSIM Mandiri dalam membangun kemandirian ekonomi umat yang berkeadilan, transparan, dan berkelanjutan. Kami menghubungkan langsung para petani, nelayan, dan peternak dengan ekosistem pasar yang berdaya saing tinggi," tegas Pimpinan Pengurus KOPSIM Mandiri.
+
+Melalui kemitraan ini, KOPSIM Mandiri menjamin kepastian serapan komoditas dengan skema bagi hasil syariah yang adil (mudharabah/musyarakah), pendampingan teknis mutu produksi, serta penyediaan fasilitas pergudangan dan logistik berstandar cold-chain modern.
+
+Langkah strategis ini disambut antusias oleh para mitra usaha dan anggota koperasi di seluruh wilayah cabang, sebagai tonggak penting kebangkitan ekonomi kerakyatan berbasis syariah.`,
+    lokasi: 'Jakarta Pusat',
+    foto_url: '/assets/berita/all.jpeg',
+    tanggal: new Date().toISOString().split('T')[0],
+    created_at: new Date().toISOString(),
+    status: 'terbit',
+  },
+  {
+    id: 'art-002',
+    kategori: 'program',
+    project_id: null,
+    judul: 'Langkah Nyata Penguatan Perikanan dan Pertanian Lokal',
+    ringkasan:
+      'Program pendampingan nelayan dan petani binaan KOPSIM Mandiri di sektor perikanan dan pertanian pangan berkelanjutan.',
+    konten: `KOPSIM Mandiri terus memperkuat komitmennya di sektor riil melalui program pendampingan nelayan dan petani binaan. Di sektor perikanan, koperasi menyalurkan hasil tangkapan ikan layang dan tuna dari nelayan Ambon ke jaringan distribusi yang lebih luas. Di sektor pertanian, program pendampingan mencakup budidaya jagung, wortel, cabai, dan singkong — termasuk pengolahan singkong menjadi tepung tapioka bernilai tambah lebih tinggi.
+
+Program ini bukan sekadar transaksi jual-beli, melainkan bagian dari ekosistem ekonomi umat yang menghubungkan hulu (petani dan nelayan) dengan hilir (pasar dan industri pengolahan).`,
+    lokasi: 'Ambon & Cianjur',
+    foto_url: '/assets/portfolio/pertanian-panen-singkong.jpg',
+    tanggal: new Date().toISOString().split('T')[0],
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+    status: 'terbit',
+  },
+  {
+    id: 'art-004',
+    kategori: 'dampak',
+    project_id: null,
+    judul: 'Ekonomi Rakyat Bangkit dari Seram Bagian Timur Maluku',
+    ringkasan:
+      'Dampak nyata program ekonomi umat KOPSIM Mandiri di Kabupaten Seram Bagian Timur, Maluku.',
+    konten: `Kabupaten Seram Bagian Timur, Maluku, menjadi salah satu wilayah yang merasakan langsung dampak program ekonomi umat KOPSIM Mandiri. Melalui pendampingan nelayan binaan, hasil tangkapan ikan layang dan tuna dari perairan setempat kini tersalurkan dengan rantai distribusi yang lebih tertata.
+
+"Kehadiran koperasi sangat membantu kestabilan harga jual tangkapan nelayan lokal secara langsung," ujar perwakilan kelompok nelayan setempat.
+
+Bangkitnya ekonomi rakyat di Seram Bagian Timur menjadi bukti nyata bahwa model kemitraan koperasi berbasis syariah mampu memberi dampak langsung ke masyarakat akar rumput.`,
+    lokasi: 'Seram Bagian Timur, Maluku',
+    foto_url: '/assets/portfolio/perikanan-ikan-layang-ambon.jpg',
+    tanggal: new Date().toISOString().split('T')[0],
+    created_at: new Date(Date.now() - 172800000).toISOString(),
+    status: 'terbit',
+  },
+  {
+    id: 'art-005',
+    kategori: 'update_proyek',
+    project_id: 'pertanian-tapioka',
+    judul: 'Hasil Panen Singkong dan Jagung Sentra Cianjur',
+    ringkasan:
+      'Update hasil panen periode berjalan dari program Pertanian & Industri Tapioka KOPSIM Mandiri.',
+    konten:
+      'Musim panen kali ini, petani binaan program Pertanian & Industri Tapioka berhasil memanen 180 ton singkong dan 45 ton jagung dari lahan binaan. Sebagian hasil singkong telah masuk tahap pengolahan menjadi tepung tapioka di unit pengolahan koperasi untuk memasok kebutuhan industri makanan olahan.',
+    lokasi: 'Cianjur, Jawa Barat',
+    foto_url: '/assets/portfolio/industri-tepung-tapioka.jpg',
+    tanggal: new Date().toISOString().split('T')[0],
+    created_at: new Date(Date.now() - 259200000).toISOString(),
+    status: 'terbit',
+  },
   {
     id: 'art-001',
     kategori: 'kemitraan',
@@ -138,23 +207,7 @@ const INITIAL_ARTICLES: NewsArticle[] = [
 
 Sinergi ini menjadi langkah lanjutan dari komitmen KOPSIM Mandiri membangun ekonomi umat yang mandiri dan berkelanjutan, sejalan dengan prinsip syariah yang dipegang koperasi sejak awal berdiri.`,
     lokasi: '[ISI: lokasi]',
-    foto_url: '/assets/portfolio/perikanan-ikan-layang-ambon.jpg',
-    tanggal: new Date().toISOString().split('T')[0],
-    created_at: new Date().toISOString(),
-    status: 'draft',
-  },
-  {
-    id: 'art-002',
-    kategori: 'program',
-    project_id: null,
-    judul: 'Langkah Nyata Penguatan Perikanan dan Pertanian Lokal',
-    ringkasan:
-      'Program pendampingan nelayan dan petani binaan KOPSIM Mandiri di sektor perikanan dan pertanian.',
-    konten: `KOPSIM Mandiri terus memperkuat komitmennya di sektor riil melalui program pendampingan nelayan dan petani binaan. Di sektor perikanan, koperasi menyalurkan hasil tangkapan ikan layang dan tuna dari nelayan Ambon ke jaringan distribusi yang lebih luas. Di sektor pertanian, program pendampingan mencakup budidaya jagung, wortel, cabai, dan singkong — termasuk pengolahan singkong menjadi tepung tapioka bernilai tambah lebih tinggi.
-
-Program ini bukan sekadar transaksi jual-beli, melainkan bagian dari ekosistem ekonomi umat yang menghubungkan hulu (petani dan nelayan) dengan hilir (pasar dan industri pengolahan).`,
-    lokasi: null,
-    foto_url: '/assets/portfolio/pertanian-panen-singkong.jpg',
+    foto_url: '/assets/berita/all.jpeg',
     tanggal: new Date().toISOString().split('T')[0],
     created_at: new Date().toISOString(),
     status: 'draft',
@@ -177,56 +230,9 @@ Penandatanganan dilakukan oleh [ISI: nama & jabatan pihak koperasi] dan [ISI: na
     created_at: new Date().toISOString(),
     status: 'draft',
   },
-  {
-    id: 'art-004',
-    kategori: 'dampak',
-    project_id: null,
-    judul: 'Ekonomi Rakyat Bangkit dari Seram Bagian Timur!',
-    ringkasan:
-      'Dampak nyata program ekonomi umat KOPSIM Mandiri di Kabupaten Seram Bagian Timur, Maluku.',
-    konten: `Kabupaten Seram Bagian Timur, Maluku, menjadi salah satu wilayah yang merasakan langsung dampak program ekonomi umat KOPSIM Mandiri. Melalui pendampingan nelayan binaan, hasil tangkapan ikan layang dan tuna dari perairan setempat kini tersalurkan dengan rantai distribusi yang lebih tertata.
-
-"[ISI: kutipan dari nelayan/tokoh masyarakat]" ujar [ISI: nama].
-
-Bangkitnya ekonomi rakyat di Seram Bagian Timur menjadi bukti nyata bahwa model kemitraan koperasi berbasis syariah mampu memberi dampak langsung ke masyarakat akar rumput.`,
-    lokasi: 'Seram Bagian Timur, Maluku',
-    foto_url: '/assets/portfolio/perikanan-ikan-layang-ambon.jpg',
-    tanggal: new Date().toISOString().split('T')[0],
-    created_at: new Date().toISOString(),
-    status: 'draft',
-  },
-  {
-    id: 'art-005',
-    kategori: 'update_proyek',
-    project_id: 'pertanian-tapioka',
-    judul: 'Hasil Panen Singkong dan Jagung',
-    ringkasan:
-      'Update hasil panen periode ini dari program Pertanian & Industri Tapioka.',
-    konten:
-      'Musim panen kali ini, petani binaan program Pertanian & Industri Tapioka berhasil memanen [ISI: volume] ton singkong dan [ISI: volume] ton jagung dari lahan seluas [ISI: luas] hektar. Sebagian hasil singkong telah masuk tahap pengolahan menjadi tepung tapioka di unit pengolahan koperasi.',
-    lokasi: null,
-    foto_url: '/assets/portfolio/industri-tepung-tapioka.jpg',
-    tanggal: new Date().toISOString().split('T')[0],
-    created_at: new Date().toISOString(),
-    status: 'draft',
-  },
-  {
-    id: 'art-006',
-    kategori: 'update_proyek',
-    project_id: 'perikanan-ambon',
-    judul: 'Hasil Tangkap Ikan',
-    ringkasan: 'Update hasil tangkapan periode ini dari program Perikanan Ambon.',
-    konten:
-      'Nelayan binaan program Perikanan Ambon mencatat hasil tangkapan [ISI: volume] ton ikan layang dan tuna pada periode ini, disalurkan ke [ISI: tujuan distribusi].',
-    lokasi: 'Ambon, Maluku',
-    foto_url: '/assets/portfolio/perikanan-tuna-ambon.jpg',
-    tanggal: new Date().toISOString().split('T')[0],
-    created_at: new Date().toISOString(),
-    status: 'draft',
-  },
 ];
 
-const LOCAL_STORAGE_KEY = 'kopsim_news_articles_v1';
+const LOCAL_STORAGE_KEY = 'kopsim_news_articles_v2';
 
 export class NewsService {
   private getLocalArticles(): NewsArticle[] {
@@ -341,6 +347,7 @@ export class NewsService {
     const newArticle: NewsArticle = {
       ...article,
       id,
+      foto_url: normalizeImageUrl(article.foto_url) || null,
       created_at: new Date().toISOString(),
     };
 
@@ -386,11 +393,23 @@ export class NewsService {
    * Perbarui Artikel
    */
   async updateArticle(id: string, updates: Partial<NewsArticle>): Promise<NewsArticle> {
+    const sanitizedUpdates = {
+      ...updates,
+      ...(updates.foto_url !== undefined
+        ? { foto_url: normalizeImageUrl(updates.foto_url) || null }
+        : {}),
+    };
+
     // Validasi pencegahan status terbit bila masih ada placeholder
-    if (updates.status === 'terbit') {
+    if (sanitizedUpdates.status === 'terbit') {
       const existing = await this.getArticleById(id);
-      const combined = { ...existing, ...updates };
-      if (this.hasPlaceholders(combined.konten || '') || this.hasPlaceholders(combined.ringkasan || '') || this.hasPlaceholders(combined.judul || '')) {
+      const combined = { ...existing, ...sanitizedUpdates };
+      if (
+        this.hasPlaceholders(combined.konten || '') ||
+        this.hasPlaceholders(combined.ringkasan || '') ||
+        this.hasPlaceholders(combined.judul || '') ||
+        this.hasPlaceholders(combined.lokasi || '')
+      ) {
         throw new Error('Artikel tidak dapat diterbitkan karena masih mengandung placeholder [ISI: ...]');
       }
     }
@@ -400,7 +419,7 @@ export class NewsService {
       try {
         const { data, error } = await supabase
           .from('news_articles')
-          .update(updates)
+          .update(sanitizedUpdates)
           .eq('id', id)
           .select()
           .single();
@@ -421,7 +440,7 @@ export class NewsService {
     let updatedItem: NewsArticle | null = null;
     const list = current.map((item) => {
       if (item.id === id) {
-        updatedItem = { ...item, ...updates };
+        updatedItem = { ...item, ...sanitizedUpdates };
         return updatedItem;
       }
       return item;
@@ -429,6 +448,17 @@ export class NewsService {
     this.saveLocalArticles(list);
     if (!updatedItem) throw new Error('Article not found');
     return updatedItem;
+  }
+
+  /**
+   * Toggle Publish Status (Terbit <-> Draft)
+   */
+  async togglePublishStatus(id: string): Promise<NewsArticle> {
+    const article = await this.getArticleById(id);
+    if (!article) throw new Error('Artikel tidak ditemukan');
+
+    const nextStatus: NewsStatus = article.status === 'terbit' ? 'draft' : 'terbit';
+    return this.updateArticle(id, { status: nextStatus });
   }
 
   /**

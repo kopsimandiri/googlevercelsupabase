@@ -11,6 +11,7 @@ import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
 import { ErrorState } from '../common/ErrorState';
 import { IdCardModal, renderMemberCardToCanvas } from '../idcard/IdCardModal';
+import { AddMemberModal } from './AddMemberModal';
 import { SupabaseTableCheckResult } from '../../lib/supabase';
 import {
   Users,
@@ -70,6 +71,7 @@ export const MembershipModule: React.FC = () => {
   // Modals state
   const [selectedMember, setSelectedMember] = useState<MemberRecord | null>(null);
   const [idCardMember, setIdCardMember] = useState<MemberRecord | null>(null);
+  const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState<boolean>(false);
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [editingMember, setEditingMember] = useState<MemberRecord | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -151,17 +153,7 @@ export const MembershipModule: React.FC = () => {
   }, []);
 
   const handleOpenAddModal = () => {
-    setEditingMember(null);
-    setFormNama('');
-    setFormGender('L');
-    setFormProvinsi('DKI Jakarta');
-    setFormKota('Jakarta Pusat');
-    setFormAlamat('');
-    setFormPekerjaan('');
-    setFormPlantation('PUSAT JAKARTA');
-    setFormTglLahir('1990-01-01');
-    setFormSukarela(0);
-    setIsFormOpen(true);
+    setIsAddMemberModalOpen(true);
   };
 
   const handleOpenEditModal = (m: MemberRecord) => {
@@ -918,8 +910,20 @@ export const MembershipModule: React.FC = () => {
         </div>
       )}
 
-      {/* Add / Edit Member Modal */}
-      {isFormOpen && (
+      {/* Official Add Member Modal (public.members & public.areas) */}
+      <AddMemberModal
+        isOpen={isAddMemberModalOpen}
+        onClose={() => setIsAddMemberModalOpen(false)}
+        onSuccess={() => {
+          loadMembers();
+        }}
+        onOpenKta={(m) => {
+          setIdCardMember(m);
+        }}
+      />
+
+      {/* Edit Member Modal */}
+      {isFormOpen && editingMember && (
         <div
           id="member-form-modal"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs overflow-y-auto"
