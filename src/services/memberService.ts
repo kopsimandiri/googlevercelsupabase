@@ -1,5 +1,6 @@
 import { getSupabaseClient, isSupabaseConfigured, testTableConnection, SupabaseTableCheckResult } from '../lib/supabase';
 import { MemberRecord, RegistrationPayload } from '../types/database';
+import { auditService } from './auditService';
 
 const STORAGE_MEMBERS_KEY = 'KOPSIM_MEMBERS_DATA';
 
@@ -449,6 +450,10 @@ export const memberService = {
     const nowStr = new Date().toISOString();
     const idVal = payload.member_no.trim();
 
+    if (!payload.password || payload.password.trim().length < 4) {
+      throw new Error('Password akun anggota wajib diisi (minimal 4 karakter).');
+    }
+
     // 1. Prepare exact Supabase public.members 18 columns row
     const dbRow = {
       id: idVal,
@@ -465,7 +470,7 @@ export const memberService = {
       birth_place: payload.birth_place || payload.city || 'Jakarta',
       nik: payload.nik.trim(),
       work_area: payload.work_area.trim(), // Sesuai aturan: simpan area_code (misal: JKT-01)
-      legacy_password_hash: payload.password ? payload.password.trim() : 'kopsim123',
+      legacy_password_hash: payload.password.trim(),
       status: payload.status || 'AKTIF',
       created_at: nowStr,
       updated_at: nowStr,
@@ -653,12 +658,22 @@ export const memberService = {
       const idx = members.findIndex((m) => m.id === memberData.id);
       if (idx === -1) return { success: false, error: 'ID Anggota tidak ditemukan.', source: 'LOCAL' };
 
+      const oldRecord = { ...members[idx] };
       members[idx] = {
         ...members[idx],
         ...memberData,
       } as MemberRecord;
 
       localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
+
+      // Record audit log
+      await auditService.logActivity(
+        'UPDATE_MEMBER',
+        'members',
+        memberData.id!,
+        oldRecord,
+        members[idx]
+      );
 
       let savedToSupabase = false;
       if (client) {
@@ -738,6 +753,15 @@ export const memberService = {
       members.unshift(newMember);
       localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
 
+      // Record audit log
+      await auditService.logActivity(
+        'CREATE_MEMBER',
+        'members',
+        newId,
+        null,
+        newMember
+      );
+
       let savedToSupabase = false;
       if (client) {
         try {
@@ -764,11 +788,21 @@ export const memberService = {
 
   async deleteMember(id: string): Promise<{ success: boolean; error?: string }> {
     let members = this.getStoredMembers();
-    const exists = members.some((m) => m.id === id);
-    if (!exists) return { success: false, error: 'Data anggota tidak ditemukan.' };
+    const targetIdx = members.findIndex((m) => m.id === id);
+    if (targetIdx === -1) return { success: false, error: 'Data anggota tidak ditemukan.' };
 
+    const oldRecord = members[targetIdx];
     members = members.filter((m) => m.id !== id);
     localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
+
+    // Record audit log
+    await auditService.logActivity(
+      'DELETE_MEMBER',
+      'members',
+      id,
+      oldRecord,
+      null
+    );
 
     const client = getSupabaseClient();
     if (client) {
@@ -942,6 +976,15 @@ export const memberService = {
     } catch (localErr) {
       console.warn('Local member cache update error:', localErr);
     }
+
+    // Record audit log (mask password)
+    await auditService.logActivity(
+      'CHANGE_MEMBER_PASSWORD',
+      'members',
+      cleanId,
+      { password_changed: true },
+      { updated_at: new Date().toISOString() }
+    );
 
     return {
       success: true,

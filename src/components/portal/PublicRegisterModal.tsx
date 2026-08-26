@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { memberService } from '../../services/memberService';
 import { useNotification } from '../../context/NotificationContext';
-import { formatRupiah } from '../../utils/formatters';
+import { formatRupiah, isValidNik, normalizeNik } from '../../utils/formatters';
 import { Button } from '../common/Button';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
@@ -53,12 +53,13 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const cleanNik = normalizeNik(nik);
     if (!nama.trim()) {
       showToast('Nama lengkap wajib diisi sesuai KTP.', 'error');
       return;
     }
-    if (!nik || nik.length < 10) {
-      showToast('Nomor NIK KTP tidak valid (minimal 10 digit).', 'error');
+    if (!isValidNik(cleanNik)) {
+      showToast('Nomor NIK KTP wajib tepat 16 digit angka.', 'error');
       return;
     }
     if (!noHp || noHp.length < 9) {
@@ -68,19 +69,28 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      const res = await memberService.saveMember({
-        nama,
-        gender: 'L',
-        alamat,
-        kota: kota || 'Jakarta',
-        provinsi,
-        pekerjaan,
-        plantation,
-        area_jenis: plantation.includes('PUSAT') ? 'KOPERASI PUSAT' : 'KOPERASI CABANG',
-        simpanan_pokok: simpananPokok,
-        simpanan_wajib: simpananWajibAwal,
-        simpanan_sukarela: Number(simpananSukarelaAwal) || 0,
-      });
+      const res = await memberService.saveMember(
+        {
+          nama,
+          gender: 'L',
+          alamat,
+          kota: kota || 'Jakarta',
+          provinsi,
+          pekerjaan,
+          plantation,
+          area_jenis: plantation.includes('PUSAT') ? 'KOPERASI PUSAT' : 'KOPERASI CABANG',
+          simpanan_pokok: simpananPokok,
+          simpanan_wajib: simpananWajibAwal,
+          simpanan_sukarela: Number(simpananSukarelaAwal) || 0,
+          nik: cleanNik,
+        },
+        {
+          nik: cleanNik,
+          phone: noHp,
+          email,
+          work_area: plantation,
+        }
+      );
 
       if (res.success && res.id) {
         setRegisteredMemberId(res.id);
@@ -201,13 +211,14 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-stone-700 font-semibold mb-1">Nomor NIK KTP *</label>
+                <label className="block text-stone-700 font-semibold mb-1">Nomor NIK KTP (16 Digit) *</label>
                 <input
                   type="text"
                   required
+                  maxLength={16}
                   value={nik}
-                  onChange={(e) => setNik(e.target.value)}
-                  placeholder="16 digit NIK"
+                  onChange={(e) => setNik(e.target.value.replace(/\D/g, '').slice(0, 16))}
+                  placeholder="16 digit NIK sesuai KTP"
                   className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden font-mono text-xs"
                 />
               </div>

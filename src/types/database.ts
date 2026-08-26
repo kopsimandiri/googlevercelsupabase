@@ -331,7 +331,7 @@ export interface SupplierDbRecord {
   updated_at?: string;
 }
 
-// 9. transactions (19 kolom)
+// 9. transactions (19+ kolom)
 export interface TransactionDbRecord {
   id: string;
   transaction_no: string;
@@ -350,6 +350,9 @@ export interface TransactionDbRecord {
   customer_name?: string;
   qty?: number;
   price?: number;
+  member_id?: string | null;
+  category_code?: string | null;
+  account_code?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -358,6 +361,7 @@ export interface TransactionDbRecord {
 export interface UserRoleRecord {
   id: string;
   user_id: string;
+  role_id?: string | null;
   role: string;
   created_at?: string;
 }
@@ -368,10 +372,73 @@ export interface TransactionCategoryRecord {
   type: string;
   category_code: string;
   name: string;
-  account_code?: string;
-  account_name?: string;
+  account_code?: string | null;
+  account_name?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+// 12. news_articles
+export interface NewsArticleDbRecord {
+  id: string;
+  kategori: string;
+  project_id?: string | null;
+  judul: string;
+  ringkasan: string;
+  konten: string;
+  lokasi?: string | null;
+  foto_url?: string | null;
+  tanggal: string;
+  dibuat_oleh?: string | null;
+  status: 'draft' | 'terbit';
+  created_at?: string;
+  updated_at?: string;
+}
+
+// 13. project_updates
+export interface ProjectUpdateDbRecord {
+  id: string;
+  project_id: string;
+  judul: string;
+  narasi: string;
+  foto_url?: string | null;
+  tanggal: string;
+  dibuat_oleh?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// 14. profiles
+export interface ProfileRecord {
+  id: string;
+  full_name?: string | null;
+  role: 'ADMIN' | 'DIRECTOR' | 'ANGGOTA';
+  phone?: string | null;
+  avatar_url?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// 15. roles
+export interface RoleRecord {
+  id: string;
+  name: string;
+  description?: string | null;
+  created_at?: string;
+}
+
+// 16. audit_logs
+export interface AuditLogRecord {
+  id: string;
+  user_id?: string | null;
+  user_email?: string | null;
+  action: string;
+  entity: string;
+  entity_id?: string | null;
+  old_values?: any;
+  new_values?: any;
+  ip_address?: string | null;
+  created_at?: string;
 }
 
 export type SupabaseTableName =
@@ -385,6 +452,11 @@ export type SupabaseTableName =
   | 'suppliers'
   | 'transactions'
   | 'transaction_categories'
-  | 'user_roles';
+  | 'user_roles'
+  | 'news_articles'
+  | 'project_updates'
+  | 'profiles'
+  | 'roles'
+  | 'audit_logs';
 
 

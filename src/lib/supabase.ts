@@ -1,9 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
+const metaEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : ({} as any);
+
+const supabaseUrl = (metaEnv.VITE_SUPABASE_URL || '').trim();
 const supabasePublishableKey = (
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  metaEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  metaEnv.VITE_SUPABASE_ANON_KEY ||
   ''
 ).trim();
 
@@ -18,7 +20,7 @@ export const isSupabaseConfigured = Boolean(
 let supabaseInstance: SupabaseClient | null = null;
 
 export function validateEnvironment(): void {
-  const mode = import.meta.env.MODE;
+  const mode = metaEnv.MODE || 'development';
 
   if (!isSupabaseConfigured) {
     const errorMsg =

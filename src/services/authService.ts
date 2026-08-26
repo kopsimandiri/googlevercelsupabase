@@ -3,50 +3,75 @@ import { AuthCredentials, MemberLoginCredentials, UserRole, UserSession } from '
 import { maskNik } from '../utils/formatters';
 import { mapSupabaseMemberRowToMemberRecord } from './memberService';
 
-const STORAGE_SESSION_KEY = 'KOPSIM_USER_SESSION';
 const STORAGE_MEMBER_SESSION_KEY = 'KOPSIM_MEMBER_SESSION';
 
+const safeStorage = {
+  getItem: (key: string): string | null => {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage?.getItem(key) || window.localStorage?.getItem(key) || null;
+  },
+  setItem: (key: string, value: string): void => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage?.setItem(key, value);
+      window.localStorage?.setItem(key, value);
+    } catch {
+      // Storage unavailable or disabled
+    }
+  },
+  removeItem: (key: string): void => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage?.removeItem(key);
+      window.localStorage?.removeItem(key);
+    } catch {
+      // Storage unavailable or disabled
+    }
+  },
+};
+
 /**
- * Resolves user profile and role details from Supabase database tables (profiles, user_roles, roles)
+ * Resolves user profile and role details securely from Supabase database tables (profiles, user_roles, roles)
+ * Role resolution authority is strictly the database - never trusting client-provided overrides.
  */
 async function resolveUserSession(client: any, user: any): Promise<UserSession> {
-  let role: UserRole = 'ADMIN';
-  let fullName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Pengurus KOPSIM';
+  let role: UserRole = 'ANGGOTA'; // Default safest least-privilege role
+  let fullName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Pengguna KOPSIM';
   let memberId = user.user_metadata?.member_id;
 
   try {
     // 1. Query public.profiles
     const { data: profile } = await client
       .from('profiles')
-      .select('*')
+      .select('id, full_name, role, phone, avatar_url')
       .eq('id', user.id)
       .maybeSingle();
 
     if (profile) {
       if (profile.full_name) fullName = profile.full_name;
-      if (profile.member_id) memberId = String(profile.member_id);
+      if (profile.role) {
+        const pRole = String(profile.role).toUpperCase();
+        if (pRole === 'ADMIN') role = 'ADMIN';
+        else if (pRole === 'DIRECTOR') role = 'DIRECTOR';
+        else if (pRole === 'ANGGOTA') role = 'ANGGOTA';
+      }
     }
 
-    // 2. Query public.user_roles + public.roles
+    // 2. Query public.user_roles + public.roles (highest priority authoritative assignment)
     const { data: userRoles } = await client
       .from('user_roles')
-      .select('role_id, roles(id, code, name)')
+      .select('role_id, role, roles(id, name, description)')
       .eq('user_id', user.id);
 
     if (userRoles && userRoles.length > 0) {
-      const roleItem = userRoles[0] as any;
-      const roleCode = (roleItem?.roles?.code || '').toUpperCase();
-      if (roleCode === 'ADMIN') role = 'ADMIN';
-      else if (roleCode === 'DIRECTOR') role = 'DIRECTOR';
-      else if (roleCode === 'ANGGOTA') role = 'ANGGOTA';
-    } else {
-      // Fallback to metadata if user_roles record is not yet provisioned
-      const metaRole = (user.user_metadata?.role || user.app_metadata?.role || '').toUpperCase();
-      if (metaRole === 'ADMIN') role = 'ADMIN';
-      else if (metaRole === 'DIRECTOR') role = 'DIRECTOR';
+      const primaryRole = userRoles[0] as any;
+      const roleName = (primaryRole?.roles?.name || primaryRole?.role || '').toUpperCase();
+      if (roleName === 'ADMIN') role = 'ADMIN';
+      else if (roleName === 'DIRECTOR') role = 'DIRECTOR';
+      else if (roleName === 'ANGGOTA') role = 'ANGGOTA';
     }
   } catch (err) {
-    console.warn('Error resolving user profile & role from database:', err);
+    console.warn('Security: Error resolving authoritative user role from database:', err);
   }
 
   return {
@@ -79,8 +104,7 @@ export const authService = {
     }
 
     // Clear any previous member session
-    sessionStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
-    localStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
+    safeStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
 
     // Call Supabase Auth signInWithPassword
     const { data, error } = await client.auth.signInWithPassword({
@@ -101,7 +125,8 @@ export const authService = {
   },
 
   /**
-   * Signs in a cooperative member using either PostgreSQL RPC verify_member_login or secure member lookup
+   * Signs in a cooperative member using PostgreSQL RPC verify_member_login
+   * Fallbacks to hardcoded passwords or mock bypasses are strictly forbidden.
    */
   async signInMember(credentials: MemberLoginCredentials): Promise<UserSession> {
     const { username, password } = credentials;
@@ -117,93 +142,82 @@ export const authService = {
 
     const client = getSupabaseClient();
 
-    // 1. First attempt: Direct / RPC check against Supabase
+    // 1. Primary Authentication: RPC check against Supabase
     if (client) {
-      // A. Try PostgreSQL RPC 'verify_member_login' if installed
       try {
         const { data, error } = await client.rpc('verify_member_login', {
           p_username: cleanUsername,
           p_password: cleanPassword,
         });
 
-        if (!error && data && data.success && data.member) {
-          const m = data.member;
-          const memberSession: UserSession = {
-            id: m.id || m.member_no,
-            name: m.full_name || 'Anggota KOPSIM',
-            email: `${(m.member_no || 'anggota').toLowerCase()}@anggota.kopsim.id`,
-            role: 'ANGGOTA',
-            memberId: m.id,
-            memberNo: m.member_no || m.id,
-            workArea: m.work_area || 'PUSAT JAKARTA',
-            nikMasked: maskNik(m.nik),
-            gender: m.gender || 'L',
-            address: m.address || '',
-            city: m.city || 'Jakarta Pusat',
-            province: m.province || 'DKI Jakarta',
-            occupation: m.occupation || 'Anggota Koperasi',
-            birthDate: m.birth_date || '1990-01-01',
-            birthPlace: m.birth_place || 'Jakarta',
-            status: m.status || 'AKTIF',
-            loginTime: new Date().toISOString(),
-          };
+        if (!error && data) {
+          if (!data.success) {
+            throw new Error(data.message || 'Username atau password anggota tidak valid.');
+          }
 
-          sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-          localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-          return memberSession;
+          if (data.member) {
+            const m = data.member;
+            const memberSession: UserSession = {
+              id: m.id || m.member_no,
+              name: m.full_name || 'Anggota KOPSIM',
+              email: `${(m.member_no || 'anggota').toLowerCase()}@anggota.kopsim.id`,
+              role: 'ANGGOTA',
+              memberId: m.id,
+              memberNo: m.member_no || m.id,
+              workArea: m.work_area || 'PUSAT JAKARTA',
+              nikMasked: maskNik(m.nik),
+              gender: m.gender || 'L',
+              address: m.address || '',
+              city: m.city || 'Jakarta Pusat',
+              province: m.province || 'DKI Jakarta',
+              occupation: m.occupation || 'Anggota Koperasi',
+              birthDate: m.birth_date || '1990-01-01',
+              birthPlace: m.birth_place || 'Jakarta',
+              status: m.status || 'AKTIF',
+              loginTime: new Date().toISOString(),
+            };
+
+            sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+            localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+            return memberSession;
+          }
         }
-      } catch (rpcErr) {
-        console.warn('RPC verify_member_login not reachable, continuing to direct table query:', rpcErr);
+      } catch (rpcErr: any) {
+        if (rpcErr.message && !rpcErr.message.includes('function') && !rpcErr.message.includes('not find')) {
+          throw rpcErr;
+        }
+        console.warn('RPC verify_member_login unavailable, attempting secure member verification query:', rpcErr);
       }
 
-      // B. Direct query against public.members table in Supabase by username
+      // 2. Direct secure query against public.members table
       try {
-        // Prioritize exact/ilike match on username column
         const { data: memberRows, error: searchErr } = await client
           .from('members')
-          .select('*')
+          .select('id, member_no, registered_at, full_name, gender, province, city, address, occupation, username, birth_date, birth_place, nik, work_area, legacy_password_hash, status')
           .or(`username.ilike.${cleanUsername},member_no.ilike.${cleanUsername},id.ilike.${cleanUsername}`)
-          .limit(10);
+          .limit(5);
 
         if (!searchErr && memberRows && memberRows.length > 0) {
-          // Find the row that exactly matches username (or member_no/id fallback)
           const target = cleanUsername.toLowerCase();
           const matchedRaw = memberRows.find((m: any) => {
-            const u = (m.username || m.user_name || '').trim().toLowerCase();
-            return u === target;
-          }) || memberRows.find((m: any) => {
-            const n = (m.member_no || m.no_anggota || m.nra || '').trim().toLowerCase();
+            const u = (m.username || '').trim().toLowerCase();
+            const n = (m.member_no || '').trim().toLowerCase();
             const i = (m.id || '').trim().toLowerCase();
-            return n === target || i === target;
-          }) || memberRows[0];
+            return u === target || n === target || i === target;
+          });
 
           if (matchedRaw) {
             const m = matchedRaw;
-            const mapped = mapSupabaseMemberRowToMemberRecord(m);
-            const hash = String(m.legacy_password_hash || m.password_hash || m.password || m.pass || '').trim();
-            let isValid = false;
+            if (m.status === 'NONAKTIF' || m.status === 'SUSPENDED') {
+              throw new Error('Status keanggotaan Anda sedang tidak aktif. Silakan hubungi pengurus.');
+            }
 
-            // 1. Literal / Plaintext match (e.g. 'test22')
-            if (hash && (cleanPassword === hash || cleanPassword.toLowerCase() === hash.toLowerCase())) {
-              isValid = true;
-            }
-            // 2. Default passwords for empty or transition
-            else if (!hash || hash === '') {
-              if (
-                cleanPassword === 'test22' ||
-                cleanPassword === 'kopsim123' ||
-                cleanPassword === mapped.id ||
-                cleanPassword === '123456'
-              ) {
-                isValid = true;
-              }
-            }
-            // 3. Fallback standard pass
-            else if (cleanPassword === 'test22' || cleanPassword === 'kopsim123') {
-              isValid = true;
-            }
+            const storedHash = String(m.legacy_password_hash || '').trim();
+            // Strict match against stored password hash (no fallback strings)
+            const isValid = storedHash !== '' && (cleanPassword === storedHash);
 
             if (isValid) {
+              const mapped = mapSupabaseMemberRowToMemberRecord(m);
               const memberSession: UserSession = {
                 id: mapped.id,
                 name: mapped.nama || 'Anggota KOPSIM',
@@ -224,8 +238,7 @@ export const authService = {
                 loginTime: new Date().toISOString(),
               };
 
-              sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-              localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+              safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
               return memberSession;
             } else {
               throw new Error('Password anggota yang Anda masukkan tidak sesuai.');
@@ -233,97 +246,85 @@ export const authService = {
           }
         }
       } catch (tableErr: any) {
-        if (tableErr.message && tableErr.message.includes('Password')) {
+        if (tableErr.message && (tableErr.message.includes('Password') || tableErr.message.includes('Status'))) {
           throw tableErr;
         }
-        console.warn('Direct member table query error:', tableErr);
+        console.warn('Direct member table verification error:', tableErr);
       }
     }
 
-    // 3. Check local initial members (for offline / prototype members)
-    const localMembersStr = localStorage.getItem('KOPSIM_MEMBERS_DATA');
-    let localMembersList: any[] = [];
+    // 3. Local cached member verification (for local offline state) - Strict hash check only
+    const localMembersStr = safeStorage.getItem('KOPSIM_MEMBERS_DATA');
     if (localMembersStr) {
       try {
-        localMembersList = JSON.parse(localMembersStr);
+        const candidateMembers = JSON.parse(localMembersStr);
+        const normalizedInput = cleanUsername.toLowerCase().trim();
+
+        const match = candidateMembers.find((m: any) => {
+          const userMatch = (m.username || '').trim().toLowerCase() === normalizedInput;
+          const idMatch = (m.id || '').trim().toLowerCase() === normalizedInput;
+          const noMatch = (m.member_no || '').trim().toLowerCase() === normalizedInput;
+          return userMatch || idMatch || noMatch;
+        });
+
+        if (match) {
+          const storedHash = String(match.legacy_password_hash || '').trim();
+          const isPasswordValid = storedHash !== '' && cleanPassword === storedHash;
+
+          if (isPasswordValid) {
+            const memberSession: UserSession = {
+              id: match.id || match.member_no || cleanUsername,
+              name: match.nama || match.full_name || cleanUsername,
+              email: `${(match.id || cleanUsername).toLowerCase()}@anggota.kopsim.id`,
+              role: 'ANGGOTA',
+              memberId: match.id || match.member_no || cleanUsername,
+              memberNo: match.id || match.member_no || cleanUsername,
+              workArea: match.plantation || match.work_area || 'PUSAT JAKARTA',
+              nikMasked: maskNik(match.nik || ''),
+              gender: match.gender || 'L',
+              address: match.alamat || match.address || '',
+              city: match.kota || match.city || 'Jakarta Pusat',
+              province: match.provinsi || match.province || 'DKI Jakarta',
+              occupation: match.pekerjaan || match.occupation || 'Anggota Koperasi',
+              birthDate: match.tgl_lahir || match.birth_date || '1990-01-01',
+              birthPlace: match.birth_place || 'Jakarta',
+              status: match.status || 'AKTIF',
+              loginTime: new Date().toISOString(),
+            };
+
+            safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+            return memberSession;
+          }
+        }
       } catch (err) {
-        console.warn('Error parsing local members data:', err);
+        console.warn('Error verifying cached member credentials:', err);
       }
     }
 
-    // Combine with static member definitions
-    const candidateMembers = localMembersList.length > 0 ? localMembersList : [];
-    const normalizedInput = cleanUsername.toLowerCase().trim();
-
-    const match = candidateMembers.find((m: any) => {
-      const userMatch = (m.username || '').trim().toLowerCase() === normalizedInput;
-      const idMatch = (m.id || '').trim().toLowerCase() === normalizedInput;
-      const noMatch = (m.member_no || '').trim().toLowerCase() === normalizedInput;
-      return userMatch || idMatch || noMatch;
-    });
-
-    const isPasswordValid =
-      cleanPassword === 'test22' ||
-      cleanPassword === 'kopsim123' ||
-      cleanPassword === '123456' ||
-      (match && cleanPassword === match.id) ||
-      (match && match.legacy_password_hash && cleanPassword === match.legacy_password_hash);
-
-    if (match && isPasswordValid) {
-      const memberSession: UserSession = {
-        id: match.id || match.member_no || cleanUsername,
-        name: match.nama || match.full_name || cleanUsername,
-        email: `${(match.id || cleanUsername).toLowerCase()}@anggota.kopsim.id`,
-        role: 'ANGGOTA',
-        memberId: match.id || match.member_no || cleanUsername,
-        memberNo: match.id || match.member_no || cleanUsername,
-        workArea: match.plantation || match.work_area || 'PUSAT JAKARTA',
-        nikMasked: maskNik(match.nik || '3171012345670001'),
-        gender: match.gender || 'L',
-        address: match.alamat || match.address || '',
-        city: match.kota || match.city || 'Jakarta Pusat',
-        province: match.provinsi || match.province || 'DKI Jakarta',
-        occupation: match.pekerjaan || match.occupation || 'Anggota Koperasi',
-        birthDate: match.tgl_lahir || match.birth_date || '1990-01-01',
-        birthPlace: match.birth_place || 'Jakarta',
-        status: match.status || 'AKTIF',
-        loginTime: new Date().toISOString(),
-      };
-
-      sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-      localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-      return memberSession;
-    }
-
-    // 4. If input matches the standard member format (e.g. 1121-00001 or ferryjokoyuliantono) with test22
-    if (cleanPassword === 'test22' || cleanPassword === 'kopsim123') {
-      const memberSession: UserSession = {
-        id: cleanUsername,
-        name: cleanUsername.includes('-') ? `Anggota NRA ${cleanUsername}` : cleanUsername.toUpperCase(),
-        email: `${cleanUsername.toLowerCase()}@anggota.kopsim.id`,
-        role: 'ANGGOTA',
-        memberId: cleanUsername,
-        memberNo: cleanUsername,
-        workArea: 'PUSAT JAKARTA',
-        nikMasked: maskNik('3171012345670001'),
-        gender: 'L',
-        address: 'Jl. Pegangsaan Barat No. 14, Menteng',
-        city: 'Jakarta Pusat',
-        province: 'DKI Jakarta',
-        occupation: 'Anggota Koperasi',
-        birthDate: '1990-01-01',
-        birthPlace: 'Jakarta',
-        status: 'AKTIF',
-        loginTime: new Date().toISOString(),
-      };
-
-      sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-      localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-      return memberSession;
-    }
-
-    // If all checks fail
+    // If verification fails, throw clear error without leaking internal details
     throw new Error('Username atau password anggota tidak valid.');
+  },
+
+  /**
+   * Synchronously returns the currently cached user session info (if available)
+   */
+  getCurrentUser(): { id?: string; email?: string; username?: string; role?: UserRole; name?: string } | null {
+    try {
+      const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
+      if (storedMember) {
+        const parsed = JSON.parse(storedMember);
+        return {
+          id: parsed.id,
+          email: parsed.email || undefined,
+          username: parsed.username || parsed.memberNo,
+          role: parsed.role || 'ANGGOTA',
+          name: parsed.name,
+        };
+      }
+    } catch {
+      // Ignored
+    }
+    return null;
   },
 
   /**
@@ -338,9 +339,7 @@ export const authService = {
         console.warn('Supabase signOut error:', err);
       }
     }
-    localStorage.removeItem(STORAGE_SESSION_KEY);
-    localStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
-    sessionStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
+    safeStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
   },
 
   /**
@@ -357,7 +356,7 @@ export const authService = {
     birthPlace?: string;
   }): UserSession | null {
     try {
-      const storedMember = sessionStorage.getItem(STORAGE_MEMBER_SESSION_KEY) || localStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
+      const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
       if (storedMember) {
         const parsed = JSON.parse(storedMember);
         const newSession: UserSession = {
@@ -371,8 +370,7 @@ export const authService = {
           ...(updated.birthDate !== undefined ? { birthDate: updated.birthDate } : {}),
           ...(updated.birthPlace !== undefined ? { birthPlace: updated.birthPlace } : {}),
         };
-        sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(newSession));
-        localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(newSession));
+        safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(newSession));
         return newSession;
       }
     } catch (err) {
@@ -385,20 +383,7 @@ export const authService = {
    * Gets the stored or restored user session from Supabase Auth & database or member session
    */
   async getSession(): Promise<UserSession | null> {
-    // 1. Check for active member session
-    const storedMember = sessionStorage.getItem(STORAGE_MEMBER_SESSION_KEY) || localStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
-    if (storedMember) {
-      try {
-        const parsed = JSON.parse(storedMember);
-        if (parsed && parsed.role === 'ANGGOTA' && parsed.memberNo) {
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse member session:', e);
-      }
-    }
-
-    // 2. Check for active Supabase GoTrue admin session
+    // 1. Check for active Supabase GoTrue admin/director session first
     const client = getSupabaseClient();
     if (client) {
       try {
@@ -410,6 +395,20 @@ export const authService = {
         console.warn('Failed to retrieve Supabase session:', err);
       }
     }
+
+    // 2. Check for active member session
+    const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
+    if (storedMember) {
+      try {
+        const parsed = JSON.parse(storedMember);
+        if (parsed && parsed.role === 'ANGGOTA' && parsed.memberNo) {
+          return parsed;
+        }
+      } catch (e) {
+        console.warn('Failed to parse member session:', e);
+      }
+    }
+
     return null;
   },
 
@@ -422,9 +421,8 @@ export const authService = {
       const { data } = client.auth.onAuthStateChange(async (event, sbSession) => {
         if (event === 'SIGNED_OUT' || !sbSession?.user) {
           // If not a member session, reset
-          const storedMember = sessionStorage.getItem(STORAGE_MEMBER_SESSION_KEY) || localStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
+          const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
           if (!storedMember) {
-            localStorage.removeItem(STORAGE_SESSION_KEY);
             callback(null);
           }
         } else if (sbSession.user) {

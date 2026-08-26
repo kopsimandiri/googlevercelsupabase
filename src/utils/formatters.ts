@@ -48,10 +48,21 @@ export function formatDateTimeIndo(dateInput: string | Date | null | undefined):
   }
 }
 
+export function normalizeNik(nik?: string | null): string {
+  if (!nik) return '';
+  return nik.replace(/\D/g, '').slice(0, 16);
+}
+
+export function isValidNik(nik?: string | null): boolean {
+  if (!nik) return false;
+  const clean = normalizeNik(nik);
+  return /^\d{16}$/.test(clean);
+}
+
 export function maskNik(nik?: string | null): string {
   if (!nik) return '3171************';
-  const clean = nik.replace(/\s+/g, '');
-  if (clean.length < 6) return clean + '************'.slice(0, 16 - clean.length);
+  const clean = normalizeNik(nik) || nik.replace(/\s+/g, '');
+  if (clean.length < 6) return clean + '************'.slice(0, Math.max(0, 16 - clean.length));
   const firstFour = clean.substring(0, 4);
   const lastTwo = clean.slice(-2);
   return `${firstFour}${'*'.repeat(Math.max(0, clean.length - 6))}${lastTwo}`;

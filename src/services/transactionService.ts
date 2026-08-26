@@ -1,6 +1,8 @@
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 import { CustomerRecord, SupplierRecord, TransactionRecord } from '../types/database';
 import { cleanRupiah } from '../utils/formatters';
+import { authService } from './authService';
+import { auditService } from './auditService';
 
 const STORAGE_TRX_KEY = 'KOPSIM_TRANSACTIONS_DATA';
 export const TRANSACTIONS_TABLE_NAME = 'transactions';
@@ -297,11 +299,12 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
 }
 
 /**
- * Maps TransactionRecord to Supabase public.transactions (19 columns)
+ * Maps TransactionRecord to Supabase public.transactions (19+ columns)
  */
 export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord>): any {
   const idVal = trx.id || `T${Date.now()}`;
   const nowStr = new Date().toISOString();
+  const currentUser = authService.getCurrentUser();
 
   return {
     id: idVal,
@@ -321,6 +324,10 @@ export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord
     customer_name: trx.customer_id || '',
     qty: cleanNumeric(trx.qty || 1),
     price: cleanNumeric(trx.harga_satuan || 0),
+    actor_user_id: currentUser?.id && currentUser.id.length === 36 ? currentUser.id : null,
+    actor_name: trx.login_as || currentUser?.username || currentUser?.role || 'ADMIN',
+    is_posted: true,
+    is_void: false,
     created_at: nowStr,
     updated_at: nowStr,
   };
@@ -578,20 +585,40 @@ export const transactionService = {
     return `${fullPrefix}${String(maxCount + 1).padStart(3, '0')}`;
   },
 
-  async saveTransaction(trxData: Partial<TransactionRecord>): Promise<{ success: boolean; id: string; error?: string; source?: 'SUPABASE' | 'LOCAL' }> {
+  async saveTransaction(
+    trxData: Partial<TransactionRecord>,
+    isEditExplicit?: boolean
+  ): Promise<{ success: boolean; id: string; error?: string; source?: 'SUPABASE' | 'LOCAL' }> {
     const list = this.getStoredTransactions();
-    const isEdit = Boolean(trxData.id);
+    const existingIdx = trxData.id ? list.findIndex((t) => t.id === trxData.id) : -1;
+    const isEdit = isEditExplicit !== undefined ? isEditExplicit : (existingIdx !== -1);
     const referal = trxData.referal || 'KOPERASI';
-    const trxId = isEdit
-      ? trxData.id!
-      : await this.generateTransactionId(referal, trxData.tanggal);
 
-    const qty = cleanRupiah(trxData.qty || 0);
-    const hargaSatuan = cleanRupiah(trxData.harga_satuan || 0);
+    const qty = Number(trxData.qty ?? 1);
+    const hargaSatuan = Number(trxData.harga_satuan ?? 0);
     let jumlah = cleanRupiah(trxData.jumlah);
+
+    // Check negative quantities or unit prices first
+    if ((trxData.qty !== undefined && qty < 0) || (trxData.harga_satuan !== undefined && hargaSatuan < 0)) {
+      throw new Error('Kuantitas (qty) dan harga satuan tidak boleh negatif.');
+    }
 
     if (referal === 'PROJECT' && qty > 0 && hargaSatuan > 0) {
       jumlah = qty * hargaSatuan;
+    }
+
+    // Server-side & Business Validation: Nominal must be > 0
+    if (isNaN(jumlah) || jumlah <= 0) {
+      throw new Error('Nominal transaksi harus berupa angka positif lebih besar dari 0.');
+    }
+
+    const trxId = isEdit
+      ? trxData.id!
+      : (trxData.id || await this.generateTransactionId(referal, trxData.tanggal));
+
+    // Duplicate transaction ID protection on create
+    if (!isEdit && list.some((t) => t.id === trxId)) {
+      throw new Error(`Nomor transaksi ${trxId} sudah ada di sistem. Gunakan nomor unik.`);
     }
 
     let areaJenis: 'KOPERASI PUSAT' | 'KOPERASI CABANG' | 'PROJECT' = 'KOPERASI PUSAT';
@@ -601,6 +628,7 @@ export const transactionService = {
       areaJenis = 'KOPERASI CABANG';
     }
 
+    const currentUser = authService.getCurrentUser();
     const newRecord: TransactionRecord = {
       id: trxId,
       tanggal: trxData.tanggal || new Date().toISOString().split('T')[0],
@@ -616,22 +644,31 @@ export const transactionService = {
       filelink: trxData.filelink || '',
       akun: trxData.akun || (referal === 'PROJECT' ? 'DANA PROJECT' : 'Bank BSI'),
       keterangan: trxData.keterangan || '',
-      login_as: trxData.login_as || 'ADMIN',
+      login_as: currentUser?.username || trxData.login_as || currentUser?.role || 'ADMIN',
       logtime: new Date().toISOString().replace('T', ' ').substring(0, 19),
       area_jenis: areaJenis,
       customer_id: trxData.customer_id || '',
       supplier_id: trxData.supplier_id || '',
     };
 
+    let oldRecord: TransactionRecord | null = null;
     if (isEdit) {
-      const idx = list.findIndex((t) => t.id === trxId);
-      if (idx === -1) return { success: false, id: trxId, error: 'Transaksi tidak ditemukan.', source: 'LOCAL' };
-      list[idx] = newRecord;
+      oldRecord = { ...list[existingIdx] };
+      list[existingIdx] = newRecord;
     } else {
       list.unshift(newRecord);
     }
 
     localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+
+    // Audit Log recording
+    await auditService.logActivity(
+      isEdit ? 'UPDATE_TRANSACTION' : 'CREATE_TRANSACTION',
+      'transactions',
+      trxId,
+      oldRecord,
+      newRecord
+    );
 
     let savedToSupabase = false;
     const client = getSupabaseClient();
@@ -655,11 +692,21 @@ export const transactionService = {
 
   async deleteTransaction(id: string): Promise<{ success: boolean; error?: string }> {
     let list = this.getStoredTransactions();
-    const exists = list.some((t) => t.id === id);
-    if (!exists) return { success: false, error: 'Data transaksi tidak ditemukan.' };
+    const targetIdx = list.findIndex((t) => t.id === id);
+    if (targetIdx === -1) return { success: false, error: 'Data transaksi tidak ditemukan.' };
 
+    const oldRecord = list[targetIdx];
     list = list.filter((t) => t.id !== id);
     localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+
+    // Audit deletion
+    await auditService.logActivity(
+      'DELETE_TRANSACTION',
+      'transactions',
+      id,
+      oldRecord,
+      null
+    );
 
     const client = getSupabaseClient();
     if (client) {
@@ -674,6 +721,46 @@ export const transactionService = {
     }
 
     return { success: true };
+  },
+
+  /**
+   * Membatalkan transaksi (void) tanpa menghapus jejak pembukuan untuk menjaga integritas audit
+   */
+  async voidTransaction(id: string, reason: string): Promise<{ success: boolean; message: string }> {
+    const list = this.getStoredTransactions();
+    const target = list.find((t) => t.id === id);
+    if (!target) {
+      throw new Error('Transaksi tidak ditemukan.');
+    }
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('void_transaction', {
+          p_transaction_no: id,
+          p_reason: reason || 'Dibatalkan oleh Admin',
+        });
+        if (!error && data?.success) {
+          return { success: true, message: data.message };
+        }
+      } catch (e) {
+        console.warn('RPC void_transaction error fallback:', e);
+      }
+    }
+
+    // Local fallback
+    target.keterangan = `[VOID - ${reason || 'Dibatalkan'}] ${target.keterangan || ''}`;
+    localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+
+    await auditService.logActivity(
+      'VOID_TRANSACTION',
+      'transactions',
+      id,
+      { status: 'POSTED' },
+      { status: 'VOID', reason }
+    );
+
+    return { success: true, message: 'Transaksi berhasil dibatalkan (VOID).' };
   },
 
   /**

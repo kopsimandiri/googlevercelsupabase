@@ -335,6 +335,34 @@ export const reportService = {
     totalBeban: number;
     labaBersih: number;
   }> {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('get_financial_profit_loss', {
+          p_start_date: startDate || null,
+          p_end_date: endDate || null,
+        });
+        if (!error && data && data.total_pendapatan !== undefined) {
+          return {
+            pendapatan: [
+              { nama: 'Pendapatan Usaha (Penjualan Komoditas)', jumlah: Number(data.pendapatan_penjualan || 0) },
+              { nama: 'Pendapatan Jasa & Bagi Hasil', jumlah: Number(data.pendapatan_jasa || 0) },
+            ],
+            totalPendapatan: Number(data.total_pendapatan || 0),
+            beban: [
+              { nama: 'Beban Pokok Penjualan (HPP)', jumlah: Number(data.beban_hpp || 0) },
+              { nama: 'Beban Operasional & Administrasi', jumlah: Number(data.beban_operasional || 0) },
+              { nama: 'Beban Logistik & Rantai Dingin', jumlah: Number(data.beban_logistik || 0) },
+            ],
+            totalBeban: Number(data.total_beban || 0),
+            labaBersih: Number(data.laba_bersih || 0),
+          };
+        }
+      } catch (err) {
+        console.warn('Supabase get_financial_profit_loss RPC error fallback:', err);
+      }
+    }
+
     // dari jurnal + COA, untuk akun jenis 'Pendapatan': pendapatan += (kredit - debit); untuk akun jenis 'Beban': beban += (debit - kredit)
     // labaRugi = pendapatan - beban
     const journal = await this.getJournalEntries(startDate, endDate);
@@ -437,6 +465,28 @@ export const reportService = {
     jasaModal: number; // 40% dari 75%
     jasaUsaha: number; // 60% dari 75%
   }> {
+    const client = getSupabaseClient();
+    const year = startDate ? new Date(startDate).getFullYear() : new Date().getFullYear();
+
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('get_shu_distribution', {
+          p_year: year,
+        });
+        if (!error && data && data.total_shu_kotor !== undefined) {
+          return {
+            totalSHUKotor: Number(data.total_shu_kotor || 0),
+            cadanganKoperasi: Number(data.cadangan_koperasi_25 || 0),
+            shuBagianAnggota: Number(data.shu_bagian_anggota_75 || 0),
+            jasaModal: Number(data.jasa_modal_simpanan_40 || 0),
+            jasaUsaha: Number(data.jasa_usaha_transaksi_60 || 0),
+          };
+        }
+      } catch (err) {
+        console.warn('Supabase get_shu_distribution RPC error fallback:', err);
+      }
+    }
+
     // labaBersih = hasil getLaporanLabaRugi
     // cadangan = labaBersih * 0.25
     // shu = labaBersih - cadangan

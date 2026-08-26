@@ -82,8 +82,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
     available: boolean;
     message?: string;
   }>({ checked: false, available: true });
-  const [password, setPassword] = useState<string>('kopsim123');
-  const [confirmPassword, setConfirmPassword] = useState<string>('kopsim123');
+  const [password, setPassword] = useState<string>('');
+  const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
 
   // Form Fields - Section 5: Simpanan Awal
@@ -299,8 +299,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
     setAddress('');
     setUsername('');
     setUsernameStatus({ checked: false, available: true });
-    setPassword('kopsim123');
-    setConfirmPassword('kopsim123');
+    setPassword('');
+    setConfirmPassword('');
     setSimpananSukarela(0);
     setErrors({});
     handleGenerateMemberNo();
