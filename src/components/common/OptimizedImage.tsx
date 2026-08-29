@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Image as ImageIcon } from 'lucide-react';
 
 interface OptimizedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   src: string;
@@ -9,11 +10,19 @@ interface OptimizedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> 
   priority?: boolean;
   aspectRatio?: string;
   objectFit?: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down';
+  fallbackSrc?: string;
 }
+
+// Whitelist of assets that actually have pre-generated .avif and .webp versions
+const MULTI_FORMAT_ASSETS = new Set([
+  '/assets/berita/all.jpeg',
+  '/assets/berita/handshake.jpeg',
+  '/assets/MasterBlankoID.jpg',
+]);
 
 /**
  * Modern High-Performance Responsive Image Component
- * Automatically serves AVIF/WebP when available with fallback,
+ * Automatically serves AVIF/WebP when verified available with fallback,
  * lazy-loading by default, async decoding, and cumulative layout shift (CLS) prevention.
  */
 export const OptimizedImage: React.FC<OptimizedImageProps> = ({
@@ -25,23 +34,19 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
   priority = false,
   aspectRatio,
   objectFit = 'cover',
+  fallbackSrc = '/assets/portfolio/perikanan-ikan-layang-ambon.jpg',
   ...rest
 }) => {
   const [hasError, setHasError] = useState<boolean>(false);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
 
-  // Derive WebP and AVIF URLs if this is a local asset
-  const isLocalAsset = src && src.startsWith('/assets/');
-  let webpSrc: string | null = null;
-  let avifSrc: string | null = null;
+  // Clean URL path
+  const cleanSrc = (src || '').trim();
 
-  if (isLocalAsset) {
-    const extMatch = src.match(/\.(jpe?g|png)$/i);
-    if (extMatch) {
-      webpSrc = src.replace(/\.(jpe?g|png)$/i, '.webp');
-      avifSrc = src.replace(/\.(jpe?g|png)$/i, '.avif');
-    }
-  }
+  // Only emit <source> if the asset is strictly known to have AVIF and WebP files
+  const isMultiFormat = cleanSrc && MULTI_FORMAT_ASSETS.has(cleanSrc);
+  const webpSrc = isMultiFormat ? cleanSrc.replace(/\.(jpe?g|png)$/i, '.webp') : null;
+  const avifSrc = isMultiFormat ? cleanSrc.replace(/\.(jpe?g|png)$/i, '.avif') : null;
 
   const containerStyle: React.CSSProperties = {
     position: 'relative',
@@ -49,12 +54,26 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
     ...(aspectRatio ? { aspectRatio } : {}),
   };
 
+  if (!cleanSrc || (hasError && !fallbackSrc)) {
+    return (
+      <div
+        style={aspectRatio ? containerStyle : undefined}
+        className={`w-full h-full flex flex-col items-center justify-center bg-stone-100 text-stone-400 p-4 ${className}`}
+      >
+        <ImageIcon className="w-8 h-8 opacity-40 mb-1" />
+        <span className="text-[10px] font-sans text-stone-400 text-center line-clamp-1">{alt || 'Foto'}</span>
+      </div>
+    );
+  }
+
+  const effectiveSrc = hasError ? fallbackSrc : cleanSrc;
+
   return (
     <picture style={aspectRatio ? containerStyle : undefined} className="block w-full h-full">
-      {avifSrc && <source srcSet={avifSrc} type="image/avif" />}
-      {webpSrc && <source srcSet={webpSrc} type="image/webp" />}
+      {avifSrc && !hasError && <source srcSet={avifSrc} type="image/avif" />}
+      {webpSrc && !hasError && <source srcSet={webpSrc} type="image/webp" />}
       <img
-        src={hasError ? '/assets/portfolio/perikanan-ikan-layang-ambon.webp' : src}
+        src={effectiveSrc}
         alt={alt}
         width={width}
         height={height}
@@ -63,7 +82,11 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
         fetchPriority={priority ? 'high' : 'auto'}
         referrerPolicy="no-referrer"
         onLoad={() => setIsLoaded(true)}
-        onError={() => setHasError(true)}
+        onError={() => {
+          if (!hasError && fallbackSrc && cleanSrc !== fallbackSrc) {
+            setHasError(true);
+          }
+        }}
         className={`${className} ${objectFit ? `object-${objectFit}` : ''} transition-opacity duration-300 ${
           isLoaded ? 'opacity-100' : 'opacity-90'
         }`}
@@ -72,3 +95,4 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
     </picture>
   );
 };
+

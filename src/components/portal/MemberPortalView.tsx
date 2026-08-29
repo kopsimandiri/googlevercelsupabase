@@ -304,6 +304,9 @@ export const MemberPortalView: React.FC = () => {
                     alt={memberData?.nama || 'Foto Anggota'}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center p-1 text-amber-300">

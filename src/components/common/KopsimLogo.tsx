@@ -52,19 +52,16 @@ export const KopsimLogo: React.FC<KopsimLogoProps> = ({
           : 'rounded-full'
       }`}
     >
-      <picture className="w-full h-full block">
-        <source srcSet="/assets/logo-kopsim.avif" type="image/avif" />
-        <source srcSet="/assets/logo-kopsim.webp" type="image/webp" />
-        <img
-          src="/assets/logo-kopsim.png"
-          alt="Logo Resmi Koperasi Syarikat Islam Mandiri"
-          width="128"
-          height="128"
-          className="w-full h-full object-contain rounded-full aspect-square block pointer-events-none"
-          loading="eager"
-          decoding="async"
-        />
-      </picture>
+      <img
+        src="/assets/logo-kopsim.png"
+        alt="Logo Resmi Koperasi Syarikat Islam Mandiri"
+        width="128"
+        height="128"
+        className="w-full h-full object-contain rounded-full aspect-square block pointer-events-none"
+        loading="eager"
+        decoding="async"
+        referrerPolicy="no-referrer"
+      />
     </div>
   );
 

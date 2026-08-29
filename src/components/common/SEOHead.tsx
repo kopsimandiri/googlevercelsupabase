@@ -51,7 +51,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({ activePage, article }) => {
             keywords: 'dewan pengawas syariah, pengurus koperasi, hamdan zoelva, sejarah kopsim mandiri',
             canonicalPath: '/tentang',
             ogType: 'website',
-            image: `${BASE_URL}/assets/hamdan.webp`,
+            image: `${BASE_URL}/assets/hamdan.jpg`,
           };
           break;
         case 'NEWS_LIST':
@@ -73,7 +73,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({ activePage, article }) => {
             keywords: 'portofolio sektor riil, komoditas kopsim, ikan layang ambon, tuna sirip kuning, tepung tapioka cianjur',
             canonicalPath: '/proyek',
             ogType: 'website',
-            image: `${BASE_URL}/assets/portfolio/perikanan-ikan-layang-ambon.webp`,
+            image: `${BASE_URL}/assets/portfolio/perikanan-ikan-layang-ambon.jpg`,
           };
           break;
         case 'MEMBER_PORTAL':

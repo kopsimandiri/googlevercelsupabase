@@ -227,6 +227,7 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
                       alt="Foto Profil"
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
+                      onError={() => setAvatarPreview('')}
                     />
                   ) : (
                     <div className="text-center p-2 text-stone-400">

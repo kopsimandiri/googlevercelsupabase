@@ -81,9 +81,12 @@ export const ProjectExposureDetail: React.FC<ProjectExposureDetailProps> = ({
           <div className="space-y-3">
             <div className="relative aspect-16/9 w-full rounded-2xl overflow-hidden bg-stone-900 border border-stone-200 shadow-inner group">
               <img
-                src={project.fotoGaleri[activePhotoIndex]}
+                src={project.fotoGaleri[activePhotoIndex] || '/assets/portfolio/perikanan-ikan-layang-ambon.jpg'}
                 alt={`${project.judul} - Foto ${activePhotoIndex + 1}`}
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+                }}
                 className="w-full h-full object-cover transition-all duration-500"
               />
 
@@ -127,9 +130,12 @@ export const ProjectExposureDetail: React.FC<ProjectExposureDetailProps> = ({
                     }`}
                   >
                     <img
-                      src={photo}
+                      src={photo || '/assets/portfolio/perikanan-ikan-layang-ambon.jpg'}
                       alt={`Thumbnail ${idx + 1}`}
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+                      }}
                       className="w-full h-full object-cover"
                     />
                   </button>

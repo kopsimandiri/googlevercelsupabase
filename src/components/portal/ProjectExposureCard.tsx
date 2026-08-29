@@ -11,7 +11,7 @@ interface ProjectExposureCardProps {
 }
 
 export const ProjectExposureCard: React.FC<ProjectExposureCardProps> = ({ project, onSelect }) => {
-  const coverPhoto = project.fotoGaleri[0] || '/assets/portfolio/perikanan-ikan-layang-ambon.webp';
+  const coverPhoto = project.fotoGaleri[0] || '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
 
   return (
     <div
