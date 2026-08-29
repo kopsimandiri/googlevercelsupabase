@@ -1,7 +1,7 @@
 import { loanService } from '../src/services/loanService';
 import { notificationService } from '../src/services/notificationService';
 import { paymentService } from '../src/services/paymentService';
-import { generateWebhookSignature, verifyWebhookSignature } from '../server';
+import { generateWebhookSignature, verifyWebhookSignature } from '../src/utils/cryptoSecurity';
 
 let passed = 0;
 let failed = 0;
@@ -97,7 +97,7 @@ async function runTests() {
   // ============================================================================
   console.log('\n▶ [GROUP 3] Payment Gateway, Webhook Security & Idempotency');
 
-  // 1. Create Payment
+  // 1. Create Payment Request
   const payReq = await paymentService.createPaymentRequest({
     member_id: '0824-03001',
     member_name: 'M. FACHRI MUBAROK',
@@ -111,25 +111,34 @@ async function runTests() {
   const orderId = payReq.data!.order_id;
   assert(!!orderId, `Order ID dibuat: ${orderId}`);
 
-  // 2. Webhook Signature Verification Test
+  // 2. Webhook Signature Verification Tests
   const secretKey = 'kopsim_live_webhook_secret_key_2026';
   const testPayload = JSON.stringify({ order_id: orderId, status: 'PAID' });
   const validSig = generateWebhookSignature(testPayload, secretKey);
   assert(verifyWebhookSignature(testPayload, validSig, secretKey) === true, 'HMAC SHA256 valid signature terverifikasi');
   assert(verifyWebhookSignature(testPayload, 'FAKE_SIGNATURE', secretKey) === false, 'Tampered HMAC signature ditolak');
 
-  // 3. Process Valid Webhook
+  // 3. Test Unauthorized Callback
+  const unauthRes = await paymentService.processWebhook({
+    order_id: orderId,
+    status: 'PAID',
+    channel: 'QRIS',
+    signature: 'INVALID_SIGNATURE_TAMPERED',
+  });
+  assert(unauthRes.success === false, 'Unauthorized callback dengan signature palsu berhasil ditolak');
+
+  // 4. Test Payment Success & Verified Webhook
   const webhookRes = await paymentService.processWebhook({
     order_id: orderId,
     status: 'PAID',
     channel: 'QRIS',
     signature: 'sig_valid_kopsim_live_webhook_secret_key_2026',
   });
-  assert(webhookRes.success === true, 'Webhook pembayaran berhasil diproses dan diverifikasi');
+  assert(webhookRes.success === true, 'Webhook pembayaran sukses berhasil diproses dan diverifikasi');
   assert(webhookRes.status === 'POSTED', 'Status pembayaran bermutasi menjadi POSTED di pembukuan');
   assert(!!webhookRes.transaction_id, `Ledger Transaction ID terbit: ${webhookRes.transaction_id}`);
 
-  // 4. Duplicate Webhook (Idempotency Protection Test)
+  // 5. Test Duplicate Webhook (Idempotency Protection Test)
   const duplicateWebhookRes = await paymentService.processWebhook({
     order_id: orderId,
     status: 'PAID',
@@ -145,7 +154,43 @@ async function runTests() {
     'Transaction ID konsisten dan tidak menciptakan entri buku kas kedua'
   );
 
-  // 5. Financial Reconciliation
+  // 6. Test Failed Payment Webhook
+  const failPayReq = await paymentService.createPaymentRequest({
+    member_id: '0824-03001',
+    member_name: 'M. FACHRI MUBAROK',
+    amount: 150000,
+    payment_type: 'VIRTUAL_ACCOUNT',
+    payment_channel: 'BSI_VA',
+    category: 'Simpanan Sukarela',
+  });
+  const failOrderId = failPayReq.data!.order_id;
+  const failRes = await paymentService.processWebhook({
+    order_id: failOrderId,
+    status: 'FAILED',
+    channel: 'BSI_VA',
+    signature: 'sig_valid_kopsim_live_webhook_secret_key_2026',
+  });
+  assert(failRes.status === 'FAILED', 'Status pembayaran gagal bermutasi menjadi FAILED');
+
+  // 7. Test Expired Payment
+  const expPayReq = await paymentService.createPaymentRequest({
+    member_id: '0824-03001',
+    member_name: 'M. FACHRI MUBAROK',
+    amount: 200000,
+    payment_type: 'QRIS',
+    payment_channel: 'QRIS_DYNAMIC',
+    category: 'Simpanan Pokok',
+  });
+  const expOrderId = expPayReq.data!.order_id;
+  const expRes = await paymentService.processWebhook({
+    order_id: expOrderId,
+    status: 'EXPIRED',
+    channel: 'QRIS',
+    signature: 'sig_valid_kopsim_live_webhook_secret_key_2026',
+  });
+  assert(expRes.status === 'EXPIRED', 'Status pembayaran expired bermutasi menjadi EXPIRED');
+
+  // 8. Test Financial Reconciliation
   const reconRes = await paymentService.reconcileTransactions();
   assert(reconRes.discrepancyCount === 0, 'Rekonsiliasi total settlement gateway vs ledger memiliki 0 selisih');
 

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.cjs",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/phase7_business_automation.test.ts"
+    "test": "tsx tests/phase7_business_automation.test.ts && tsx tests/phase8_production_audit.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

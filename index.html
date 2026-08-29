@@ -3,7 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https: blob:; connect-src 'self' http://localhost:* https://*.supabase.co wss://*.supabase.co https://*.run.app;" />
+    
+    <!-- JSON-LD Structured Data for Google / SEO -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FinancialService",
+      "name": "Koperasi Syarikat Islam Mandiri (KOPSIM Mandiri)",
+      "url": "https://kopsimmandiri.id/",
+      "logo": "https://kopsimmandiri.id/assets/logo-kopsim.png",
+      "description": "Platform Manajemen Terpadu Koperasi Syarikat Islam Mandiri berbasis kemandirian ekonomi umat dan ekosistem sektor riil terintegrasi.",
+      "telephone": "+62-812-3456-7890",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Jakarta Pusat",
+        "addressRegion": "DKI Jakarta",
+        "addressCountry": "ID"
+      },
+      "priceRange": "$$"
+    }
+    </script>
     
     <title>KOPSIM MANDIRI — Koperasi Syarikat Islam Mandiri</title>
     <meta name="description" content="Platform Manajemen Terpadu Koperasi Syarikat Islam Mandiri berbasis kemandirian ekonomi umat dan ekosistem sektor riil terintegrasi." />

@@ -42,20 +42,27 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   },
 ];
 
+let inMemoryAuditLogs: AuditLogEntry[] | null = null;
+
 export const auditService = {
   getStoredLogs(): AuditLogEntry[] {
+    if (inMemoryAuditLogs) return inMemoryAuditLogs;
     try {
-      const stored = localStorage.getItem(STORAGE_AUDIT_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+      if (typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem(STORAGE_AUDIT_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            inMemoryAuditLogs = parsed;
+            return inMemoryAuditLogs;
+          }
         }
       }
     } catch {
       // ignore
     }
-    return INITIAL_AUDIT_LOGS;
+    inMemoryAuditLogs = [...INITIAL_AUDIT_LOGS];
+    return inMemoryAuditLogs;
   },
 
   async logActivity(
@@ -102,11 +109,14 @@ export const auditService = {
       }
     }
 
-    // 2. Local Storage Cache
+    // 2. Local Storage Cache / In-Memory
     try {
       const logs = this.getStoredLogs();
       logs.unshift(newEntry);
-      localStorage.setItem(STORAGE_AUDIT_KEY, JSON.stringify(logs.slice(0, 200)));
+      inMemoryAuditLogs = logs.slice(0, 200);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_AUDIT_KEY, JSON.stringify(inMemoryAuditLogs));
+      }
     } catch (e) {
       console.warn('[auditService] Local audit write warning:', e);
     }
