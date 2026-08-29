@@ -152,10 +152,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         {/* Notification Bell with Badge */}
         <button
           id="btn-top-notifications"
-          onClick={() => showToast('Tidak ada notifikasi penting saat ini.', 'info', 'Pemberitahuan')}
+          onClick={() => onNavigate('NOTIFICATIONS')}
           className="relative p-2 text-white hover:bg-primary-800 rounded-lg transition-colors"
-          aria-label="Notifikasi"
-          title="Notifikasi"
+          aria-label="Pusat Notifikasi"
+          title="Buka Pusat Notifikasi"
         >
           <Bell className="w-5 h-5 text-white" />
           <span className="absolute top-1 right-1 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-status-warning text-white text-[9px] font-bold leading-none shadow-xs">

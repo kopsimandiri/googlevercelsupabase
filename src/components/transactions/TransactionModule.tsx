@@ -11,6 +11,7 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   FileSpreadsheet,
   Plus,
@@ -68,6 +69,7 @@ export const TransactionModule: React.FC = () => {
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [isSeeding, setIsSeeding] = useState<boolean>(false);
+  const [deletingTrxId, setDeletingTrxId] = useState<string | null>(null);
 
   // Form inputs (11 Form Fields in exact order matching user specification)
   // 1. Tanggal Transaksi -> transaction_date
@@ -438,22 +440,26 @@ export const TransactionModule: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     if (!canDelete) {
       showToast('Hanya role ADMIN yang berwenang membatalkan transaksi.', 'error');
       return;
     }
-    const confirmed = window.confirm(`Batalkan dan hapus transaksi ${id}?`);
-    if (!confirmed) return;
+    setDeletingTrxId(id);
+  };
 
+  const handleConfirmDelete = async () => {
+    if (!deletingTrxId) return;
     try {
-      const res = await transactionService.deleteTransaction(id);
+      const res = await transactionService.deleteTransaction(deletingTrxId);
       if (res.success) {
-        showToast(`Transaksi ${id} telah dihapus.`, 'info');
+        showToast(`Transaksi ${deletingTrxId} telah dihapus.`, 'info');
         await loadData();
       }
     } catch (err: any) {
       showToast(err.message || 'Gagal menghapus data.', 'error');
+    } finally {
+      setDeletingTrxId(null);
     }
   };
 
@@ -1430,6 +1436,18 @@ export const TransactionModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Confirm Delete Transaction Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingTrxId}
+        onClose={() => setDeletingTrxId(null)}
+        onConfirm={handleConfirmDelete}
+        title="Batalkan & Hapus Transaksi"
+        message={`Apakah Anda yakin ingin membatalkan dan menghapus transaksi "${deletingTrxId}" dari pembukuan resmi? Tindakan ini tidak dapat dibatalkan.`}
+        confirmText="Hapus Transaksi"
+        cancelText="Batal"
+        variant="danger"
+      />
     </div>
   );
 };

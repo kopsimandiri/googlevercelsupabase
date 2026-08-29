@@ -2,6 +2,7 @@ import React from 'react';
 import { ProjectExposure } from '../../services/projectExposureService';
 import { Badge } from '../common/Badge';
 import { Button } from '../common/Button';
+import { OptimizedImage } from '../common/OptimizedImage';
 import { ArrowRight, Compass, Sparkles } from 'lucide-react';
 
 interface ProjectExposureCardProps {
@@ -10,7 +11,7 @@ interface ProjectExposureCardProps {
 }
 
 export const ProjectExposureCard: React.FC<ProjectExposureCardProps> = ({ project, onSelect }) => {
-  const coverPhoto = project.fotoGaleri[0] || '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+  const coverPhoto = project.fotoGaleri[0] || '/assets/portfolio/perikanan-ikan-layang-ambon.webp';
 
   return (
     <div
@@ -20,10 +21,9 @@ export const ProjectExposureCard: React.FC<ProjectExposureCardProps> = ({ projec
       <div>
         {/* Photo Container */}
         <div className="relative aspect-16/10 w-full overflow-hidden bg-stone-100">
-          <img
+          <OptimizedImage
             src={coverPhoto}
             alt={project.judul}
-            referrerPolicy="no-referrer"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-stone-950/60 via-transparent to-transparent pointer-events-none" />

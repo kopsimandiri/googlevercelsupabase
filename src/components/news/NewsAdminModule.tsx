@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -88,6 +89,7 @@ export const NewsAdminModule: React.FC = () => {
   // Form State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingArticle, setEditingArticle] = useState<NewsArticle | null>(null);
+  const [deletingArticle, setDeletingArticle] = useState<{ id: string; judul: string } | null>(null);
   const [formData, setFormData] = useState<{
     kategori: NewsCategory;
     project_id: string;
@@ -179,15 +181,20 @@ export const NewsAdminModule: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (id: string, judul: string) => {
-    if (window.confirm(`Apakah Anda yakin ingin menghapus artikel "${judul}"?`)) {
-      try {
-        await newsService.deleteArticle(id);
-        showToast('Artikel berhasil dihapus.', 'success');
-        fetchArticles();
-      } catch (err) {
-        showToast('Gagal menghapus artikel.', 'error');
-      }
+  const handleDelete = (id: string, judul: string) => {
+    setDeletingArticle({ id, judul });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingArticle) return;
+    try {
+      await newsService.deleteArticle(deletingArticle.id);
+      showToast('Artikel berhasil dihapus.', 'success');
+      fetchArticles();
+    } catch (err) {
+      showToast('Gagal menghapus artikel.', 'error');
+    } finally {
+      setDeletingArticle(null);
     }
   };
 
@@ -1007,6 +1014,18 @@ export const NewsAdminModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Confirm Delete News Article Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingArticle}
+        onClose={() => setDeletingArticle(null)}
+        onConfirm={handleConfirmDelete}
+        title="Hapus Artikel Berita"
+        message={`Apakah Anda yakin ingin menghapus artikel "${deletingArticle?.judul}"? Tindakan ini tidak dapat dibatalkan.`}
+        confirmText="Hapus Artikel"
+        cancelText="Batal"
+        variant="danger"
+      />
     </div>
   );
 };

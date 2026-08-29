@@ -1,0 +1,18 @@
+# Robots.txt for Koperasi Syarikat Islam Mandiri (KOPSIM Mandiri)
+User-agent: *
+Allow: /
+Allow: /tentang
+Allow: /berita
+Allow: /proyek
+Allow: /portal/login
+
+# Disallow internal admin & sensitive data indexing
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /portal/dashboard
+Disallow: /portal/simpanan
+Disallow: /portal/profile
+Disallow: /portal/kta
+
+# Host & Sitemap
+Sitemap: https://kopsimmandiri.id/sitemap.xml

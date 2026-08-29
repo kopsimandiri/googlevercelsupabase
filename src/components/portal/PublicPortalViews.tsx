@@ -656,18 +656,29 @@ const ProfileAvatar: React.FC<{
     );
   }
 
+  const webpUrl = photoUrl.replace(/\.(jpe?g|png)$/i, '.webp');
+  const avifUrl = photoUrl.replace(/\.(jpe?g|png)$/i, '.avif');
+
   return (
     <div
       className={`${sizeClass} rounded-full overflow-hidden border-3 border-accent-gold shadow-md shrink-0 bg-stone-100 ring-4 ring-amber-400/20 relative`}
     >
-      <img
-        src={photoUrl}
-        alt={name}
-        referrerPolicy="no-referrer"
-        onError={() => setHasError(true)}
-        style={{ objectPosition: objectPosition }}
-        className={`w-full h-full object-cover transition-transform duration-300 ${photoScale}`}
-      />
+      <picture className="w-full h-full block">
+        <source srcSet={avifUrl} type="image/avif" />
+        <source srcSet={webpUrl} type="image/webp" />
+        <img
+          src={photoUrl}
+          alt={name}
+          width={size === 'main' ? 128 : 112}
+          height={size === 'main' ? 128 : 112}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setHasError(true)}
+          style={{ objectPosition: objectPosition }}
+          className={`w-full h-full object-cover transition-transform duration-300 ${photoScale}`}
+        />
+      </picture>
     </div>
   );
 };

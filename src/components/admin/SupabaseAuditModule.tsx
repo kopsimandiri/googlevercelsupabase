@@ -10,6 +10,7 @@ import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   Database,
   RefreshCw,
@@ -50,6 +51,7 @@ export const SupabaseAuditModule: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [editingRecord, setEditingRecord] = useState<any | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState<boolean>(false);
+  const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Run comprehensive audit on mount
@@ -125,13 +127,17 @@ export const SupabaseAuditModule: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm(`Yakin ingin menghapus record ID: ${id}?`)) return;
+  const handleDelete = (id: string) => {
+    setDeletingRecordId(id);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingRecordId) return;
     try {
-      await masterDataService.deleteRecord(activeTable, id);
+      await masterDataService.deleteRecord(activeTable, deletingRecordId);
       setFeedbackMessage({
         type: 'success',
-        text: `Record ${id} berhasil dihapus.`,
+        text: `Record ${deletingRecordId} berhasil dihapus.`,
       });
       await loadTableData(activeTable);
       await runAudit();
@@ -141,6 +147,7 @@ export const SupabaseAuditModule: React.FC = () => {
         text: `Gagal menghapus: ${err.message || err}`,
       });
     } finally {
+      setDeletingRecordId(null);
       setTimeout(() => setFeedbackMessage(null), 4000);
     }
   };
@@ -729,6 +736,18 @@ export const SupabaseAuditModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Confirm Delete Database Record Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingRecordId}
+        onClose={() => setDeletingRecordId(null)}
+        onConfirm={handleConfirmDelete}
+        title={`Hapus Record ${activeTable}`}
+        message={`Apakah Anda yakin ingin menghapus record dengan ID "${deletingRecordId}" dari tabel ${activeTable}?`}
+        confirmText="Hapus Record"
+        cancelText="Batal"
+        variant="danger"
+      />
     </div>
   );
 };

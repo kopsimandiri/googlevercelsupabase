@@ -13,7 +13,10 @@ export type NavSection =
   | 'TEAM'
   | 'DATABASE_AUDIT'
   | 'NEWS_ADMIN'
-  | 'NEWS_LIST';
+  | 'NEWS_LIST'
+  | 'LOANS'
+  | 'NOTIFICATIONS'
+  | 'PAYMENTS';
 
 export type ReportSubSection =
   | 'DASHBOARD'
@@ -41,7 +44,10 @@ export type ActivePage =
   | 'MEMBER_PORTAL'
   | 'NEWS_ADMIN'
   | 'NEWS_LIST'
-  | 'NEWS_DETAIL';
+  | 'NEWS_DETAIL'
+  | 'LOANS'
+  | 'NOTIFICATIONS'
+  | 'PAYMENTS';
 
 export type UserRole = 'ADMIN' | 'DIRECTOR' | 'ANGGOTA';
 

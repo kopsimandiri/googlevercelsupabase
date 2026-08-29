@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider, useNotification } from './context/NotificationContext';
 import { TopNavbar } from './components/layout/TopNavbar';
@@ -13,67 +13,84 @@ import { Button } from './components/common/Button';
 import { Badge } from './components/common/Badge';
 import { KopsimLogo } from './components/common/KopsimLogo';
 import { LoadingState } from './components/common/LoadingState';
+import { useAppRouter } from './hooks/useAppRouter';
 import { ActivePage } from './types/navigation';
+import { NewsArticle } from './types/news';
 
-// Module Components
-import { DashboardShell } from './components/dashboard/DashboardShell';
-import { MembershipModule } from './components/membership/MembershipModule';
-import { SimpananModule } from './components/simpanan/SimpananModule';
-import { TransactionModule } from './components/transactions/TransactionModule';
-import { FinanceModule } from './components/finance/FinanceModule';
-import { ProjectModule } from './components/project/ProjectModule';
-import { ReportsModule } from './components/reports/ReportsModule';
-import { SupabaseAuditModule } from './components/admin/SupabaseAuditModule';
+// Static Lightweight Public Portal Views
 import {
   PortfolioMarketplaceView,
   FileManagementView,
   HistoryView,
   TeamView,
 } from './components/portal/PublicPortalViews';
-import { MemberPortalView } from './components/portal/MemberPortalView';
-import { PublicRegisterModal } from './components/portal/PublicRegisterModal';
-import { NewsAdminModule } from './components/news/NewsAdminModule';
+import { SEOHead } from './components/common/SEOHead';
 import { NewsListView } from './components/portal/NewsListView';
 import { NewsDetailView } from './components/portal/NewsDetailView';
 import { HomeNewsSection } from './components/portal/HomeNewsSection';
-import { NewsArticle } from './types/news';
+
+// Route-Level Code Splitting for Large Modules & Dialogs
+const PublicRegisterModal = lazy(() =>
+  import('./components/portal/PublicRegisterModal').then((m) => ({ default: m.PublicRegisterModal }))
+);
+const DashboardShell = lazy(() =>
+  import('./components/dashboard/DashboardShell').then((m) => ({ default: m.DashboardShell }))
+);
+const MembershipModule = lazy(() =>
+  import('./components/membership/MembershipModule').then((m) => ({ default: m.MembershipModule }))
+);
+const SimpananModule = lazy(() =>
+  import('./components/simpanan/SimpananModule').then((m) => ({ default: m.SimpananModule }))
+);
+const TransactionModule = lazy(() =>
+  import('./components/transactions/TransactionModule').then((m) => ({ default: m.TransactionModule }))
+);
+const FinanceModule = lazy(() =>
+  import('./components/finance/FinanceModule').then((m) => ({ default: m.FinanceModule }))
+);
+const ProjectModule = lazy(() =>
+  import('./components/project/ProjectModule').then((m) => ({ default: m.ProjectModule }))
+);
+const ReportsModule = lazy(() =>
+  import('./components/reports/ReportsModule').then((m) => ({ default: m.ReportsModule }))
+);
+const SupabaseAuditModule = lazy(() =>
+  import('./components/admin/SupabaseAuditModule').then((m) => ({ default: m.SupabaseAuditModule }))
+);
+const MemberPortalView = lazy(() =>
+  import('./components/portal/MemberPortalView').then((m) => ({ default: m.MemberPortalView }))
+);
+const NewsAdminModule = lazy(() =>
+  import('./components/news/NewsAdminModule').then((m) => ({ default: m.NewsAdminModule }))
+);
+const LoanSimulatorModule = lazy(() =>
+  import('./components/loans/LoanSimulatorModule').then((m) => ({ default: m.LoanSimulatorModule }))
+);
+const NotificationCenterModule = lazy(() =>
+  import('./components/notifications/NotificationCenterModule').then((m) => ({ default: m.NotificationCenterModule }))
+);
+const PaymentGatewayModule = lazy(() =>
+  import('./components/payments/PaymentGatewayModule').then((m) => ({ default: m.PaymentGatewayModule }))
+);
 
 import {
-  Building2,
-  Briefcase,
-  History as HistoryIcon,
-  Users,
-  Wallet,
-  UserCheck,
-  FolderGit2,
   Lock,
-  ArrowRight,
-  Shield,
-  FileSpreadsheet,
-  Coins,
-  Landmark,
-  FileText,
   Package,
-  Globe,
   UserPlus,
-  CheckCircle2,
-  Sparkles,
-  TrendingUp,
-  Award,
 } from 'lucide-react';
 
 function AppContent() {
-  const [activePage, setActivePage] = useState<ActivePage>('HOME');
+  const { activePage, navigate } = useAppRouter();
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
 
-  const { isAuthenticated, role, user, isLoading } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const { showToast } = useNotification();
 
   const handleNavigate = (page: ActivePage) => {
-    setActivePage(page);
+    navigate(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -88,11 +105,26 @@ function AppContent() {
     );
   }
 
+  const renderModuleWithSuspense = (component: React.ReactNode, moduleName: string) => (
+    <Suspense
+      fallback={
+        <div className="py-12 flex items-center justify-center">
+          <LoadingState
+            message={`Memuat Modul ${moduleName}...`}
+            subMessage="Mengoptimalkan aset dan menyinkronkan data terbaru"
+          />
+        </div>
+      }
+    >
+      {component}
+    </Suspense>
+  );
+
   const renderContent = () => {
     switch (activePage) {
-      // ==========================================
-      // PORTAL PUBLIK: BERANDA UTAMA
-      // ==========================================
+      // =========================================================================
+      // BOUNDARY 1: PORTAL PUBLIK
+      // =========================================================================
       case 'HOME':
         return (
           <PageContainer
@@ -114,7 +146,7 @@ function AppContent() {
                   size="sm"
                   onClick={() => {
                     if (isAuthenticated) {
-                      setActivePage('REPORTS_DASHBOARD');
+                      handleNavigate('REPORTS_DASHBOARD');
                     } else {
                       setShowLoginModal(true);
                     }
@@ -164,7 +196,7 @@ function AppContent() {
                       variant="secondary"
                       size="md"
                       className="bg-white text-emerald-950 font-bold border-2 border-white hover:bg-emerald-50 hover:text-emerald-900 shadow-md"
-                      onClick={() => setActivePage('PORTOFOLIO')}
+                      onClick={() => handleNavigate('PORTOFOLIO')}
                       leftIcon={<Package className="w-4 h-4 text-emerald-800" />}
                     >
                       Katalog Komoditas
@@ -175,7 +207,7 @@ function AppContent() {
                       className="bg-emerald-800 hover:bg-emerald-700 text-white font-semibold border border-emerald-600/80 shadow-md"
                       onClick={() => {
                         if (isAuthenticated) {
-                          setActivePage('REPORTS_DASHBOARD');
+                          handleNavigate('REPORTS_DASHBOARD');
                         } else {
                           setShowLoginModal(true);
                         }
@@ -243,7 +275,7 @@ function AppContent() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setActivePage('PROJECT')}
+                    onClick={() => handleNavigate('PROJECT')}
                   >
                     Lihat Monitoring Unit
                   </Button>
@@ -269,7 +301,7 @@ function AppContent() {
                 </div>
               </div>
 
-              {/* Warta & Berita Sektor Riil Terkini (Tahap 5) */}
+              {/* Warta & Berita Sektor Riil Terkini */}
               <HomeNewsSection
                 onNavigateNewsList={() => handleNavigate('NEWS_LIST')}
                 onSelectArticle={(article) => {
@@ -302,9 +334,6 @@ function AppContent() {
           </PageContainer>
         );
 
-      // ==========================================
-      // PORTAL PUBLIK: TATA KELOLA / MANAJEMEN GCG
-      // ==========================================
       case 'MANAJEMEN':
         return (
           <PageContainer
@@ -362,9 +391,6 @@ function AppContent() {
           </PageContainer>
         );
 
-      // ==========================================
-      // PORTAL PUBLIK: KATALOG & PORTOFOLIO
-      // ==========================================
       case 'PORTOFOLIO':
         return (
           <PageContainer
@@ -377,9 +403,6 @@ function AppContent() {
           </PageContainer>
         );
 
-      // ==========================================
-      // PORTAL PUBLIK: SEJARAH
-      // ==========================================
       case 'HISTORY':
         return (
           <PageContainer
@@ -392,9 +415,6 @@ function AppContent() {
           </PageContainer>
         );
 
-      // ==========================================
-      // PORTAL PUBLIK: TIM & PENGAWAS
-      // ==========================================
       case 'TEAM':
         return (
           <PageContainer
@@ -407,211 +427,6 @@ function AppContent() {
           </PageContainer>
         );
 
-      // =========================================================================
-      // PORTAL INTERNAL: DILINDUNGI ROLE GUARD (ADMIN / DIRECTOR / ANGGOTA)
-      // =========================================================================
-
-      // MODULE 1: DASHBOARD EKSEKUTIF
-      case 'REPORTS_DASHBOARD':
-        return (
-          <PageContainer
-            title="Dashboard Eksekutif — Sistem Internal"
-            subtitle="Ringkasan performa finansial, simpanan anggota, dan perputaran modal 8 project strategis"
-            breadcrumbs={['Portal Internal', '1. Dashboard']}
-            idPrefix="report-dashboard"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <DashboardShell />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 2: MEMBERSHIP
-      case 'MEMBERSHIP':
-      case 'REPORTS_KEANGGOTAAN':
-        return (
-          <PageContainer
-            title="Database Keanggotaan & KTA Digital"
-            subtitle="Pencatatan data anggota, penerbitan Kartu Tanda Anggota (KTA) digital, dan histori kepesertaan"
-            breadcrumbs={['Portal Internal', '2. Keanggotaan']}
-            idPrefix="membership-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <MembershipModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 3: SIMPANAN
-      case 'SIMPANAN':
-        return (
-          <PageContainer
-            title="Buku Simpanan & Tabungan Syariah"
-            subtitle="Simpanan Pokok (Rp 500k), Simpanan Wajib (Rp 360k/3th), dan Simpanan Sukarela Manasuka"
-            breadcrumbs={['Portal Internal', '3. Simpanan']}
-            idPrefix="simpanan-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <SimpananModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 4: TRANSAKSI 20 KOLOM
-      case 'TRANSACTIONS':
-        return (
-          <PageContainer
-            title="Buku Transaksi Kas & Komoditas 20 Kolom"
-            subtitle="Pencatatan standar debet-kredit, referal pusat, cabang, serta komoditas riil"
-            breadcrumbs={['Portal Internal', '4. Transaksi 20 Kolom']}
-            idPrefix="transactions-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <TransactionModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 5: FINANCE & KAS
-      case 'FINANCE':
-        return (
-          <PageContainer
-            title="Finance & Likuiditas Entitas"
-            subtitle="Pemisahan kas induk pusat, wilayah cabang daerah, dan rekening operasional resmi (BSI & Mandiri)"
-            breadcrumbs={['Portal Internal', '5. Finance']}
-            idPrefix="finance-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <FinanceModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 6: 8 STRATEGIC PROJECTS
-      case 'PROJECT':
-      case 'REPORTS_PROJECT':
-        return (
-          <PageContainer
-            title="Monitoring 8 Strategic Projects Sektor Riil"
-            subtitle="Pengawasan operasional Kampung Haji, Trading Ikan, Garam, Pertanian, Plywood, Sawit, MBG & Meatshop"
-            breadcrumbs={['Portal Internal', '6. 8 Projects']}
-            idPrefix="project-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <ProjectModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 7: REPORTS & SHU
-      case 'REPORTS_KEUANGAN':
-        return (
-          <PageContainer
-            title="Laporan Keuangan & Perhitungan SHU"
-            subtitle="Jurnal umum, buku besar COA, neraca saldo, laba rugi, neraca, dan alokasi SHU (25% Cadangan)"
-            breadcrumbs={['Portal Internal', '7. Laporan & SHU']}
-            idPrefix="reports-keuangan-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <ReportsModule initialTab="JURNAL" />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 8: FILE MANAGEMENT
-      case 'FILES':
-        return (
-          <PageContainer
-            title="Repositori Berkas & Dokumen Internal"
-            subtitle="Penyimpanan digital AD/ART, SK Kemenkumham, sertifikat halal, dan slip transfer"
-            breadcrumbs={['Portal Internal', '8. Repositori Berkas']}
-            idPrefix="files-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR', 'ANGGOTA']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <FileManagementView />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 9: SUPABASE AUDIT & MASTER DATA (11 TABEL)
-      case 'DATABASE_AUDIT':
-        return (
-          <PageContainer
-            title="Audit Menyeluruh & Master Data Supabase (11 Tabel)"
-            subtitle="Pemeriksaan status koneksi live, skema kolom, latensi respon, sinkronisasi cloud, dan modul CRUD 11 tabel"
-            breadcrumbs={['Portal Internal', '9. Supabase Audit & Master Data']}
-            idPrefix="supabase-audit-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <SupabaseAuditModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // PORTAL ANGGOTA: BUKU SIMPANAN & DATA PRIBADI & KTA DIGITAL
-      case 'MEMBER_PORTAL':
-        return (
-          <PageContainer
-            title="Portal Layanan & Buku Simpanan Anggota"
-            subtitle="Informasi saldo simpanan syariah terverifikasi, riwayat mutasi, dan Kartu Tanda Anggota (KTA) Digital resmi"
-            breadcrumbs={['Portal Layanan', 'Portal Khusus Anggota']}
-            idPrefix="member-portal-view"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR', 'ANGGOTA']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <MemberPortalView />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // MODULE 10: CMS KELOLA BERITA (ADMIN ONLY)
-      case 'NEWS_ADMIN':
-        return (
-          <PageContainer
-            title="Pengelolaan Berita & Warta Sektor Riil (CMS)"
-            subtitle="Penyusunan draft narasi, pelengkapan fakta riil [ISI: ...], dan publikasi artikel resmi koperasi"
-            breadcrumbs={['Portal Internal', '10. Kelola Berita (CMS)']}
-            idPrefix="news-admin-page"
-          >
-            <RoleGuard
-              allowedRoles={['ADMIN']}
-              onRequestLogin={() => setShowLoginModal(true)}
-            >
-              <NewsAdminModule />
-            </RoleGuard>
-          </PageContainer>
-        );
-
-      // PORTAL PUBLIK: KANAL BERITA LENGKAP
       case 'NEWS_LIST':
         return (
           <PageContainer
@@ -630,7 +445,6 @@ function AppContent() {
           </PageContainer>
         );
 
-      // PORTAL PUBLIK: DETAIL ARTIKEL BERITA
       case 'NEWS_DETAIL':
         return (
           <PageContainer
@@ -656,6 +470,248 @@ function AppContent() {
           </PageContainer>
         );
 
+      // =========================================================================
+      // BOUNDARY 2: MEMBER PORTAL
+      // =========================================================================
+      case 'MEMBER_PORTAL':
+        return (
+          <PageContainer
+            title="Portal Layanan & Buku Simpanan Anggota"
+            subtitle="Informasi saldo simpanan syariah terverifikasi, riwayat mutasi, dan Kartu Tanda Anggota (KTA) Digital resmi"
+            breadcrumbs={['Portal Layanan', 'Portal Khusus Anggota']}
+            idPrefix="member-portal-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR', 'ANGGOTA']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<MemberPortalView />, 'Portal Anggota')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'FILES':
+        return (
+          <PageContainer
+            title="Repositori Berkas & Dokumen Internal"
+            subtitle="Penyimpanan digital AD/ART, SK Kemenkumham, sertifikat halal, dan slip transfer"
+            breadcrumbs={['Portal Internal', '8. Repositori Berkas']}
+            idPrefix="files-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR', 'ANGGOTA']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              <FileManagementView />
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      // =========================================================================
+      // BOUNDARY 3: ADMIN & MANAGEMENT PORTAL (PROTECTED BY ROLE GUARD)
+      // =========================================================================
+      case 'REPORTS_DASHBOARD':
+        return (
+          <PageContainer
+            title="Dashboard Eksekutif — Sistem Internal"
+            subtitle="Ringkasan performa finansial, simpanan anggota, dan perputaran modal 8 project strategis"
+            breadcrumbs={['Portal Internal', '1. Dashboard']}
+            idPrefix="report-dashboard"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<DashboardShell />, 'Dashboard Eksekutif')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'MEMBERSHIP':
+      case 'REPORTS_KEANGGOTAAN':
+        return (
+          <PageContainer
+            title="Database Keanggotaan & KTA Digital"
+            subtitle="Pencatatan data anggota, penerbitan Kartu Tanda Anggota (KTA) digital, dan histori kepesertaan"
+            breadcrumbs={['Portal Internal', '2. Keanggotaan']}
+            idPrefix="membership-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<MembershipModule />, 'Keanggotaan & KTA')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'SIMPANAN':
+        return (
+          <PageContainer
+            title="Buku Simpanan & Tabungan Syariah"
+            subtitle="Simpanan Pokok (Rp 500k), Simpanan Wajib (Rp 360k/3th), dan Simpanan Sukarela Manasuka"
+            breadcrumbs={['Portal Internal', '3. Simpanan']}
+            idPrefix="simpanan-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<SimpananModule />, 'Simpanan')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'TRANSACTIONS':
+        return (
+          <PageContainer
+            title="Buku Transaksi Kas & Komoditas 20 Kolom"
+            subtitle="Pencatatan standar debet-kredit, referal pusat, cabang, serta komoditas riil"
+            breadcrumbs={['Portal Internal', '4. Transaksi 20 Kolom']}
+            idPrefix="transactions-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<TransactionModule />, 'Transaksi 20 Kolom')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'FINANCE':
+        return (
+          <PageContainer
+            title="Finance & Likuiditas Entitas"
+            subtitle="Pemisahan kas induk pusat, wilayah cabang daerah, dan rekening operasional resmi (BSI & Mandiri)"
+            breadcrumbs={['Portal Internal', '5. Finance']}
+            idPrefix="finance-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<FinanceModule />, 'Finance & Likuiditas')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'PROJECT':
+      case 'REPORTS_PROJECT':
+        return (
+          <PageContainer
+            title="Monitoring 8 Strategic Projects Sektor Riil"
+            subtitle="Pengawasan operasional Kampung Haji, Trading Ikan, Garam, Pertanian, Plywood, Sawit, MBG & Meatshop"
+            breadcrumbs={['Portal Internal', '6. 8 Projects']}
+            idPrefix="project-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<ProjectModule />, 'Monitoring Proyek')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'REPORTS_KEUANGAN':
+        return (
+          <PageContainer
+            title="Laporan Keuangan & Perhitungan SHU"
+            subtitle="Jurnal umum, buku besar COA, neraca saldo, laba rugi, neraca, dan alokasi SHU (25% Cadangan)"
+            breadcrumbs={['Portal Internal', '7. Laporan & SHU']}
+            idPrefix="reports-keuangan-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<ReportsModule initialTab="JURNAL" />, 'Laporan Keuangan')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'DATABASE_AUDIT':
+        return (
+          <PageContainer
+            title="Audit Menyeluruh & Master Data Supabase (11 Tabel)"
+            subtitle="Pemeriksaan status koneksi live, skema kolom, latensi respon, sinkronisasi cloud, dan modul CRUD 11 tabel"
+            breadcrumbs={['Portal Internal', '9. Supabase Audit & Master Data']}
+            idPrefix="supabase-audit-view"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<SupabaseAuditModule />, 'Audit Database')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'NEWS_ADMIN':
+        return (
+          <PageContainer
+            title="Pengelolaan Berita & Warta Sektor Riil (CMS)"
+            subtitle="Penyusunan draft narasi, pelengkapan fakta riil, dan publikasi artikel resmi koperasi"
+            breadcrumbs={['Portal Internal', '10. Kelola Berita (CMS)']}
+            idPrefix="news-admin-page"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<NewsAdminModule />, 'CMS Berita')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'LOANS':
+        return (
+          <PageContainer
+            title="Simulasi & Pengajuan Pembiayaan Syariah"
+            subtitle="Kalkulator pembiayaan bagi hasil, jadwal amortisasi resmi, dan pengajuan modal kerja"
+            breadcrumbs={['Layanan Koperasi', 'Simulasi Pembiayaan']}
+            idPrefix="loans-view-page"
+          >
+            {renderModuleWithSuspense(<LoanSimulatorModule />, 'Simulasi Pembiayaan')}
+          </PageContainer>
+        );
+
+      case 'NOTIFICATIONS':
+        return (
+          <PageContainer
+            title="Pusat Notifikasi & Automasi Multi-Channel"
+            subtitle="Kotak masuk pengumuman, riwayat pesan WhatsApp/Email, dan antrean pengiriman background jobs"
+            breadcrumbs={['Layanan Koperasi', 'Pusat Notifikasi']}
+            idPrefix="notifications-view-page"
+          >
+            {renderModuleWithSuspense(<NotificationCenterModule />, 'Pusat Notifikasi')}
+          </PageContainer>
+        );
+
+      case 'PAYMENTS':
+        return (
+          <PageContainer
+            title="Gerbang Pembayaran & Setoran Online"
+            subtitle="Setoran simpanan wajib, pokok, sukarela, dan angsuran pinjaman via QRIS dan Virtual Account"
+            breadcrumbs={['Layanan Koperasi', 'Gerbang Pembayaran']}
+            idPrefix="payments-view-page"
+          >
+            {renderModuleWithSuspense(<PaymentGatewayModule />, 'Gerbang Pembayaran')}
+          </PageContainer>
+        );
+
       default:
         return null;
     }
@@ -663,6 +719,9 @@ function AppContent() {
 
   return (
     <div className="min-h-screen flex flex-col bg-stone-50 text-stone-800" id="kopsim-app-root">
+      {/* Dynamic SEO Meta & Schema.org JSON-LD */}
+      <SEOHead activePage={activePage} article={selectedArticle} />
+
       {/* Top Navigation Bar */}
       <TopNavbar
         activePage={activePage}
@@ -699,14 +758,18 @@ function AppContent() {
         onRequestLogin={() => setShowLoginModal(true)}
       />
 
-      {/* Public Online Registration Modal */}
-      <PublicRegisterModal
-        isOpen={showRegisterModal}
-        onClose={() => setShowRegisterModal(false)}
-        onSuccess={() => {
-          showToast('Data pendaftaran Anda telah tersimpan di sistem.', 'success');
-        }}
-      />
+      {/* Public Online Registration Modal (Loaded on demand) */}
+      {showRegisterModal && (
+        <Suspense fallback={null}>
+          <PublicRegisterModal
+            isOpen={showRegisterModal}
+            onClose={() => setShowRegisterModal(false)}
+            onSuccess={() => {
+              showToast('Data pendaftaran Anda telah tersimpan di sistem.', 'success');
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Internal Portal Login Modal */}
       {showLoginModal && (
@@ -719,9 +782,9 @@ function AppContent() {
             onSuccess={(loggedInRole) => {
               setShowLoginModal(false);
               if (loggedInRole === 'ANGGOTA') {
-                setActivePage('MEMBER_PORTAL');
+                handleNavigate('MEMBER_PORTAL');
               } else {
-                setActivePage('REPORTS_DASHBOARD');
+                handleNavigate('REPORTS_DASHBOARD');
               }
             }}
             onCancel={() => setShowLoginModal(false)}

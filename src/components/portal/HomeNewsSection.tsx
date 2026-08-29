@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
+import { OptimizedImage } from '../common/OptimizedImage';
 import { newsService } from '../../services/newsService';
 import { NewsArticle, NEWS_CATEGORIES } from '../../types/news';
 import { formatDateIndo, normalizeImageUrl } from '../../utils/formatters';
@@ -120,14 +121,9 @@ export const HomeNewsSection: React.FC<HomeNewsSectionProps> = ({
                 {/* Thumbnail */}
                 <div className="relative h-44 bg-stone-100 overflow-hidden">
                   {art.foto_url ? (
-                    <img
+                    <OptimizedImage
                       src={normalizeImageUrl(art.foto_url)}
                       alt={art.judul}
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).src =
-                          '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
-                      }}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (

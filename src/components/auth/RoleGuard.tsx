@@ -1,14 +1,16 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole } from '../../types/auth';
-import { ShieldAlert, LogIn, Lock, CheckCircle2 } from 'lucide-react';
+import { LogIn, Lock, CheckCircle2 } from 'lucide-react';
 import { Button } from '../common/Button';
+import { PermissionState } from '../common/PermissionState';
 
 interface RoleGuardProps {
   children: React.ReactNode;
   allowedRoles?: UserRole[];
   fallback?: React.ReactNode;
   onRequestLogin?: () => void;
+  onGoHome?: () => void;
 }
 
 export const RoleGuard: React.FC<RoleGuardProps> = ({
@@ -16,6 +18,7 @@ export const RoleGuard: React.FC<RoleGuardProps> = ({
   allowedRoles,
   fallback,
   onRequestLogin,
+  onGoHome,
 }) => {
   const { role, isAuthenticated } = useAuth();
 
@@ -83,24 +86,17 @@ export const RoleGuard: React.FC<RoleGuardProps> = ({
     if (fallback) return <>{fallback}</>;
 
     return (
-      <div
-        id="role-unauthorized-guard"
-        className="max-w-md mx-auto my-8 p-6 sm:p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 shadow-sm space-y-4"
-      >
-        <div className="w-14 h-14 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
-          <ShieldAlert className="w-7 h-7" />
-        </div>
-        <div className="space-y-1">
-          <h3 className="text-base font-bold text-amber-950 font-serif">
-            Hak Akses Terbatas ({allowedRoles.join(' / ')})
-          </h3>
-          <p className="text-xs text-amber-900 leading-relaxed">
-            Peran Anda saat ini adalah <strong className="uppercase font-bold text-emerald-950">{role}</strong>. Modul ini memerlukan hak otorisasi <strong>{allowedRoles.join(' atau ')}</strong>.
-          </p>
-        </div>
-      </div>
+      <PermissionState
+        idPrefix="role-unauthorized-guard"
+        title={`Akses Terbatas (${allowedRoles.join(' / ')})`}
+        message={`Peran akun Anda saat ini adalah ${role}. Modul ini memerlukan hak otorisasi ${allowedRoles.join(' atau ')}.`}
+        requiredRole={allowedRoles.join(' / ')}
+        currentRole={role}
+        onGoHome={onGoHome}
+      />
     );
   }
 
   return <>{children}</>;
 };
+

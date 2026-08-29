@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <!-- Public Landing Page / Beranda -->
+  <url>
+    <loc>https://kopsimmandiri.id/</loc>
+    <lastmod>2026-08-28</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://kopsimmandiri.id/assets/logo-kopsim.png</image:loc>
+      <image:title>Koperasi Syarikat Islam Mandiri</image:title>
+    </image:image>
+  </url>
+
+  <!-- Profil & Tentang Koperasi -->
+  <url>
+    <loc>https://kopsimmandiri.id/tentang</loc>
+    <lastmod>2026-08-28</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Kanal Berita & Warta Sektor Riil -->
+  <url>
+    <loc>https://kopsimmandiri.id/berita</loc>
+    <lastmod>2026-08-28</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Portofolio & Katalog Komoditas Sektor Riil -->
+  <url>
+    <loc>https://kopsimmandiri.id/proyek</loc>
+    <lastmod>2026-08-28</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+
+  <!-- Portal Login Anggota -->
+  <url>
+    <loc>https://kopsimmandiri.id/portal/login</loc>
+    <lastmod>2026-08-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>

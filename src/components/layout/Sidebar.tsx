@@ -24,6 +24,9 @@ import {
   ChevronRight,
   Database,
   Newspaper,
+  Calculator,
+  CreditCard,
+  Bell,
 } from 'lucide-react';
 import { ActivePage } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
@@ -200,6 +203,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="flex-1 text-left">Kanal Berita & Warta</span>
                 <span className="text-[9px] bg-emerald-700 text-emerald-100 px-1.5 py-0.2 rounded font-bold">
                   Update
+                </span>
+              </button>
+
+              {/* Kalkulator Simulasi Pinjaman */}
+              <button
+                onClick={() => handleNavClick('LOANS')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all ${
+                  activePage === 'LOANS'
+                    ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                    : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                }`}
+              >
+                <Calculator className="w-4 h-4 shrink-0 text-emerald-300" />
+                <span className="flex-1 text-left">Simulasi Pembiayaan</span>
+                <span className="text-[9px] bg-emerald-800 text-emerald-200 px-1.5 py-0.2 rounded font-bold">
+                  Syariah
+                </span>
+              </button>
+
+              {/* Setoran Online QRIS / VA */}
+              <button
+                onClick={() => handleNavClick('PAYMENTS')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all ${
+                  activePage === 'PAYMENTS'
+                    ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                    : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                }`}
+              >
+                <CreditCard className="w-4 h-4 shrink-0 text-amber-300" />
+                <span className="flex-1 text-left">Setor Simpanan (Online)</span>
+                <span className="text-[9px] bg-amber-800 text-amber-200 px-1.5 py-0.2 rounded font-bold">
+                  QRIS/VA
+                </span>
+              </button>
+
+              {/* Pusat Notifikasi */}
+              <button
+                onClick={() => handleNavClick('NOTIFICATIONS')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all ${
+                  activePage === 'NOTIFICATIONS'
+                    ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                    : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                }`}
+              >
+                <Bell className="w-4 h-4 shrink-0 text-blue-300" />
+                <span className="flex-1 text-left">Pusat Notifikasi</span>
+                <span className="text-[9px] bg-blue-800 text-blue-200 px-1.5 py-0.2 rounded font-bold">
+                  Multi
                 </span>
               </button>
 
@@ -450,6 +501,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                   <span className="text-[9px] bg-emerald-700/60 text-emerald-200 border border-emerald-500/40 px-1 rounded font-bold">
                     CMS
+                  </span>
+                </button>
+
+                {/* 11. Pembiayaan & Komite */}
+                <button
+                  onClick={() => handleNavClick('LOANS')}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                    activePage === 'LOANS'
+                      ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                      : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Calculator className="w-4 h-4 shrink-0 text-emerald-300" />
+                    <span className="text-stone-100 font-semibold">11. Pembiayaan Syariah</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-700/60 text-emerald-200 border border-emerald-500/40 px-1 rounded font-bold">
+                    Komite
+                  </span>
+                </button>
+
+                {/* 12. Payment Gateway & Webhook */}
+                <button
+                  onClick={() => handleNavClick('PAYMENTS')}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                    activePage === 'PAYMENTS'
+                      ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                      : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <CreditCard className="w-4 h-4 shrink-0 text-amber-300" />
+                    <span className="text-stone-100 font-semibold">12. Gerbang Pembayaran</span>
+                  </div>
+                  <span className="text-[9px] bg-amber-700/60 text-amber-200 border border-amber-500/40 px-1 rounded font-bold">
+                    Gateway
+                  </span>
+                </button>
+
+                {/* 13. Notifikasi & Automasi */}
+                <button
+                  onClick={() => handleNavClick('NOTIFICATIONS')}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                    activePage === 'NOTIFICATIONS'
+                      ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                      : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Bell className="w-4 h-4 shrink-0 text-blue-300" />
+                    <span className="text-stone-100 font-semibold">13. Notifikasi & Automasi</span>
+                  </div>
+                  <span className="text-[9px] bg-blue-700/60 text-blue-200 border border-blue-500/40 px-1 rounded font-bold">
+                    Queue
                   </span>
                 </button>
               </div>

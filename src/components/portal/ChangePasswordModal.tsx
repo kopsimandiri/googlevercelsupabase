@@ -5,6 +5,7 @@ import { useNotification } from '../../context/NotificationContext';
 import { memberService } from '../../services/memberService';
 
 interface ChangePasswordModalProps {
+  isOpen?: boolean;
   memberNo: string;
   memberName: string;
   username?: string;

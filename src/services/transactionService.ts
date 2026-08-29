@@ -419,18 +419,27 @@ export interface TransactionsMetaResult {
   errorMessage?: string;
 }
 
+let inMemoryTransactions: TransactionRecord[] | null = null;
+
 export const transactionService = {
   getAllTransactionsRaw,
 
   getStoredTransactions(): TransactionRecord[] {
+    if (inMemoryTransactions) return inMemoryTransactions;
     try {
-      const stored = localStorage.getItem(STORAGE_TRX_KEY);
-      if (stored) return JSON.parse(stored);
+      if (typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem(STORAGE_TRX_KEY);
+        if (stored) {
+          inMemoryTransactions = JSON.parse(stored);
+          return inMemoryTransactions!;
+        }
+        localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(INITIAL_TRANSACTIONS));
+      }
     } catch {
       // fallback
     }
-    localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(INITIAL_TRANSACTIONS));
-    return INITIAL_TRANSACTIONS;
+    inMemoryTransactions = [...INITIAL_TRANSACTIONS];
+    return inMemoryTransactions;
   },
 
   /**
@@ -659,7 +668,14 @@ export const transactionService = {
       list.unshift(newRecord);
     }
 
-    localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+    inMemoryTransactions = list;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+      }
+    } catch {
+      // ignore
+    }
 
     // Audit Log recording
     await auditService.logActivity(
@@ -697,7 +713,14 @@ export const transactionService = {
 
     const oldRecord = list[targetIdx];
     list = list.filter((t) => t.id !== id);
-    localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+    inMemoryTransactions = list;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+      }
+    } catch {
+      // ignore
+    }
 
     // Audit deletion
     await auditService.logActivity(

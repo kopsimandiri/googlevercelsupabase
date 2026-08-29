@@ -441,6 +441,155 @@ export interface AuditLogRecord {
   created_at?: string;
 }
 
+// 17. notification_jobs
+export type NotificationType =
+  | 'TRANSACTION_SUCCESS'
+  | 'SAVINGS_DEPOSIT'
+  | 'LOAN_SIMULATION'
+  | 'LOAN_APPLICATION'
+  | 'LOAN_APPROVED'
+  | 'PAYMENT_RECEIVED'
+  | 'PAYMENT_POSTED'
+  | 'SECURITY_ALERT'
+  | 'PASSWORD_RESET'
+  | 'SYSTEM_NOTICE';
+
+export type NotificationChannel = 'WHATSAPP' | 'EMAIL' | 'IN_APP' | 'PUSH';
+export type NotificationStatus = 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'CANCELLED';
+
+export interface NotificationJobRecord {
+  id: string;
+  type: NotificationType;
+  recipient: string;
+  recipient_name?: string | null;
+  channel: NotificationChannel;
+  provider: string;
+  payload: Record<string, any>;
+  status: NotificationStatus;
+  attempts: number;
+  max_attempts: number;
+  idempotency_key?: string | null;
+  sent_at?: string | null;
+  error?: string | null;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+// 18. user_notifications (In-App Inbox)
+export interface UserNotificationRecord {
+  id: string;
+  user_id: string;
+  title: string;
+  message: string;
+  category: 'TRANSACTION' | 'SAVINGS' | 'LOAN' | 'SECURITY' | 'SYSTEM';
+  action_url?: string | null;
+  is_read: boolean;
+  read_at?: string | null;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+// 19. payment_requests
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED' | 'REFUNDED' | 'POSTED';
+export type PaymentType = 'QRIS' | 'VIRTUAL_ACCOUNT' | 'BANK_TRANSFER' | 'EWALLET';
+
+export interface PaymentRequestRecord {
+  id: string;
+  order_id: string;
+  idempotency_key: string;
+  member_id: string;
+  member_name: string;
+  amount: number;
+  fee: number;
+  total_amount: number;
+  payment_type: PaymentType;
+  payment_channel: string;
+  va_number?: string | null;
+  qr_string?: string | null;
+  payment_url?: string | null;
+  description?: string | null;
+  category: string;
+  status: PaymentStatus;
+  expiry_time: string;
+  paid_at?: string | null;
+  posted_at?: string | null;
+  posted_transaction_id?: string | null;
+  webhook_received_at?: string | null;
+  webhook_attempts?: number;
+  webhook_signature?: string | null;
+  raw_webhook_payload?: any;
+  settlement_status: 'UNSETTLED' | 'SETTLED' | 'DISCREPANCY';
+  settled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// 20. loan_applications (Pembiayaan Syariah)
+export type AkadType = 'MURABAHAH' | 'MUDHARABAH' | 'MUSYARAKAH' | 'IJARAH' | 'QARDH';
+export type LoanApplicationStatus =
+  | 'SIMULATED'
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'SURVEY'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'DISBURSED'
+  | 'COMPLETED';
+
+export interface AmortizationScheduleItem {
+  month: number;
+  principal_installment: number;
+  margin_installment: number;
+  total_installment: number;
+  remaining_principal: number;
+}
+
+export interface LoanSimulationResult {
+  loan_amount: number;
+  tenor_months: number;
+  margin_rate_pa: number;
+  akad_type: AkadType;
+  margin_amount: number;
+  total_payment: number;
+  monthly_installment: number;
+  monthly_principal: number;
+  monthly_margin: number;
+  schedule: AmortizationScheduleItem[];
+  disclaimer: string;
+  is_authoritative?: boolean;
+}
+
+export interface LoanApplicationRecord {
+  id: string;
+  application_no: string;
+  member_id: string;
+  member_name: string;
+  akad_type: AkadType;
+  peruntukan: string;
+  loan_amount: number;
+  tenor_months: number;
+  margin_rate_pa: number;
+  margin_amount: number;
+  total_payment: number;
+  monthly_installment: number;
+  monthly_principal: number;
+  monthly_margin: number;
+  amortization_schedule?: AmortizationScheduleItem[];
+  status: LoanApplicationStatus;
+  collateral_type?: string | null;
+  collateral_detail?: string | null;
+  monthly_income?: number;
+  dsr_percentage?: number;
+  approval_notes?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  disbursed_at?: string | null;
+  disbursed_transaction_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type SupabaseTableName =
   | 'areas'
   | 'chart_of_accounts'
@@ -457,6 +606,11 @@ export type SupabaseTableName =
   | 'project_updates'
   | 'profiles'
   | 'roles'
-  | 'audit_logs';
+  | 'audit_logs'
+  | 'notification_jobs'
+  | 'user_notifications'
+  | 'payment_requests'
+  | 'loan_applications';
+
 
 

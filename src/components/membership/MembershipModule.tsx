@@ -10,6 +10,7 @@ import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
 import { ErrorState } from '../common/ErrorState';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { IdCardModal, renderMemberCardToCanvas } from '../idcard/IdCardModal';
 import { AddMemberModal } from './AddMemberModal';
 import { SupabaseTableCheckResult } from '../../lib/supabase';
@@ -73,6 +74,7 @@ export const MembershipModule: React.FC = () => {
   const [idCardMember, setIdCardMember] = useState<MemberRecord | null>(null);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState<boolean>(false);
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
+  const [deletingMember, setDeletingMember] = useState<{ id: string; nama: string } | null>(null);
   const [editingMember, setEditingMember] = useState<MemberRecord | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -213,24 +215,28 @@ export const MembershipModule: React.FC = () => {
     }
   };
 
-  const handleDeleteMember = async (id: string, nama: string) => {
+  const handleDeleteMember = (id: string, nama: string) => {
     if (!canDelete) {
       showToast('Hanya role ADMIN yang berwenang menghapus data anggota.', 'error');
       return;
     }
-    const confirmed = window.confirm(`Apakah Anda yakin ingin menghapus data anggota "${nama}" (${id})?`);
-    if (!confirmed) return;
+    setDeletingMember({ id, nama });
+  };
 
+  const handleConfirmDeleteMember = async () => {
+    if (!deletingMember) return;
     try {
-      const res = await memberService.deleteMember(id);
+      const res = await memberService.deleteMember(deletingMember.id);
       if (res.success) {
-        showToast(`Anggota ${nama} (${id}) berhasil dihapus.`, 'info');
+        showToast(`Anggota ${deletingMember.nama} (${deletingMember.id}) berhasil dihapus.`, 'info');
         await loadMembers();
       } else {
         showToast(res.error || 'Gagal menghapus anggota.', 'error');
       }
     } catch (err: any) {
       showToast(err.message || 'Gagal menghapus data.', 'error');
+    } finally {
+      setDeletingMember(null);
     }
   };
 
@@ -1148,6 +1154,18 @@ export const MembershipModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Confirm Delete Member Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingMember}
+        onClose={() => setDeletingMember(null)}
+        onConfirm={handleConfirmDeleteMember}
+        title="Hapus Data Anggota"
+        message={`Apakah Anda yakin ingin menghapus data anggota "${deletingMember?.nama}" (${deletingMember?.id}) dari database koperasi? Tindakan ini akan menghapus akses portal anggota yang bersangkutan.`}
+        confirmText="Hapus Anggota"
+        cancelText="Batal"
+        variant="danger"
+      />
     </div>
   );
 };
