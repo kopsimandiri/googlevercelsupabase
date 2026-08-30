@@ -11,6 +11,7 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { useAuth } from '../../context/AuthContext';
 import {
   Database,
   RefreshCw,
@@ -36,6 +37,10 @@ import {
 } from 'lucide-react';
 
 export const SupabaseAuditModule: React.FC = () => {
+  const { role } = useAuth();
+  const canDelete = role === 'ADMIN';
+  const canEdit = role === 'ADMIN';
+
   const [auditResults, setAuditResults] = useState<TableAuditInfo[]>([]);
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
   const [activeTable, setActiveTable] = useState<SupabaseTableName>('areas');
@@ -128,6 +133,14 @@ export const SupabaseAuditModule: React.FC = () => {
   };
 
   const handleDelete = (id: string) => {
+    if (!canDelete) {
+      setFeedbackMessage({
+        type: 'error',
+        text: 'Otorisasi Ditolak: Hanya Admin yang diizinkan menghapus baris data.',
+      });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+      return;
+    }
     setDeletingRecordId(id);
   };
 
@@ -536,20 +549,24 @@ export const SupabaseAuditModule: React.FC = () => {
                     })}
                     <td className="p-3 text-right whitespace-nowrap sticky right-0 bg-white shadow-xs">
                       <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => handleOpenEditModal(row)}
-                          className="p-1.5 text-stone-500 hover:text-primary-800 hover:bg-stone-100 rounded"
-                          title="Edit record"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(row.id)}
-                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
-                          title="Hapus record"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {canEdit && (
+                          <button
+                            onClick={() => handleOpenEditModal(row)}
+                            className="p-1.5 text-stone-500 hover:text-primary-800 hover:bg-stone-100 rounded"
+                            title="Edit record"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDelete(row.id)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
+                            title="Hapus record (Admin only)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

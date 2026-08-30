@@ -35,7 +35,8 @@ import {
 } from 'lucide-react';
 
 export const ProjectModule: React.FC = () => {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
+  const canDelete = role === 'ADMIN';
   const { showToast } = useNotification();
 
   const [projects, setProjects] = useState<Array<ProjectDetailInfo & ProjectSummary>>([]);
@@ -120,6 +121,10 @@ export const ProjectModule: React.FC = () => {
   };
 
   const handleDeleteUpdate = async (id: string) => {
+    if (!canDelete) {
+      showToast('Otorisasi Ditolak: Hanya Admin yang diizinkan menghapus data update proyek.', 'error');
+      return;
+    }
     setIsDeletingId(id);
     try {
       const res = await projectExposureService.deleteProjectUpdate(id);
@@ -458,18 +463,20 @@ export const ProjectModule: React.FC = () => {
                           )}
                         </div>
 
-                        <div className="shrink-0 flex items-center gap-1.5 self-end sm:self-center">
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            isLoading={isDeletingId === item.id}
-                            onClick={() => handleDeleteUpdate(item.id)}
-                            leftIcon={<Trash2 className="w-3.5 h-3.5" />}
-                            className="px-2.5 py-1 text-[11px]"
-                          >
-                            Hapus
-                          </Button>
-                        </div>
+                        {canDelete && (
+                          <div className="shrink-0 flex items-center gap-1.5 self-end sm:self-center">
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              isLoading={isDeletingId === item.id}
+                              onClick={() => handleDeleteUpdate(item.id)}
+                              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                              className="px-2.5 py-1 text-[11px]"
+                            >
+                              Hapus
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
