@@ -163,26 +163,28 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           </span>
         </button>
 
-        {/* If Authenticated: Role Switcher & User Profile */}
+        {/* If Authenticated: Role Indicator & User Profile */}
         {isAuthenticated && user ? (
           <div className="flex items-center gap-2">
-            {/* Quick Demo Role Selector */}
-            <div className="hidden sm:flex items-center bg-primary-950/80 rounded-lg p-0.5 border border-primary-800 text-xs">
-              {(['ADMIN', 'DIRECTOR', 'ANGGOTA'] as UserRole[]).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setRole(r)}
-                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-colors ${
-                    role === r
-                      ? 'bg-accent-gold text-white shadow-xs'
-                      : 'text-stone-300 hover:text-white'
-                  }`}
-                  title={`Ganti peran uji coba ke ${r}`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
+            {/* Role indicator / selector ONLY for ADMIN/DIRECTOR; STRICTLY FORBIDDEN and HIDDEN for ANGGOTA */}
+            {role !== 'ANGGOTA' && (
+              <div className="hidden sm:flex items-center bg-primary-950/80 rounded-lg p-0.5 border border-primary-800 text-xs">
+                {(['ADMIN', 'DIRECTOR'] as UserRole[]).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRole(r)}
+                    className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-colors ${
+                      role === r
+                        ? 'bg-accent-gold text-white shadow-xs'
+                        : 'text-stone-300 hover:text-white'
+                    }`}
+                    title={`Peran: ${r}`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* User Dropdown / Logout Button */}
             <div className="flex items-center gap-2 pl-2 border-l border-primary-800">
@@ -191,7 +193,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                   {user.name}
                 </span>
                 <span className="text-[9px] text-accent-gold font-mono block">
-                  {role}
+                  {role === 'ANGGOTA' ? `ANGGOTA (${user.memberNo || 'AKTIF'})` : role}
                 </span>
               </div>
 

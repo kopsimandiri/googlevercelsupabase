@@ -500,7 +500,7 @@ function AppContent() {
             idPrefix="files-view"
           >
             <RoleGuard
-              allowedRoles={['ADMIN', 'DIRECTOR', 'ANGGOTA']}
+              allowedRoles={['ADMIN', 'DIRECTOR']}
               onRequestLogin={() => setShowLoginModal(true)}
               onGoHome={() => handleNavigate('HOME')}
             >

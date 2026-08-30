@@ -341,8 +341,8 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
                   onChange={(e) => setFormData({ ...formData, gender: e.target.value as 'L' | 'P' })}
                   className="w-full px-3.5 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-700 bg-white"
                 >
-                  <option value="L">Laki-laki</option>
-                  <option value="P">Perempuan</option>
+                  <option value="L">Pria</option>
+                  <option value="P">Wanita</option>
                 </select>
               </div>
 

@@ -394,7 +394,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                   <span className="text-stone-500 text-[11px] block">Nama Lengkap:</span>
                   <span className="font-bold text-stone-900 text-sm">{createdMember.nama}</span>
                   <span className="text-[10px] text-stone-500 block">
-                    {createdMember.gender === 'P' ? 'Perempuan (Muslimah)' : 'Laki-laki (Muslim)'}
+                    {createdMember.gender === 'P' ? 'Wanita' : 'Pria'}
                   </span>
                 </div>
 
@@ -649,8 +649,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                     onChange={(e: any) => setGender(e.target.value)}
                     className="w-full px-3 py-1.5 bg-white border border-stone-300 rounded-lg focus:outline-hidden"
                   >
-                    <option value="L">Laki-laki (Muslim)</option>
-                    <option value="P">Perempuan (Muslimah)</option>
+                    <option value="L">Pria</option>
+                    <option value="P">Wanita</option>
                   </select>
                 </div>
 

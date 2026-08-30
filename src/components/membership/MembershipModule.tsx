@@ -710,7 +710,7 @@ export const MembershipModule: React.FC = () => {
                       <td className="p-3">
                         <div className="font-bold text-stone-900">{m.nama}</div>
                         <span className="text-[10px] text-stone-500">
-                          {m.gender === 'P' ? 'Perempuan (Muslimah)' : 'Laki-laki (Muslim)'}
+                          {m.gender === 'P' ? 'Wanita' : 'Pria'}
                         </span>
                       </td>
                       <td className="p-3">
@@ -978,8 +978,8 @@ export const MembershipModule: React.FC = () => {
                     onChange={(e: any) => setFormGender(e.target.value)}
                     className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden"
                   >
-                    <option value="L">Laki-laki (Muslim)</option>
-                    <option value="P">Perempuan (Muslimah)</option>
+                    <option value="L">Pria</option>
+                    <option value="P">Wanita</option>
                   </select>
                 </div>
                 <div>

@@ -502,6 +502,7 @@ export const memberService = {
     };
 
     let savedToSupabase = false;
+    let supabaseErrorMessage: string | undefined;
     const client = getSupabaseClient();
 
     if (client) {
@@ -516,14 +517,23 @@ export const memberService = {
           console.log(`[memberService] Berhasil menyimpan ke Supabase public.members.`);
         } else {
           console.warn(`[memberService] Supabase insert notice:`, insertError.message);
-          // Try upsert
+          supabaseErrorMessage = insertError.message;
+          // Try upsert as fallback
           const { error: upsertErr } = await client
             .from(MEMBERS_TABLE_NAME)
             .upsert([dbRow], { onConflict: 'id' });
-          if (!upsertErr) savedToSupabase = true;
+          if (!upsertErr) {
+            savedToSupabase = true;
+            supabaseErrorMessage = undefined;
+            console.log(`[memberService] Berhasil upsert ke Supabase public.members.`);
+          } else {
+            supabaseErrorMessage = upsertErr.message;
+            console.error(`[memberService] Supabase upsert error:`, upsertErr.message);
+          }
         }
-      } catch (err) {
-        console.warn(`[memberService] Supabase insert exception:`, err);
+      } catch (err: any) {
+        supabaseErrorMessage = err?.message || String(err);
+        console.error(`[memberService] Supabase insert exception:`, err);
       }
     }
 
@@ -542,6 +552,7 @@ export const memberService = {
       success: true,
       data: newMemberRecord,
       source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
+      error: supabaseErrorMessage,
     };
   },
 

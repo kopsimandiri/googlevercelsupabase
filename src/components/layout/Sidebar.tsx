@@ -27,6 +27,7 @@ import {
   Calculator,
   CreditCard,
   Bell,
+  User,
 } from 'lucide-react';
 import { ActivePage } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
@@ -303,12 +304,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               </div>
             ) : role === 'ANGGOTA' ? (
-              /* If Authenticated as ANGGOTA: Show strictly member-specific portal views */
+              /* If Authenticated as ANGGOTA: Show strictly personal savings and personal profile */
               <div className="space-y-1">
-                {/* 1. Portal Khusus Anggota */}
+                {/* 1. Simpanan Pribadi */}
                 <button
                   onClick={() => handleNavClick('MEMBER_PORTAL')}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all ${
                     activePage === 'MEMBER_PORTAL'
                       ? 'bg-accent-gold text-white font-bold shadow-xs'
                       : 'text-stone-200 hover:bg-primary-800 hover:text-white'
@@ -316,23 +317,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <div className="flex items-center gap-2.5">
                     <Coins className="w-4 h-4 shrink-0 text-amber-300" />
-                    <span>1. Simpanan & KTA Saya</span>
+                    <span>1. Simpanan Pribadi & Mutasi</span>
                   </div>
                   <ChevronRight className="w-3 h-3 text-amber-300" />
                 </button>
 
-                {/* 2. Berkas & AD/ART */}
+                {/* 2. Data Diri & e-KTA */}
                 <button
-                  onClick={() => handleNavClick('FILES')}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
-                    activePage === 'FILES'
-                      ? 'bg-primary-700 text-white font-semibold shadow-xs'
+                  onClick={() => handleNavClick('MEMBER_PORTAL')}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all ${
+                    activePage === 'MEMBER_PORTAL'
+                      ? 'bg-primary-800 text-white font-semibold shadow-xs'
                       : 'text-stone-200 hover:bg-primary-800 hover:text-white'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
-                    <FileText className="w-4 h-4 shrink-0 text-white" />
-                    <span>2. AD/ART & Dokumen</span>
+                    <User className="w-4 h-4 shrink-0 text-emerald-300" />
+                    <span>2. Data Diri & e-KTA</span>
                   </div>
                   <ChevronRight className="w-3 h-3 text-stone-400" />
                 </button>

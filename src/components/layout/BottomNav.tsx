@@ -63,29 +63,35 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         <span className="text-[9px] tracking-tight mt-0.5">Daftar</span>
       </button>
 
-      {/* 4. Portal Internal */}
+      {/* 4. Portal Internal / Simpanan */}
       <button
-        onClick={() => onNavigate('REPORTS_DASHBOARD')}
+        onClick={() => onNavigate(role === 'ANGGOTA' ? 'MEMBER_PORTAL' : 'REPORTS_DASHBOARD')}
         className={`flex flex-col items-center justify-center p-1.5 rounded-lg min-w-[56px] transition-colors ${
-          isInternalActive ? 'text-primary-700 font-bold' : 'text-text-muted hover:text-primary-700'
+          (role === 'ANGGOTA' ? activePage === 'MEMBER_PORTAL' : isInternalActive)
+            ? 'text-primary-700 font-bold'
+            : 'text-text-muted hover:text-primary-700'
         }`}
       >
         <LayoutDashboard className="w-4 h-4 mb-0.5" />
-        <span className="text-[10px] tracking-tight">Internal</span>
+        <span className="text-[10px] tracking-tight">{role === 'ANGGOTA' ? 'Simpanan' : 'Internal'}</span>
       </button>
 
       {/* 5. Akun / Login */}
       {isAuthenticated ? (
         <button
-          onClick={() => onNavigate('MEMBERSHIP')}
+          onClick={() => onNavigate(role === 'ANGGOTA' ? 'MEMBER_PORTAL' : 'MEMBERSHIP')}
           className={`flex flex-col items-center justify-center p-1.5 rounded-lg min-w-[56px] transition-colors ${
-            activePage === 'MEMBERSHIP' ? 'text-primary-700 font-bold' : 'text-text-muted hover:text-primary-700'
+            (role === 'ANGGOTA' ? activePage === 'MEMBER_PORTAL' : activePage === 'MEMBERSHIP')
+              ? 'text-primary-700 font-bold'
+              : 'text-text-muted hover:text-primary-700'
           }`}
         >
           <div className="w-4 h-4 rounded-full bg-primary-700 border border-accent-gold text-[8px] flex items-center justify-center font-bold text-white mb-0.5">
             {role[0]}
           </div>
-          <span className="text-[10px] tracking-tight truncate max-w-[50px]">{user?.name?.split(' ')[0] || role}</span>
+          <span className="text-[10px] tracking-tight truncate max-w-[50px]">
+            {user?.name?.split(' ')[0] || role}
+          </span>
         </button>
       ) : (
         <button
