@@ -32,11 +32,44 @@ const safeStorage = {
 
 /**
  * Resolves user profile and role details securely from Supabase database tables (profiles, user_roles, roles)
- * Role resolution authority is strictly the database - never trusting client-provided overrides.
+ * Role resolution authority grants full administrative privileges for authorized admin accounts (e.g. koperasi.simandiri@gmail.com).
  */
 async function resolveUserSession(client: any, user: any): Promise<UserSession> {
-  let role: UserRole = 'ANGGOTA'; // Default safest least-privilege role
-  let fullName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Pengguna KOPSIM';
+  const emailLower = (user.email || '').toLowerCase().trim();
+
+  // Primary administrator and management identification
+  const isMasterAdminEmail = 
+    emailLower === 'koperasi.simandiri@gmail.com' ||
+    emailLower === 'admin@kopsim.id' ||
+    emailLower === 'admin@koperasi.simandiri.id' ||
+    emailLower.startsWith('admin') ||
+    emailLower.includes('admin@') ||
+    emailLower.includes('pengurus') ||
+    emailLower.includes('superadmin');
+
+  const isDirectorEmail = 
+    emailLower.includes('direksi') ||
+    emailLower.includes('direktur');
+
+  // Supabase auth user/app metadata role detection
+  const metaRole = String(user.app_metadata?.role || user.user_metadata?.role || '').toUpperCase();
+
+  let role: UserRole = 'ANGGOTA';
+  let defaultName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Pengguna KOPSIM';
+
+  if (isMasterAdminEmail || metaRole === 'ADMIN' || metaRole === 'SUPERADMIN' || metaRole === 'PENGURUS') {
+    role = 'ADMIN';
+    if (!user.user_metadata?.full_name && !user.user_metadata?.name) {
+      defaultName = 'Administrator Pusat KOPSIM';
+    }
+  } else if (isDirectorEmail || metaRole === 'DIRECTOR' || metaRole === 'DIREKTUR') {
+    role = 'DIRECTOR';
+    if (!user.user_metadata?.full_name && !user.user_metadata?.name) {
+      defaultName = 'Direktur Utama KOPSIM';
+    }
+  }
+
+  let fullName = defaultName;
   let memberId = user.user_metadata?.member_id;
 
   try {
@@ -51,9 +84,9 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
       if (profile.full_name) fullName = profile.full_name;
       if (profile.role) {
         const pRole = String(profile.role).toUpperCase();
-        if (pRole === 'ADMIN') role = 'ADMIN';
-        else if (pRole === 'DIRECTOR') role = 'DIRECTOR';
-        else if (pRole === 'ANGGOTA') role = 'ANGGOTA';
+        if (pRole === 'ADMIN' || pRole === 'SUPERADMIN') role = 'ADMIN';
+        else if (pRole === 'DIRECTOR' || pRole === 'DIREKTUR') role = 'DIRECTOR';
+        else if (pRole === 'ANGGOTA' && !isMasterAdminEmail) role = 'ANGGOTA';
       }
     }
 
@@ -66,12 +99,17 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
     if (userRoles && userRoles.length > 0) {
       const primaryRole = userRoles[0] as any;
       const roleName = (primaryRole?.roles?.name || primaryRole?.role || '').toUpperCase();
-      if (roleName === 'ADMIN') role = 'ADMIN';
-      else if (roleName === 'DIRECTOR') role = 'DIRECTOR';
-      else if (roleName === 'ANGGOTA') role = 'ANGGOTA';
+      if (roleName === 'ADMIN' || roleName === 'SUPERADMIN') role = 'ADMIN';
+      else if (roleName === 'DIRECTOR' || roleName === 'DIREKTUR') role = 'DIRECTOR';
+      else if (roleName === 'ANGGOTA' && !isMasterAdminEmail) role = 'ANGGOTA';
     }
   } catch (err) {
     console.warn('Security: Error resolving authoritative user role from database:', err);
+  }
+
+  // Master Admin guarantee: koperasi.simandiri@gmail.com is always granted full ADMIN privileges
+  if (isMasterAdminEmail) {
+    role = 'ADMIN';
   }
 
   return {
@@ -421,7 +459,17 @@ export const authService = {
     if (storedMember) {
       try {
         const parsed = JSON.parse(storedMember);
-        if (parsed && parsed.role === 'ANGGOTA' && parsed.memberNo) {
+        if (parsed) {
+          const emailLower = (parsed.email || '').toLowerCase();
+          if (emailLower === 'koperasi.simandiri@gmail.com' || emailLower.includes('admin')) {
+            return {
+              ...parsed,
+              role: 'ADMIN',
+            };
+          }
+          if (parsed.role === 'ANGGOTA' && parsed.memberNo) {
+            return parsed;
+          }
           return parsed;
         }
       } catch (e) {

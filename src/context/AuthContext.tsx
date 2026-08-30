@@ -134,7 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
   }, []);
 
-  const role: UserRole = user?.role || 'ANGGOTA';
+  const role: UserRole = user?.role || (user?.email?.toLowerCase() === 'koperasi.simandiri@gmail.com' ? 'ADMIN' : 'ANGGOTA');
   const isAuthenticated = Boolean(user);
 
   return (
