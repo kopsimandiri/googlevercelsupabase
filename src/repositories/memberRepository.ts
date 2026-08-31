@@ -43,7 +43,7 @@ export const memberRepository = {
       const { error } = await client
         .from('members')
         .delete()
-        .or(`id.eq.${id},member_no.eq.${id}`);
+        .eq('member_no', id);
       return { success: !error, error };
     } catch (err) {
       return { success: false, error: err };

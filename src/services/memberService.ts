@@ -199,9 +199,10 @@ export function mapSupabaseMemberRowToMemberRecord(row: any): MemberRecord {
 
 /**
  * Maps UI MemberRecord to Supabase public.members 18 columns format
+ * Note: 'id' is omitted from payload so PostgreSQL auto-assigns nextval('members_id_seq')
  */
 export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extra: any = {}): any {
-  const idVal = member.id || extra.id || extra.member_no || `MEM-${Date.now()}`;
+  const memberNoVal = member.id || extra.member_no || extra.id || `MEM-${Date.now()}`;
   const nowStr = new Date().toISOString();
 
   // Guarantee clean 16 digits NIK
@@ -215,8 +216,7 @@ export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extr
   ).toLowerCase().trim();
 
   return {
-    id: idVal,
-    member_no: member.id || extra.member_no || idVal,
+    member_no: memberNoVal,
     registered_at: member.tgl_reg || extra.registered_at || nowStr.split('T')[0],
     full_name: (member.nama || extra.full_name || 'Anggota Baru').trim(),
     gender: member.gender === 'P' ? 'P' : 'L',
@@ -465,8 +465,8 @@ export const memberService = {
     }
 
     // 1. Prepare exact Supabase public.members 18 columns row
+    // Note: 'id' is omitted from payload so PostgreSQL auto-assigns nextval('members_id_seq')
     const dbRow = {
-      id: idVal,
       member_no: idVal,
       registered_at: payload.registered_at || nowStr.split('T')[0],
       full_name: payload.full_name.trim(),
@@ -481,6 +481,7 @@ export const memberService = {
       nik: payload.nik.trim(),
       work_area: payload.work_area.trim(), // Sesuai aturan: simpan area_code (misal: JKT-01)
       legacy_password_hash: payload.password.trim(),
+      avatar_url: '',
       status: payload.status || 'AKTIF',
       created_at: nowStr,
       updated_at: nowStr,
@@ -528,17 +529,19 @@ export const memberService = {
         } else {
           console.warn(`[memberService] Supabase insert notice:`, insertError.message);
           supabaseErrorMessage = insertError.message;
-          // Try upsert as fallback
-          const { error: upsertErr } = await client
+          // Try update by member_no if already exists
+          const { error: updateErr } = await client
             .from(MEMBERS_TABLE_NAME)
-            .upsert([dbRow], { onConflict: 'id' });
-          if (!upsertErr) {
+            .update(dbRow)
+            .eq('member_no', idVal);
+
+          if (!updateErr) {
             savedToSupabase = true;
             supabaseErrorMessage = undefined;
-            console.log(`[memberService] Berhasil upsert ke Supabase public.members.`);
+            console.log(`[memberService] Berhasil update data anggota yang sudah ada di Supabase.`);
           } else {
-            supabaseErrorMessage = upsertErr.message;
-            console.error(`[memberService] Supabase upsert error:`, upsertErr.message);
+            supabaseErrorMessage = `${insertError.message} / Update: ${updateErr.message}`;
+            console.error(`[memberService] Supabase add member error:`, updateErr.message);
           }
         }
       } catch (err: any) {
@@ -709,23 +712,13 @@ export const memberService = {
           let updateRes = await client
             .from(MEMBERS_TABLE_NAME)
             .update(updatePayload)
-            .eq('id', memberData.id);
+            .eq('member_no', memberData.id);
 
           if (!updateRes.error) {
             savedToSupabase = true;
           } else {
-            console.error('SAVE MEMBER SUPABASE ERROR (ID):', updateRes.error);
-            // Try updating with alternate key member_no
-            const altUpdate = await client
-              .from(MEMBERS_TABLE_NAME)
-              .update(updatePayload)
-              .eq('member_no', memberData.id);
-            if (!altUpdate.error) {
-              savedToSupabase = true;
-            } else {
-              supabaseErrorMsg = altUpdate.error.message;
-              console.error('SAVE MEMBER SUPABASE ERROR (MEMBER_NO):', altUpdate.error);
-            }
+            console.error('SAVE MEMBER SUPABASE ERROR (MEMBER_NO):', updateRes.error);
+            supabaseErrorMsg = updateRes.error.message;
           }
         } catch (err: any) {
           supabaseErrorMsg = err?.message || String(err);
@@ -776,7 +769,7 @@ export const memberService = {
         simpanan_sukarela: memberData.simpanan_sukarela || 0,
       };
 
-      const dbRow = mapMemberRecordToSupabaseRow(newMember, { ...extraPayload, id: newId, member_no: newId });
+      const dbRow = mapMemberRecordToSupabaseRow(newMember, { ...extraPayload, member_no: newId });
 
       let savedToSupabase = false;
       let supabaseErrorMsg: string | undefined;
@@ -799,15 +792,16 @@ export const memberService = {
           } else {
             supabaseErrorMsg = insertRes.error.message;
             console.error('SAVE MEMBER SUPABASE ERROR:', insertRes.error);
-            // Fallback: try upsert
-            const { error: upsertErr } = await client
+            // Fallback: try update by member_no if existing
+            const { error: updateErr } = await client
               .from(MEMBERS_TABLE_NAME)
-              .upsert([dbRow], { onConflict: 'id' });
-            if (!upsertErr) {
+              .update(dbRow)
+              .eq('member_no', newId);
+            if (!updateErr) {
               savedToSupabase = true;
               supabaseErrorMsg = undefined;
             } else {
-              console.error('SAVE MEMBER SUPABASE ERROR (UPSERT):', upsertErr);
+              console.error('SAVE MEMBER SUPABASE ERROR (UPDATE):', updateErr);
             }
           }
         } catch (err: any) {
@@ -861,9 +855,9 @@ export const memberService = {
     const client = getSupabaseClient();
     if (client) {
       try {
-        const { error } = await client.from(MEMBERS_TABLE_NAME).delete().eq('id', id);
+        const { error } = await client.from(MEMBERS_TABLE_NAME).delete().eq('member_no', id);
         if (error) {
-          await client.from(MEMBERS_TABLE_NAME).delete().eq('member_no', id);
+          console.warn('Supabase delete member warning:', error);
         }
       } catch (err) {
         console.warn('Supabase delete member fallback:', err);
@@ -962,47 +956,27 @@ export const memberService = {
 
     if (client) {
       try {
-        let targetId = cleanId;
-        const { data: rowById } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .select('id, member_no')
-          .eq('id', cleanId)
-          .maybeSingle();
-
-        if (rowById) {
-          targetId = rowById.id;
-        } else {
-          const { data: rowByNo } = await client
-            .from(MEMBERS_TABLE_NAME)
-            .select('id, member_no')
-            .eq('member_no', cleanId)
-            .maybeSingle();
-
-          if (rowByNo) {
-            targetId = rowByNo.id;
-          }
-        }
-
-        const { error: err1 } = await client
+        let updateRes = await client
           .from(MEMBERS_TABLE_NAME)
           .update({
             legacy_password_hash: cleanPassword,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', targetId);
+          .eq('member_no', cleanId);
 
-        if (!err1) {
+        if (!updateRes.error) {
           supabaseSuccess = true;
-        } else {
-          const { error: err2 } = await client
+        } else if (/^\d+$/.test(cleanId)) {
+          // If numeric ID, fallback to eq('id', Number(cleanId))
+          const numRes = await client
             .from(MEMBERS_TABLE_NAME)
             .update({
               legacy_password_hash: cleanPassword,
               updated_at: new Date().toISOString(),
             })
-            .eq('member_no', cleanId);
+            .eq('id', Number(cleanId));
 
-          if (!err2) {
+          if (!numRes.error) {
             supabaseSuccess = true;
           }
         }
@@ -1081,27 +1055,39 @@ export const memberService = {
         // Step A: Cari data baris anggota yang cocok di Supabase
         let targetRow: any = null;
 
-        // Cari berdasarkan id
-        const { data: rowById } = await client
+        // Cari berdasarkan member_no terlebih dahulu (business identifier unik)
+        const { data: rowByNo } = await client
           .from(MEMBERS_TABLE_NAME)
           .select('*')
-          .eq('id', cleanId)
+          .eq('member_no', cleanId)
           .maybeSingle();
 
-        if (rowById) {
-          targetRow = rowById;
-        } else {
-          // Cari berdasarkan member_no
-          const { data: rowByNo } = await client
+        if (rowByNo) {
+          targetRow = rowByNo;
+        } else if (/^\d+$/.test(cleanId)) {
+          // Cari berdasarkan id jika numerik
+          const { data: rowById } = await client
             .from(MEMBERS_TABLE_NAME)
             .select('*')
-            .eq('member_no', cleanId)
+            .eq('id', Number(cleanId))
             .maybeSingle();
 
-          if (rowByNo) {
-            targetRow = rowByNo;
+          if (rowById) {
+            targetRow = rowById;
+          }
+        }
+
+        if (!targetRow) {
+          // Cari berdasarkan username atau nama
+          const { data: rowByUsername } = await client
+            .from(MEMBERS_TABLE_NAME)
+            .select('*')
+            .ilike('username', cleanId)
+            .limit(1);
+
+          if (rowByUsername && rowByUsername.length > 0) {
+            targetRow = rowByUsername[0];
           } else {
-            // Cari berdasarkan nama
             const { data: rowByName } = await client
               .from(MEMBERS_TABLE_NAME)
               .select('*')
@@ -1307,46 +1293,26 @@ export const memberService = {
     const client = getSupabaseClient();
     if (client) {
       try {
-        let targetId = cleanId;
-        const { data: rowById } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .select('id, member_no')
-          .eq('id', cleanId)
-          .maybeSingle();
-
-        if (rowById) {
-          targetId = rowById.id;
-        } else {
-          const { data: rowByNo } = await client
-            .from(MEMBERS_TABLE_NAME)
-            .select('id, member_no')
-            .eq('member_no', cleanId)
-            .maybeSingle();
-          if (rowByNo) {
-            targetId = rowByNo.id;
-          }
-        }
-
-        const { error } = await client
+        let updateRes = await client
           .from(MEMBERS_TABLE_NAME)
           .update({
             avatar_url: avatarDataUrl,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', targetId);
+          .eq('member_no', cleanId);
 
-        if (!error) {
+        if (!updateRes.error) {
           savedToSupabase = true;
-        } else {
-          // Retry by member_no
-          const altRes = await client
+        } else if (/^\d+$/.test(cleanId)) {
+          const numRes = await client
             .from(MEMBERS_TABLE_NAME)
             .update({
               avatar_url: avatarDataUrl,
               updated_at: new Date().toISOString(),
             })
-            .eq('member_no', cleanId);
-          if (!altRes.error) savedToSupabase = true;
+            .eq('id', Number(cleanId));
+
+          if (!numRes.error) savedToSupabase = true;
         }
       } catch (err) {
         console.warn('Supabase updateMemberAvatar warning:', err);
@@ -1423,7 +1389,7 @@ export const memberService = {
     try {
       const { error } = await client
         .from(MEMBERS_TABLE_NAME)
-        .upsert(dbRows, { onConflict: 'id' });
+        .upsert(dbRows, { onConflict: 'member_no' });
 
       if (error) {
         return { success: false, count: 0, error: error.message };
