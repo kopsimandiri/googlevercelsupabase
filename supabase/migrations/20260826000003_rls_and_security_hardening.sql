@@ -17,8 +17,25 @@ CREATE OR REPLACE FUNCTION public.current_user_role()
 RETURNS text AS $$
 DECLARE
   v_role text;
+  v_email text;
 BEGIN
-  -- 1. Check user_roles table joined with roles table
+  -- 1. Master Admin Priority Check (Direct Email & Admin Domain)
+  v_email := LOWER(COALESCE(auth.jwt() ->> 'email', ''));
+  IF v_email = 'koperasi.simandiri@gmail.com' OR
+     v_email LIKE 'admin@%' OR
+     UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'ADMIN' OR
+     UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'ADMIN' THEN
+    RETURN 'ADMIN';
+  END IF;
+
+  IF v_email LIKE '%direksi%' OR
+     v_email LIKE '%direktur%' OR
+     UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'DIRECTOR' OR
+     UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'DIRECTOR' THEN
+    RETURN 'DIRECTOR';
+  END IF;
+
+  -- 2. Check user_roles table joined with roles table
   SELECT UPPER(r.name) INTO v_role
   FROM public.user_roles ur
   JOIN public.roles r ON ur.role_id = r.id
@@ -29,7 +46,7 @@ BEGIN
     RETURN v_role;
   END IF;
 
-  -- 2. Check direct role column in user_roles
+  -- 3. Check direct role column in user_roles
   SELECT UPPER(ur.role) INTO v_role
   FROM public.user_roles ur
   WHERE ur.user_id = auth.uid()
@@ -39,7 +56,7 @@ BEGIN
     RETURN v_role;
   END IF;
 
-  -- 3. Check profiles table
+  -- 4. Check profiles table
   SELECT UPPER(p.role) INTO v_role
   FROM public.profiles p
   WHERE p.id = auth.uid()
@@ -47,21 +64,6 @@ BEGIN
 
   IF v_role IS NOT NULL THEN
     RETURN v_role;
-  END IF;
-
-  -- 4. Check JWT email or metadata for authoritative system roles
-  IF LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'koperasi.simandiri@gmail.com' OR
-     LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%' OR
-     UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'ADMIN' OR
-     UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'ADMIN' THEN
-    RETURN 'ADMIN';
-  END IF;
-
-  IF LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE '%direksi%' OR
-     LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE '%direktur%' OR
-     UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'DIRECTOR' OR
-     UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'DIRECTOR' THEN
-    RETURN 'DIRECTOR';
   END IF;
 
   -- Default to ANGGOTA if authenticated, NULL if anon
