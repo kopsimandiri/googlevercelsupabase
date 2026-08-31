@@ -20,6 +20,8 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
+import { ErrorState } from '../common/ErrorState';
+import { Pagination } from '../common/Pagination';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   FileSpreadsheet,
@@ -71,7 +73,26 @@ export const TransactionModule: React.FC = () => {
   // Filter and tabs state
   const [activeTab, setActiveTab] = useState<'ALL' | 'PUSAT' | 'CABANG' | 'PROJECT'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
   const [jenisFilter, setJenisFilter] = useState<'ALL' | 'MASUK' | 'KELUAR'>('ALL');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [financialSummary, setFinancialSummary] = useState<{
+    totalMasuk: number;
+    totalKeluar: number;
+    netBalance: number;
+  }>({
+    totalMasuk: 0,
+    totalKeluar: 0,
+    netBalance: 0,
+  });
+
+  const searchRequestIdRef = useRef<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Modals state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -237,27 +258,93 @@ export const TransactionModule: React.FC = () => {
     ],
   };
 
-  const loadData = async () => {
-    setIsLoading(true);
+  // Debounce 400ms on search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+      setCurrentPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const executeSearch = async (showInitialLoading = false) => {
+    if (showInitialLoading) setIsLoading(true);
+    setIsSearching(true);
+    setSearchError(null);
+
+    // Abort previous in-flight request to prevent race conditions
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const currentReqId = ++searchRequestIdRef.current;
+
     try {
-      const [meta, memberList] = await Promise.all([
-        transactionService.getTransactionsWithMeta(),
-        memberService.getMembers(),
-      ]);
-      setMetaInfo(meta);
-      setTransactions(meta.data);
-      setMembers(memberList);
-      setCustomers(transactionService.getCustomers());
-      setSuppliers(transactionService.getSuppliers());
+      const res = await transactionService.searchTransactionsServer({
+        searchQuery: debouncedSearchQuery,
+        tabFilter: activeTab,
+        jenisFilter: jenisFilter,
+        page: currentPage,
+        pageSize: pageSize,
+        signal: controller.signal,
+      });
+
+      // Discard stale response if a newer request was dispatched
+      if (currentReqId !== searchRequestIdRef.current) {
+        return;
+      }
+
+      setTransactions(res.data);
+      setTotalCount(res.totalCount);
+      setTotalPages(res.totalPages);
+      setFinancialSummary({
+        totalMasuk: res.totalMasuk,
+        totalKeluar: res.totalKeluar,
+        netBalance: res.netBalance,
+      });
+      setMetaInfo((prev) => ({
+        data: res.data,
+        source: res.source,
+        isConfigured: prev?.isConfigured ?? true,
+        isConnected: res.source === 'SUPABASE',
+        totalDbRows: res.totalCount,
+        latencyMs: res.latencyMs,
+        errorMessage: res.errorMessage,
+      }));
     } catch (err: any) {
-      showToast(err.message || 'Gagal memuat transaksi.', 'error');
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
+      if (currentReqId === searchRequestIdRef.current) {
+        setSearchError(err.message || 'Gagal memuat data transaksi dari server.');
+      }
     } finally {
-      setIsLoading(false);
+      if (currentReqId === searchRequestIdRef.current) {
+        setIsSearching(false);
+        if (showInitialLoading) setIsLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadData();
+    executeSearch(isLoading);
+  }, [debouncedSearchQuery, activeTab, jenisFilter, currentPage, pageSize]);
+
+  // Load auxiliary master data (members, customers, suppliers) on mount
+  useEffect(() => {
+    const loadAuxData = async () => {
+      try {
+        const memberList = await memberService.getMembers();
+        setMembers(memberList);
+        setCustomers(transactionService.getCustomers());
+        setSuppliers(transactionService.getSuppliers());
+      } catch (err) {
+        console.warn('Failed to load aux data:', err);
+      }
+    };
+    loadAuxData();
   }, []);
 
   const handleSeedData = async () => {
@@ -266,7 +353,7 @@ export const TransactionModule: React.FC = () => {
       const res = await masterDataService.seedTableToSupabase('transactions');
       if (res.success) {
         showToast(`Berhasil menyinkronkan ${res.count} transaksi ke Supabase!`, 'success');
-        await loadData();
+        await executeSearch(true);
       } else {
         showToast(res.error || 'Gagal sinkronisasi data.', 'error');
       }
@@ -572,7 +659,7 @@ export const TransactionModule: React.FC = () => {
         'success'
       );
       setIsFormOpen(false);
-      await loadData();
+      await executeSearch(true);
     } catch (err: any) {
       // ROLLBACK on unhandled exception
       if (uploadedStoragePath) {
@@ -599,7 +686,7 @@ export const TransactionModule: React.FC = () => {
       const res = await transactionService.deleteTransaction(deletingTrxId);
       if (res.success) {
         showToast(`Transaksi ${deletingTrxId} telah dihapus.`, 'info');
-        await loadData();
+        await executeSearch(true);
       }
     } catch (err: any) {
       showToast(err.message || 'Gagal menghapus data.', 'error');
@@ -608,48 +695,10 @@ export const TransactionModule: React.FC = () => {
     }
   };
 
-  // Filtered transactions
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter((t) => {
-      // Tab filter
-      if (activeTab === 'PUSAT' && !t.area_jenis.includes('PUSAT')) return false;
-      if (activeTab === 'CABANG' && !t.area_jenis.includes('CABANG')) return false;
-      if (activeTab === 'PROJECT' && !t.area_jenis.includes('PROJECT')) return false;
-
-      // Jenis filter
-      if (jenisFilter !== 'ALL' && t.jenis !== jenisFilter) return false;
-
-      // Search
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const match =
-          t.id.toLowerCase().includes(q) ||
-          t.plantation.toLowerCase().includes(q) ||
-          t.kategori.toLowerCase().includes(q) ||
-          (t.akun && t.akun.toLowerCase().includes(q)) ||
-          (t.sku_name && t.sku_name.toLowerCase().includes(q)) ||
-          (t.keterangan && t.keterangan.toLowerCase().includes(q));
-        if (!match) return false;
-      }
-
-      return true;
-    });
-  }, [transactions, activeTab, jenisFilter, searchQuery]);
-
-  // Financial summary of currently filtered transactions
-  const totalMasuk = useMemo(() => {
-    return filteredTransactions
-      .filter((t) => t.jenis === 'MASUK')
-      .reduce((acc, t) => acc + (t.jumlah || 0), 0);
-  }, [filteredTransactions]);
-
-  const totalKeluar = useMemo(() => {
-    return filteredTransactions
-      .filter((t) => t.jenis === 'KELUAR')
-      .reduce((acc, t) => acc + (t.jumlah || 0), 0);
-  }, [filteredTransactions]);
-
-  const netBalance = totalMasuk - totalKeluar;
+  // Financial summary from server-side query aggregate
+  const totalMasuk = financialSummary.totalMasuk;
+  const totalKeluar = financialSummary.totalKeluar;
+  const netBalance = financialSummary.netBalance;
 
   return (
     <div className="space-y-6" id="view-transactions-module">
@@ -671,7 +720,7 @@ export const TransactionModule: React.FC = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={loadData}
+            onClick={() => executeSearch(true)}
             isLoading={isLoading}
             leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
           >
@@ -780,50 +829,62 @@ export const TransactionModule: React.FC = () => {
         </Card>
       </div>
 
-      {/* Filter Tabs and Search Bar */}
+      {/* Filter Tabs, Search Bar, and Search State */}
       <Card className="p-4 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           {/* Tabs */}
           <div className="flex items-center gap-1.5 p-1 bg-stone-100 rounded-lg overflow-x-auto">
             <button
-              onClick={() => setActiveTab('ALL')}
+              onClick={() => {
+                setActiveTab('ALL');
+                setCurrentPage(1);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 activeTab === 'ALL'
                   ? 'bg-white text-stone-900 shadow-xs'
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              Semua ({transactions.length})
+              Semua {activeTab === 'ALL' ? `(${totalCount})` : ''}
             </button>
             <button
-              onClick={() => setActiveTab('PUSAT')}
+              onClick={() => {
+                setActiveTab('PUSAT');
+                setCurrentPage(1);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 activeTab === 'PUSAT'
                   ? 'bg-white text-emerald-950 shadow-xs'
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              Koperasi Pusat
+              Koperasi Pusat {activeTab === 'PUSAT' ? `(${totalCount})` : ''}
             </button>
             <button
-              onClick={() => setActiveTab('CABANG')}
+              onClick={() => {
+                setActiveTab('CABANG');
+                setCurrentPage(1);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 activeTab === 'CABANG'
                   ? 'bg-white text-emerald-950 shadow-xs'
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              Koperasi Cabang
+              Koperasi Cabang {activeTab === 'CABANG' ? `(${totalCount})` : ''}
             </button>
             <button
-              onClick={() => setActiveTab('PROJECT')}
+              onClick={() => {
+                setActiveTab('PROJECT');
+                setCurrentPage(1);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 activeTab === 'PROJECT'
                   ? 'bg-white text-amber-950 shadow-xs'
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              8 Sektor Proyek Riil
+              8 Sektor Proyek Riil {activeTab === 'PROJECT' ? `(${totalCount})` : ''}
             </button>
           </div>
 
@@ -831,7 +892,10 @@ export const TransactionModule: React.FC = () => {
           <div className="flex items-center gap-2">
             <select
               value={jenisFilter}
-              onChange={(e: any) => setJenisFilter(e.target.value)}
+              onChange={(e: any) => {
+                setJenisFilter(e.target.value);
+                setCurrentPage(1);
+              }}
               className="px-2.5 py-1.5 text-xs bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden"
             >
               <option value="ALL">Semua Jenis (Masuk & Keluar)</option>
@@ -839,24 +903,63 @@ export const TransactionModule: React.FC = () => {
               <option value="KELUAR">Pengeluaran (KELUAR)</option>
             </select>
 
-            <div className="relative w-full sm:w-60">
+            <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-2.5" />
               <input
+                id="input-transaction-search"
                 type="text"
-                placeholder="Cari ID, akun, komoditas..."
+                placeholder="Cari ID, akun, komoditas, vendor..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden"
+                className="w-full pl-8 pr-8 py-1.5 text-xs bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-600 focus:bg-white transition-all"
               />
+              {isSearching ? (
+                <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin absolute right-2.5 top-2.5" />
+              ) : searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
+                  className="text-stone-400 hover:text-stone-600 absolute right-2.5 top-2.5 p-0.5"
+                  title="Hapus filter pencarian"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
 
+        {/* Database Search Error Banner (With Retry Button & Non-destructive Fallback) */}
+        {searchError && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>
+                Pencarian database terkendala: <strong>{searchError}</strong>. Menampilkan data cache terakhir.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => executeSearch()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-rose-100/60 border border-rose-300 rounded-lg font-semibold text-rose-900 shadow-2xs transition-colors shrink-0"
+            >
+              <RefreshCw className="w-3 h-3" /> Coba Lagi
+            </button>
+          </div>
+        )}
+
         {/* Data Table */}
-        {filteredTransactions.length === 0 ? (
+        {transactions.length === 0 ? (
           <EmptyState
             title="Tidak Ada Transaksi Ditemukan"
-            description="Tidak ada catatan transaksi pada filter atau tab ini."
+            description={
+              searchQuery.trim()
+                ? `Tidak ada transaksi yang cocok dengan kata kunci "${searchQuery}".`
+                : 'Tidak ada catatan transaksi pada filter atau tab ini.'
+            }
           />
         ) : (
           <div className="overflow-x-auto">
@@ -876,7 +979,7 @@ export const TransactionModule: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {filteredTransactions.map((t) => (
+                {transactions.map((t) => (
                   <tr key={t.id} className="hover:bg-stone-50/70">
                     <td className="py-3 px-3 font-mono font-bold text-emerald-950">{t.id}</td>
                     <td className="py-3 px-3 text-stone-600">{formatDateIndo(t.tanggal)}</td>
@@ -958,6 +1061,21 @@ export const TransactionModule: React.FC = () => {
             </table>
           </div>
         )}
+
+        {/* Server-side Pagination Controls */}
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={totalCount}
+          pageSize={pageSize}
+          onPageChange={(page) => setCurrentPage(page)}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setCurrentPage(1);
+          }}
+          pageSizeOptions={[10, 25, 50, 100]}
+          id="transactions-pagination"
+        />
       </Card>
 
       {/* Transaction Detail View Modal */}

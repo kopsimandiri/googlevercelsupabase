@@ -414,6 +414,29 @@ export interface TransactionsMetaResult {
   errorMessage?: string;
 }
 
+export interface TransactionSearchParams {
+  searchQuery?: string;
+  tabFilter?: 'ALL' | 'PUSAT' | 'CABANG' | 'PROJECT';
+  jenisFilter?: 'ALL' | 'MASUK' | 'KELUAR';
+  page?: number;
+  pageSize?: number;
+  signal?: AbortSignal;
+}
+
+export interface TransactionSearchResult {
+  data: TransactionRecord[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  source: 'SUPABASE' | 'LOCAL';
+  latencyMs: number;
+  errorMessage?: string;
+  totalMasuk: number;
+  totalKeluar: number;
+  netBalance: number;
+}
+
 let inMemoryTransactions: TransactionRecord[] | null = null;
 
 export const transactionService = {
@@ -542,6 +565,162 @@ export const transactionService = {
       if (tabFilter === 'PROJECT') return area.includes('PROJECT');
       return true;
     });
+  },
+
+  /**
+   * Search and filter transactions directly from Supabase PostgreSQL (Server-side)
+   * with pagination, multi-column search, debounce/abort support, and offline fallback.
+   */
+  async searchTransactionsServer(params: TransactionSearchParams): Promise<TransactionSearchResult> {
+    const startTime = performance.now();
+    const {
+      searchQuery = '',
+      tabFilter = 'ALL',
+      jenisFilter = 'ALL',
+      page = 1,
+      pageSize = 50,
+      signal,
+    } = params;
+
+    const cleanQ = searchQuery.trim();
+    const isConfigured = isSupabaseConfigured;
+    const client = getSupabaseClient();
+
+    // 1. If Supabase client is available and active
+    if (client && isConfigured) {
+      try {
+        let query = client
+          .from(TRANSACTIONS_TABLE_NAME)
+          .select('*', { count: 'exact' });
+
+        if (signal) {
+          query = query.abortSignal(signal);
+        }
+
+        // A. Tab Filter
+        if (tabFilter === 'PUSAT') {
+          query = query.ilike('area_name', '%PUSAT%');
+        } else if (tabFilter === 'CABANG') {
+          query = query.ilike('area_name', '%CABANG%');
+        } else if (tabFilter === 'PROJECT') {
+          query = query.eq('referral_type', 'PROJECT');
+        }
+
+        // B. Jenis Filter
+        if (jenisFilter !== 'ALL') {
+          query = query.eq('transaction_type', jenisFilter);
+        }
+
+        // C. Multi-column Search Query
+        if (cleanQ.length > 0) {
+          query = query.or(
+            `id.ilike.%${cleanQ}%,transaction_no.ilike.%${cleanQ}%,description.ilike.%${cleanQ}%,account_name_legacy.ilike.%${cleanQ}%,product_name.ilike.%${cleanQ}%,supplier_name.ilike.%${cleanQ}%,customer_name.ilike.%${cleanQ}%,category_name.ilike.%${cleanQ}%,area_name.ilike.%${cleanQ}%,payment_method.ilike.%${cleanQ}%`
+          );
+        }
+
+        // D. Sorting & Pagination
+        query = query.order('transaction_date', { ascending: false });
+        const fromIndex = (page - 1) * pageSize;
+        const toIndex = fromIndex + pageSize - 1;
+        query = query.range(fromIndex, toIndex);
+
+        const { data, error, count } = await query;
+        const latencyMs = Math.round(performance.now() - startTime);
+
+        if (!error && data) {
+          const mapped = data.map(mapAndCleanTransactionRow);
+          const totalCount = count ?? mapped.length;
+          const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+          // Calculate financial totals from current returned or paginated
+          let totalMasuk = 0;
+          let totalKeluar = 0;
+          mapped.forEach((t) => {
+            if (t.jenis === 'MASUK') totalMasuk += t.jumlah;
+            else if (t.jenis === 'KELUAR') totalKeluar += t.jumlah;
+          });
+
+          return {
+            data: mapped,
+            totalCount,
+            page,
+            pageSize,
+            totalPages,
+            source: 'SUPABASE',
+            latencyMs,
+            totalMasuk,
+            totalKeluar,
+            netBalance: totalMasuk - totalKeluar,
+          };
+        } else if (error) {
+          if (signal?.aborted || (error as any)?.name === 'AbortError') {
+            throw error;
+          }
+          console.warn('[searchTransactionsServer] Supabase error fallback:', error.message);
+        }
+      } catch (err: any) {
+        if (signal?.aborted || err?.name === 'AbortError') {
+          throw err;
+        }
+        console.warn('[searchTransactionsServer] Exception, fallback to local search:', err);
+      }
+    }
+
+    // 2. Fallback to Local Filter (Offline / Not Configured)
+    const local = this.getStoredTransactions();
+    const filtered = local.filter((t) => {
+      // Tab filter
+      if (tabFilter === 'PUSAT' && !t.area_jenis.includes('PUSAT')) return false;
+      if (tabFilter === 'CABANG' && !t.area_jenis.includes('CABANG')) return false;
+      if (tabFilter === 'PROJECT' && !t.area_jenis.includes('PROJECT')) return false;
+
+      // Jenis filter
+      if (jenisFilter !== 'ALL' && t.jenis !== jenisFilter) return false;
+
+      // Search Query
+      if (cleanQ.length > 0) {
+        const q = cleanQ.toLowerCase();
+        const match =
+          (t.id && t.id.toLowerCase().includes(q)) ||
+          (t.plantation && t.plantation.toLowerCase().includes(q)) ||
+          (t.kategori && t.kategori.toLowerCase().includes(q)) ||
+          (t.akun && t.akun.toLowerCase().includes(q)) ||
+          (t.sku_name && t.sku_name.toLowerCase().includes(q)) ||
+          (t.customer_id && t.customer_id.toLowerCase().includes(q)) ||
+          (t.supplier_id && t.supplier_id.toLowerCase().includes(q)) ||
+          (t.metode_bayar && t.metode_bayar.toLowerCase().includes(q)) ||
+          (t.keterangan && t.keterangan.toLowerCase().includes(q));
+        if (!match) return false;
+      }
+      return true;
+    });
+
+    const totalCount = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+    const fromIndex = (page - 1) * pageSize;
+    const pagedData = filtered.slice(fromIndex, fromIndex + pageSize);
+
+    let totalMasuk = 0;
+    let totalKeluar = 0;
+    filtered.forEach((t) => {
+      if (t.jenis === 'MASUK') totalMasuk += t.jumlah;
+      else if (t.jenis === 'KELUAR') totalKeluar += t.jumlah;
+    });
+
+    const latencyMs = Math.round(performance.now() - startTime);
+
+    return {
+      data: pagedData,
+      totalCount,
+      page,
+      pageSize,
+      totalPages,
+      source: 'LOCAL',
+      latencyMs,
+      totalMasuk,
+      totalKeluar,
+      netBalance: totalMasuk - totalKeluar,
+    };
   },
 
   async getTransactions(tabFilter?: 'PUSAT' | 'CABANG' | 'PROJECT'): Promise<TransactionRecord[]> {
