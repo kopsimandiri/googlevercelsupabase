@@ -2,6 +2,14 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { transactionService, TransactionsMetaResult, TRANSACTIONS_SQL_DDL } from '../../services/transactionService';
 import { masterDataService } from '../../services/masterDataService';
 import { memberService } from '../../services/memberService';
+import {
+  validateAndOptimizeProofImage,
+  generateStorageProofPath,
+  uploadTransactionProof,
+  deleteTransactionProof,
+  getSignedProofUrl,
+  ProofOptimizationResult,
+} from '../../services/storageService';
 import { TransactionRecord, CustomerRecord, SupplierRecord, MemberRecord } from '../../types/database';
 import { formatDateIndo, formatRupiah, cleanRupiah } from '../../utils/formatters';
 import { useAuth } from '../../context/AuthContext';
@@ -43,6 +51,9 @@ import {
   UserCheck,
   ShoppingBag,
   ExternalLink,
+  AlertCircle,
+  Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 export const TransactionModule: React.FC = () => {
@@ -65,6 +76,8 @@ export const TransactionModule: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [editingTrx, setEditingTrx] = useState<TransactionRecord | null>(null);
   const [viewingTrx, setViewingTrx] = useState<TransactionRecord | null>(null);
+  const [viewingProofSignedUrl, setViewingProofSignedUrl] = useState<string | null>(null);
+  const [isLoadingProofSignedUrl, setIsLoadingProofSignedUrl] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
@@ -90,9 +103,14 @@ export const TransactionModule: React.FC = () => {
   const [formAkun, setFormAkun] = useState<string>('Kas Umum Koperasi (Non-Anggota)');
   // 9. Keterangan -> description
   const [formKeterangan, setFormKeterangan] = useState<string>('');
-  // 10. Lampiran File -> file_url
+  // 10. Lampiran File -> file_url (Supabase Storage: bukti_transfer)
   const [formFilelink, setFormFilelink] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
+  const [selectedProofFile, setSelectedProofFile] = useState<File | null>(null);
+  const [optimizedProof, setOptimizedProof] = useState<ProofOptimizationResult | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [isOptimizingProof, setIsOptimizingProof] = useState<boolean>(false);
+  const [proofError, setProofError] = useState<string | null>(null);
   // 11. Kalkulasi Komoditas Project (11.1 s/d 11.4)
   const [formSkuName, setFormSkuName] = useState<string>('');
   const [formQty, setFormQty] = useState<number>(1);
@@ -325,6 +343,27 @@ export const TransactionModule: React.FC = () => {
     ];
   }, [formPlantation, formReferal]);
 
+  // Load signed URL when viewing transaction detail
+  useEffect(() => {
+    let isMounted = true;
+    if (viewingTrx?.filelink) {
+      setIsLoadingProofSignedUrl(true);
+      getSignedProofUrl(viewingTrx.filelink)
+        .then((url) => {
+          if (isMounted) setViewingProofSignedUrl(url);
+        })
+        .finally(() => {
+          if (isMounted) setIsLoadingProofSignedUrl(false);
+        });
+    } else {
+      setViewingProofSignedUrl(null);
+      setIsLoadingProofSignedUrl(false);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [viewingTrx]);
+
   const handleOpenAddModal = () => {
     setEditingTrx(null);
     setFormTanggal(new Date().toISOString().split('T')[0]);
@@ -338,6 +377,10 @@ export const TransactionModule: React.FC = () => {
     setFormKeterangan('');
     setFormFilelink('');
     setFileName('');
+    setSelectedProofFile(null);
+    setOptimizedProof(null);
+    setProofPreviewUrl(null);
+    setProofError(null);
     setFormSkuName('');
     setFormQty(1);
     setFormHargaSatuan(0);
@@ -358,7 +401,15 @@ export const TransactionModule: React.FC = () => {
     setFormAkun(t.akun || (t.referal === 'PROJECT' ? 'DANA PROJECT' : 'Kas Umum Koperasi (Non-Anggota)'));
     setFormKeterangan(t.keterangan || '');
     setFormFilelink(t.filelink || '');
-    setFileName(t.filelink ? 'Lampiran File Tersedia' : '');
+    setFileName(t.filelink ? (t.filelink.split('/').pop() || 'Lampiran Bukti Tersedia') : '');
+    setSelectedProofFile(null);
+    setOptimizedProof(null);
+    setProofError(null);
+    if (t.filelink) {
+      getSignedProofUrl(t.filelink).then((url) => setProofPreviewUrl(url));
+    } else {
+      setProofPreviewUrl(null);
+    }
     setFormSkuName(t.sku_name || '');
     setFormQty(t.qty || 1);
     setFormHargaSatuan(t.harga_satuan || 0);
@@ -367,24 +418,41 @@ export const TransactionModule: React.FC = () => {
     setIsFormOpen(true);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProofFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      showToast('Ukuran file maksimal 5MB.', 'error');
-      return;
-    }
+    setProofError(null);
+    setIsOptimizingProof(true);
 
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const simulatedPath = `/assets/uploadfile/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      setFormFilelink(result || simulatedPath);
-      showToast(`File ${file.name} berhasil diunggah ke folder lampiran transaksi.`, 'success');
-    };
-    reader.readAsDataURL(file);
+    try {
+      const result = await validateAndOptimizeProofImage(file);
+      setSelectedProofFile(file);
+      setOptimizedProof(result);
+      setProofPreviewUrl(result.previewUrl);
+      setFileName(file.name);
+      setFormFilelink(''); // Will be replaced by Supabase Storage path upon upload
+      showToast(
+        `Gambar "${file.name}" siap diunggah (${(result.originalSize / 1024).toFixed(0)} KB → ${(result.optimizedSize / 1024).toFixed(0)} KB ${result.extension.toUpperCase()}).`,
+        'info'
+      );
+    } catch (err: any) {
+      setProofError(err.message || 'Gagal memproses file gambar.');
+      showToast(err.message || 'File tidak valid.', 'error');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } finally {
+      setIsOptimizingProof(false);
+    }
+  };
+
+  const handleRemoveProof = () => {
+    setSelectedProofFile(null);
+    setOptimizedProof(null);
+    setProofPreviewUrl(null);
+    setFormFilelink('');
+    setFileName('');
+    setProofError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSaveTransaction = async (e: React.FormEvent) => {
@@ -395,13 +463,38 @@ export const TransactionModule: React.FC = () => {
     }
 
     setIsSubmitting(true);
-    try {
-      // 8. Akun / Anggota / Project logic:
-      // If referral_type === 'PROJECT', lock to 'DANA PROJECT'
-      const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
+    let uploadedStoragePath: string | null = null;
 
+    try {
+      const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
+      const targetTrxId = editingTrx?.id || (await transactionService.generateTransactionId(formReferal, formTanggal));
+      
+      let finalFileUrl = formFilelink;
+
+      // 1. Upload proof file to Supabase Storage bucket 'bukti_transfer' if a new file is staged
+      if (optimizedProof) {
+        const storagePath = generateStorageProofPath(targetTrxId, optimizedProof.extension, formTanggal);
+        
+        const uploadRes = await uploadTransactionProof(
+          optimizedProof.file,
+          storagePath,
+          optimizedProof.mimeType
+        );
+
+        if (!uploadRes.success || !uploadRes.path) {
+          // UPLOAD FAILED: Stop immediately, do NOT insert transaction to database
+          showToast(uploadRes.error || 'Gagal mengunggah file bukti transaksi ke Supabase Storage.', 'error');
+          setIsSubmitting(false);
+          return;
+        }
+
+        uploadedStoragePath = uploadRes.path;
+        finalFileUrl = uploadRes.path;
+      }
+
+      // 2. Prepare Transaction payload with storage reference in file_url (filelink)
       const payload: Partial<TransactionRecord> = {
-        id: editingTrx?.id,
+        id: targetTrxId,
         tanggal: formTanggal,
         referal: formReferal,
         plantation: formPlantation,
@@ -411,7 +504,7 @@ export const TransactionModule: React.FC = () => {
         jumlah: formJumlah,
         akun: finalAkun,
         keterangan: formKeterangan,
-        filelink: formFilelink,
+        filelink: finalFileUrl,
         sku_name: formReferal === 'PROJECT' ? formSkuName : '',
         qty: formReferal === 'PROJECT' ? formQty : 1,
         harga_satuan: formReferal === 'PROJECT' ? formHargaSatuan : formJumlah,
@@ -421,20 +514,32 @@ export const TransactionModule: React.FC = () => {
       };
 
       const res = await transactionService.saveTransaction(payload);
-      if (res.success) {
-        showToast(
-          editingTrx
-            ? `Transaksi ${res.id} berhasil diperbarui.`
-            : `Transaksi baru berhasil dibukukan dengan ID: ${res.id} (Tersinkron ke Supabase public.transactions)`,
-          'success'
-        );
-        setIsFormOpen(false);
-        await loadData();
-      } else {
-        showToast(res.error || 'Gagal menyimpan transaksi.', 'error');
+      
+      if (!res.success) {
+        // ROLLBACK: Delete newly uploaded storage object if database insert/update fails
+        if (uploadedStoragePath) {
+          console.warn('Rollback: Menghapus file storage orphan:', uploadedStoragePath);
+          await deleteTransactionProof(uploadedStoragePath);
+        }
+        showToast(res.error || 'Gagal menyimpan transaksi ke database.', 'error');
+        return;
       }
+
+      showToast(
+        editingTrx
+          ? `Transaksi ${res.id} berhasil diperbarui.`
+          : `Transaksi baru berhasil dibukukan dengan ID: ${res.id} (Tersimpan ke Supabase public.transactions & Storage bukti_transfer)`,
+        'success'
+      );
+      setIsFormOpen(false);
+      await loadData();
     } catch (err: any) {
-      showToast(err.message || 'Terjadi kesalahan.', 'error');
+      // ROLLBACK on unhandled exception
+      if (uploadedStoragePath) {
+        console.warn('Rollback exception: Menghapus file storage orphan:', uploadedStoragePath);
+        await deleteTransactionProof(uploadedStoragePath);
+      }
+      showToast(err.message || 'Terjadi kesalahan saat memproses transaksi.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -765,16 +870,15 @@ export const TransactionModule: React.FC = () => {
                     </td>
                     <td className="py-3 px-3 text-center">
                       {t.filelink ? (
-                        <a
-                          href={t.filelink}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => setViewingTrx(t)}
                           className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-medium underline"
-                          title="Buka Lampiran"
+                          title={`Lihat Bukti: ${t.filelink}`}
                         >
                           <Paperclip className="w-3.5 h-3.5" />
                           <span>Lihat</span>
-                        </a>
+                        </button>
                       ) : (
                         <span className="text-stone-400">-</span>
                       )}
@@ -910,17 +1014,48 @@ export const TransactionModule: React.FC = () => {
               )}
 
               {viewingTrx.filelink && (
-                <div>
-                  <span className="text-stone-500 font-medium block">10. Lampiran File:</span>
-                  <a
-                    href={viewingTrx.filelink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-emerald-800 hover:text-emerald-950 font-medium underline mt-1"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>Lihat / Unduh Dokumen Bukti Transaksi</span>
-                  </a>
+                <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2">
+                  <span className="text-stone-700 font-semibold flex items-center gap-1.5">
+                    <Paperclip className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>10. Bukti Transaksi (Supabase Storage: bukti_transfer)</span>
+                  </span>
+                  
+                  <div className="text-[10px] font-mono text-stone-600 bg-white p-2 rounded border border-stone-200 truncate">
+                    Object Path: {viewingTrx.filelink}
+                  </div>
+
+                  {isLoadingProofSignedUrl ? (
+                    <div className="flex items-center gap-2 py-4 text-stone-500 justify-center">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-800" />
+                      <span className="text-xs">Memuat URL preview dari storage privat...</span>
+                    </div>
+                  ) : viewingProofSignedUrl ? (
+                    <div className="space-y-2">
+                      <div className="rounded-lg overflow-hidden border border-stone-200 max-h-56 bg-stone-100 flex items-center justify-center">
+                        <img
+                          src={viewingProofSignedUrl}
+                          alt="Bukti Transaksi"
+                          className="max-h-56 object-contain w-full"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      </div>
+                      <a
+                        href={viewingProofSignedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-emerald-800 hover:text-emerald-950 font-medium underline text-xs"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Buka Gambar Bukti Transaksi Ukuran Penuh</span>
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-stone-500 bg-white p-2.5 rounded border border-stone-200">
+                      File terdaftar: <span className="font-mono text-emerald-950">{viewingTrx.filelink}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1313,55 +1448,101 @@ export const TransactionModule: React.FC = () => {
                 </span>
               </div>
 
-              {/* 10. LAMPIRAN FILE */}
-              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-xl space-y-2">
-                <label className="block text-stone-800 font-semibold text-xs flex items-center gap-1.5">
-                  <Paperclip className="w-3.5 h-3.5 text-emerald-800" />
-                  <span>10. Lampiran File (Nota / Kuitansi / Bukti Bayar)</span>
-                </label>
+              {/* 10. LAMPIRAN FILE BUKTI TRANSAKSI (SUPABASE STORAGE: bukti_transfer) */}
+              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-stone-800 font-semibold flex items-center gap-1.5 text-xs">
+                    <Paperclip className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>10. Bukti Transaksi (Supabase Storage: bukti_transfer)</span>
+                  </label>
+                  <span className="text-[10px] text-stone-500 font-mono">
+                    JPG, PNG, WebP (Maks. 10MB)
+                  </span>
+                </div>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleProofFileSelect}
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                />
+
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileUpload}
-                    accept="image/*,.pdf"
-                    className="hidden"
-                  />
                   <Button
                     type="button"
                     variant="outline"
                     size="xs"
                     onClick={() => fileInputRef.current?.click()}
-                    leftIcon={<UploadCloud className="w-3 h-3" />}
+                    disabled={isOptimizingProof || isSubmitting}
+                    leftIcon={
+                      isOptimizingProof ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-emerald-800" />
+                      ) : (
+                        <UploadCloud className="w-3 h-3" />
+                      )
+                    }
                   >
-                    Pilih File Foto / Dokumen
+                    {isOptimizingProof ? 'Memproses Gambar...' : 'Pilih Gambar Bukti Transaksi'}
                   </Button>
 
-                  {formFilelink ? (
-                    <div className="flex items-center gap-2 text-[11px] text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-                      <Check className="w-3 h-3 text-emerald-600" />
-                      <span className="font-medium truncate max-w-[200px]">{fileName || 'File Terlampir'}</span>
+                  {proofPreviewUrl || formFilelink ? (
+                    <div className="flex items-center gap-2 text-[11px] text-emerald-900 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <div className="flex flex-col">
+                        <span className="font-medium truncate max-w-[200px]">{fileName || 'Bukti Terlampir'}</span>
+                        {optimizedProof && (
+                          <span className="text-[9px] text-emerald-700 font-mono">
+                            {(optimizedProof.originalSize / 1024).toFixed(0)} KB → {(optimizedProof.optimizedSize / 1024).toFixed(0)} KB ({optimizedProof.extension.toUpperCase()})
+                          </span>
+                        )}
+                      </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          setFormFilelink('');
-                          setFileName('');
-                        }}
-                        className="text-stone-400 hover:text-rose-600 ml-1"
-                        title="Hapus file"
+                        onClick={handleRemoveProof}
+                        className="text-stone-400 hover:text-rose-600 ml-1.5 p-0.5 rounded"
+                        title="Hapus / Ganti file"
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ) : (
                     <span className="text-[11px] text-stone-400 italic">
-                      Belum ada file dipilih (tersimpan di public\assets\uploadfile)
+                      Belum ada bukti transaksi dipilih
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] text-stone-500 block">
-                  Masuk ke kolom: <code>file_url</code>
-                </span>
+
+                {/* Thumbnail Preview if available */}
+                {proofPreviewUrl && (
+                  <div className="flex items-center gap-3 pt-1">
+                    <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-emerald-300 bg-stone-100 shadow-2xs shrink-0">
+                      <img
+                        src={proofPreviewUrl}
+                        alt="Preview Bukti"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="text-[11px] text-stone-600 space-y-0.5">
+                      <p className="font-medium text-emerald-950">Gambar siap di-upload ke Supabase Storage</p>
+                      <p className="text-[10px] text-stone-500">
+                        File akan otomatis disimpan ke bucket private <code>bukti_transfer</code> dan path referensi dicatat ke kolom <code>public.transactions.file_url</code>.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {proofError && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-rose-700 bg-rose-50 p-2 rounded-lg border border-rose-200">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>{proofError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between text-[10px] text-stone-500 pt-0.5">
+                  <span>Masuk ke kolom database: <code>public.transactions.file_url</code></span>
+                  <span className="text-emerald-800 font-semibold">Tersimpan sebagai Object Path (Bukan Base64)</span>
+                </div>
               </div>
 
               {/* Action Buttons */}

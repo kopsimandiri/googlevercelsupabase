@@ -201,25 +201,35 @@ export function mapSupabaseMemberRowToMemberRecord(row: any): MemberRecord {
  * Maps UI MemberRecord to Supabase public.members 18 columns format
  */
 export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extra: any = {}): any {
-  const idVal = member.id || extra.id || `MEM-${Date.now()}`;
+  const idVal = member.id || extra.id || extra.member_no || `MEM-${Date.now()}`;
   const nowStr = new Date().toISOString();
+
+  // Guarantee clean 16 digits NIK
+  let rawNik = String(extra.nik || (member as any).nik || '').replace(/\D/g, '');
+  if (!rawNik || rawNik.length !== 16) {
+    rawNik = '3171000000000001';
+  }
+
+  const rawUsername = String(
+    extra.username || (member as any).username || (member.nama ? member.nama.toLowerCase().replace(/[^a-z0-9]/g, '_') : `user_${Date.now()}`)
+  ).toLowerCase().trim();
 
   return {
     id: idVal,
     member_no: member.id || extra.member_no || idVal,
     registered_at: member.tgl_reg || extra.registered_at || nowStr.split('T')[0],
-    full_name: member.nama || extra.full_name || 'Anggota Baru',
+    full_name: (member.nama || extra.full_name || 'Anggota Baru').trim(),
     gender: member.gender === 'P' ? 'P' : 'L',
-    province: member.provinsi || extra.province || 'DKI Jakarta',
-    city: member.kota || extra.city || 'Jakarta Pusat',
-    address: member.alamat || extra.address || '',
-    occupation: member.pekerjaan || extra.occupation || 'Wiraswasta',
-    username: extra.username || (member as any).username || (member.nama ? member.nama.toLowerCase().replace(/[^a-z0-9]/g, '_') : `user_${Date.now()}`),
+    province: (member.provinsi || extra.province || 'DKI Jakarta').trim(),
+    city: (member.kota || extra.city || 'Jakarta Pusat').trim(),
+    address: (member.alamat || extra.address || '').trim(),
+    occupation: (member.pekerjaan || extra.occupation || 'Anggota Koperasi').trim(),
+    username: rawUsername,
     birth_date: member.tgl_lahir || extra.birth_date || '1990-01-01',
-    birth_place: extra.birth_place || (member as any).tempat_lahir || member.kota || 'Jakarta',
-    nik: extra.nik || (member as any).nik || '3171000000000001',
-    work_area: member.plantation || extra.work_area || 'PUSAT JAKARTA',
-    legacy_password_hash: extra.legacy_password_hash || (member as any).legacy_password_hash || '',
+    birth_place: (extra.birth_place || (member as any).tempat_lahir || member.kota || 'Jakarta').trim(),
+    nik: rawNik,
+    work_area: (member.plantation || extra.work_area || 'JKT-01').trim(),
+    legacy_password_hash: (extra.legacy_password_hash || (member as any).legacy_password_hash || '').trim(),
     avatar_url: (member as any).avatar_url || extra.avatar_url || '',
     status: extra.status || (member as any).status || 'AKTIF',
     created_at: extra.created_at || nowStr,
@@ -660,49 +670,40 @@ export const memberService = {
   },
 
   async saveMember(memberData: Partial<MemberRecord>, extraPayload: any = {}): Promise<{ success: boolean; id?: string; error?: string; source: 'SUPABASE' | 'LOCAL' }> {
-    const members = this.getStoredMembers();
     const isEdit = Boolean(memberData.id);
     const client = getSupabaseClient();
     const nowStr = new Date().toISOString();
 
     if (isEdit) {
+      const members = this.getStoredMembers();
       const idx = members.findIndex((m) => m.id === memberData.id);
       if (idx === -1) return { success: false, error: 'ID Anggota tidak ditemukan.', source: 'LOCAL' };
 
       const oldRecord = { ...members[idx] };
-      members[idx] = {
+      const updatedRecord: MemberRecord = {
         ...members[idx],
         ...memberData,
       } as MemberRecord;
 
-      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
-
-      // Record audit log
-      await auditService.logActivity(
-        'UPDATE_MEMBER',
-        'members',
-        memberData.id!,
-        oldRecord,
-        members[idx]
-      );
-
       let savedToSupabase = false;
+      let supabaseErrorMsg: string | undefined;
+
       if (client) {
         try {
           const updatePayload: Record<string, any> = {
-            full_name: members[idx].nama,
-            gender: members[idx].gender === 'P' ? 'P' : 'L',
-            province: members[idx].provinsi || 'DKI Jakarta',
-            city: members[idx].kota || 'Jakarta Pusat',
-            address: members[idx].alamat || '',
-            occupation: members[idx].pekerjaan || 'Anggota Koperasi',
-            work_area: members[idx].plantation || 'PUSAT JAKARTA',
-            birth_date: members[idx].tgl_lahir || '1990-01-01',
+            full_name: updatedRecord.nama,
+            gender: updatedRecord.gender === 'P' ? 'P' : 'L',
+            province: updatedRecord.provinsi || 'DKI Jakarta',
+            city: updatedRecord.kota || 'Jakarta Pusat',
+            address: updatedRecord.alamat || '',
+            occupation: updatedRecord.pekerjaan || 'Anggota Koperasi',
+            work_area: updatedRecord.plantation || 'PUSAT JAKARTA',
+            birth_date: updatedRecord.tgl_lahir || '1990-01-01',
             updated_at: nowStr,
           };
 
-          if (members[idx].tempat_lahir) {
-            updatePayload.birth_place = members[idx].tempat_lahir;
+          if (updatedRecord.tempat_lahir) {
+            updatePayload.birth_place = updatedRecord.tempat_lahir;
           }
 
           let updateRes = await client
@@ -713,70 +714,76 @@ export const memberService = {
           if (!updateRes.error) {
             savedToSupabase = true;
           } else {
+            console.error('SAVE MEMBER SUPABASE ERROR (ID):', updateRes.error);
             // Try updating with alternate key member_no
             const altUpdate = await client
               .from(MEMBERS_TABLE_NAME)
               .update(updatePayload)
               .eq('member_no', memberData.id);
-            if (!altUpdate.error) savedToSupabase = true;
+            if (!altUpdate.error) {
+              savedToSupabase = true;
+            } else {
+              supabaseErrorMsg = altUpdate.error.message;
+              console.error('SAVE MEMBER SUPABASE ERROR (MEMBER_NO):', altUpdate.error);
+            }
           }
-        } catch (err) {
-          console.warn('Supabase update member fallback:', err);
+        } catch (err: any) {
+          supabaseErrorMsg = err?.message || String(err);
+          console.error('SAVE MEMBER SUPABASE ERROR:', err);
         }
       }
-      return { success: true, id: memberData.id, source: savedToSupabase ? 'SUPABASE' : 'LOCAL' };
-    } else {
-      // Generate ID: {MMYY}-{03000 + nextSeq}
-      const now = new Date();
-      const mm = String(now.getMonth() + 1).padStart(2, '0');
-      const yy = String(now.getFullYear()).slice(-2);
-      const mmyy = `${mm}${yy}`;
 
-      let maxSeq = 3000;
-      members.forEach((m) => {
-        if (m.id && m.id.includes('-')) {
-          const parts = m.id.split('-');
-          if (parts.length === 2) {
-            const seq = parseInt(parts[1], 10);
-            if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
-          }
-        }
-      });
-      const newId = `${mmyy}-${String(maxSeq + 1).padStart(5, '0')}`;
-
-      const newMember: MemberRecord = {
-        id: newId,
-        tgl_reg: now.toISOString().split('T')[0],
-        nama: memberData.nama || 'Anggota Baru',
-        gender: memberData.gender || 'L',
-        provinsi: memberData.provinsi || 'DKI Jakarta',
-        kota: memberData.kota || 'Jakarta Pusat',
-        alamat: (memberData.alamat || '').substring(0, 200),
-        pekerjaan: memberData.pekerjaan || 'Wiraswasta',
-        plantation: memberData.plantation || 'PUSAT JAKARTA',
-        tgl_lahir: memberData.tgl_lahir || '1990-01-01',
-        area_jenis: (memberData.plantation || '').toUpperCase().includes('PUSAT') ? 'KOPERASI PUSAT' : 'KOPERASI CABANG',
-        simpanan_pokok: 500000,
-        simpanan_wajib: 360000,
-        simpanan_sukarela: memberData.simpanan_sukarela || 0,
-      };
-
-      members.unshift(newMember);
+      // Update local storage
+      members[idx] = updatedRecord;
       localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
 
       // Record audit log
       await auditService.logActivity(
-        'CREATE_MEMBER',
+        'UPDATE_MEMBER',
         'members',
-        newId,
-        null,
-        newMember
+        memberData.id!,
+        oldRecord,
+        updatedRecord
       );
 
+      return {
+        success: true,
+        id: memberData.id,
+        source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
+        error: supabaseErrorMsg,
+      };
+    } else {
+      // 1. Generate unique Member ID
+      const newId = await this.generateNextMemberNo();
+      const now = new Date();
+
+      const newMember: MemberRecord = {
+        id: newId,
+        tgl_reg: now.toISOString().split('T')[0],
+        nama: (memberData.nama || 'Anggota Baru').trim(),
+        gender: memberData.gender === 'P' ? 'P' : 'L',
+        provinsi: (memberData.provinsi || 'DKI Jakarta').trim(),
+        kota: (memberData.kota || 'Jakarta Pusat').trim(),
+        alamat: (memberData.alamat || '').trim().substring(0, 200),
+        pekerjaan: (memberData.pekerjaan || 'Anggota Koperasi').trim(),
+        plantation: (memberData.plantation || 'JKT-01').trim(),
+        tgl_lahir: memberData.tgl_lahir || '1990-01-01',
+        area_jenis: (memberData.plantation || '').toUpperCase().includes('PUSAT') || (memberData.plantation || '').toUpperCase().includes('JKT')
+          ? 'KOPERASI PUSAT'
+          : 'KOPERASI CABANG',
+        simpanan_pokok: memberData.simpanan_pokok ?? 500000,
+        simpanan_wajib: memberData.simpanan_wajib ?? 360000,
+        simpanan_sukarela: memberData.simpanan_sukarela || 0,
+      };
+
+      const dbRow = mapMemberRecordToSupabaseRow(newMember, { ...extraPayload, id: newId, member_no: newId });
+
       let savedToSupabase = false;
+      let supabaseErrorMsg: string | undefined;
+
+      // 2. Try Supabase INSERT first
       if (client) {
         try {
-          const dbRow = mapMemberRecordToSupabaseRow(newMember, extraPayload);
           let insertRes = await client
             .from(MEMBERS_TABLE_NAME)
             .insert([dbRow]);
@@ -787,13 +794,49 @@ export const memberService = {
             insertRes = await client.from(MEMBERS_TABLE_NAME).insert([safeRow]);
           }
 
-          if (!insertRes.error) savedToSupabase = true;
-        } catch (err) {
-          console.warn('Supabase insert member fallback:', err);
+          if (!insertRes.error) {
+            savedToSupabase = true;
+          } else {
+            supabaseErrorMsg = insertRes.error.message;
+            console.error('SAVE MEMBER SUPABASE ERROR:', insertRes.error);
+            // Fallback: try upsert
+            const { error: upsertErr } = await client
+              .from(MEMBERS_TABLE_NAME)
+              .upsert([dbRow], { onConflict: 'id' });
+            if (!upsertErr) {
+              savedToSupabase = true;
+              supabaseErrorMsg = undefined;
+            } else {
+              console.error('SAVE MEMBER SUPABASE ERROR (UPSERT):', upsertErr);
+            }
+          }
+        } catch (err: any) {
+          supabaseErrorMsg = err?.message || String(err);
+          console.error('SAVE MEMBER SUPABASE ERROR:', err);
         }
       }
 
-      return { success: true, id: newId, source: savedToSupabase ? 'SUPABASE' : 'LOCAL' };
+      // 3. Update local cache
+      const members = this.getStoredMembers();
+      const filtered = members.filter((m) => m.id !== newId);
+      filtered.unshift(newMember);
+      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(filtered));
+
+      // Record audit log
+      await auditService.logActivity(
+        'CREATE_MEMBER',
+        'members',
+        newId,
+        null,
+        newMember
+      );
+
+      return {
+        success: true,
+        id: newId,
+        source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
+        error: supabaseErrorMsg,
+      };
     }
   },
 
