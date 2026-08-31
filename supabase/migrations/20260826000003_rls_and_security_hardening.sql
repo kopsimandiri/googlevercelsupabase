@@ -49,6 +49,21 @@ BEGIN
     RETURN v_role;
   END IF;
 
+  -- 4. Check JWT email or metadata for authoritative system roles
+  IF LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'koperasi.simandiri@gmail.com' OR
+     LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%' OR
+     UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'ADMIN' OR
+     UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'ADMIN' THEN
+    RETURN 'ADMIN';
+  END IF;
+
+  IF LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE '%direksi%' OR
+     LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE '%direktur%' OR
+     UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'DIRECTOR' OR
+     UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'DIRECTOR' THEN
+    RETURN 'DIRECTOR';
+  END IF;
+
   -- Default to ANGGOTA if authenticated, NULL if anon
   IF auth.uid() IS NOT NULL THEN
     RETURN 'ANGGOTA';

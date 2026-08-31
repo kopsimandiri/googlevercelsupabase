@@ -2,6 +2,93 @@ import { getSupabaseClient } from '../lib/supabase';
 
 export const BUKTI_TRANSFER_BUCKET = 'bukti_transfer';
 
+export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
+-- KOPSIM MANDIRI: BUKTI_TRANSFER STORAGE BUCKET & RLS POLICIES
+-- Description: Configures private bucket 'bukti_transfer' and strictly restricts
+--              upload (INSERT), modification (UPDATE), and deletion (DELETE)
+--              to authenticated users with ADMIN role.
+--              DIRECTOR, ANGGOTA, and Anonymous users are strictly DENIED upload.
+-- ==============================================================================
+
+-- 1. Pastikan bucket privat 'bukti_transfer' terdaftar di storage.buckets
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'bukti_transfer',
+  'bukti_transfer',
+  FALSE,
+  10485760, -- 10MB
+  ARRAY['image/jpeg', 'image/png', 'image/webp']
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = FALSE,
+  file_size_limit = 10485760,
+  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp'];
+
+-- 2. Aktifkan Row Level Security pada storage.objects
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+-- ==============================================================================
+-- 3. STORAGE RLS POLICIES FOR 'bukti_transfer'
+-- ==============================================================================
+
+-- A. INSERT: HANYA ADMIN YANG BOLEH UPLOAD
+DROP POLICY IF EXISTS "bukti_transfer_admin_insert" ON storage.objects;
+DROP POLICY IF EXISTS "Allow authenticated uploads to bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_insert" ON storage.objects;
+
+CREATE POLICY "bukti_transfer_admin_insert"
+  ON storage.objects
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    bucket_id = 'bukti_transfer' AND
+    public.is_admin()
+  );
+
+-- B. UPDATE: HANYA ADMIN YANG BOLEH MEMPERBARUI FILE
+DROP POLICY IF EXISTS "bukti_transfer_admin_update" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_update" ON storage.objects;
+
+CREATE POLICY "bukti_transfer_admin_update"
+  ON storage.objects
+  FOR UPDATE
+  TO authenticated
+  USING (
+    bucket_id = 'bukti_transfer' AND
+    public.is_admin()
+  )
+  WITH CHECK (
+    bucket_id = 'bukti_transfer' AND
+    public.is_admin()
+  );
+
+-- C. DELETE: HANYA ADMIN YANG BOLEH MENGHAPUS FILE (Rollback & Cleanup)
+DROP POLICY IF EXISTS "bukti_transfer_admin_delete" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_delete" ON storage.objects;
+
+CREATE POLICY "bukti_transfer_admin_delete"
+  ON storage.objects
+  FOR DELETE
+  TO authenticated
+  USING (
+    bucket_id = 'bukti_transfer' AND
+    public.is_admin()
+  );
+
+-- D. SELECT: ADMIN & DIREKSI BISA MELIHAT BUKTI (Signed URLs / Audit)
+DROP POLICY IF EXISTS "bukti_transfer_admin_director_select" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_select" ON storage.objects;
+
+CREATE POLICY "bukti_transfer_admin_director_select"
+  ON storage.objects
+  FOR SELECT
+  TO authenticated
+  USING (
+    bucket_id = 'bukti_transfer' AND
+    public.is_director_or_admin()
+  );
+`;
+
 export interface ProofOptimizationResult {
   file: Blob | File;
   extension: string;
@@ -207,9 +294,12 @@ export async function uploadTransactionProof(
 
     if (error) {
       console.error('SUPABASE STORAGE UPLOAD ERROR:', error);
+      const isRlsError = error.message?.toLowerCase().includes('row-level security') || error.message?.toLowerCase().includes('violates');
       return {
         success: false,
-        error: `Gagal upload ke bucket "${BUKTI_TRANSFER_BUCKET}": ${error.message}`,
+        error: isRlsError
+          ? `Gagal upload ke bucket "${BUKTI_TRANSFER_BUCKET}": new row violates row-level security policy (Akses Ditolak: Hanya pengguna dengan hak ADMIN yang diizinkan mengunggah bukti transaksi).`
+          : `Gagal upload ke bucket "${BUKTI_TRANSFER_BUCKET}": ${error.message}`,
       };
     }
 

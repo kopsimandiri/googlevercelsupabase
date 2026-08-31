@@ -9,6 +9,7 @@ import {
   deleteTransactionProof,
   getSignedProofUrl,
   ProofOptimizationResult,
+  STORAGE_BUKTI_TRANSFER_SQL_DDL,
 } from '../../services/storageService';
 import { TransactionRecord, CustomerRecord, SupplierRecord, MemberRecord } from '../../types/database';
 import { formatDateIndo, formatRupiah, cleanRupiah } from '../../utils/formatters';
@@ -80,6 +81,7 @@ export const TransactionModule: React.FC = () => {
   const [isLoadingProofSignedUrl, setIsLoadingProofSignedUrl] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
+  const [activeSqlTab, setActiveSqlTab] = useState<'transactions' | 'storage'>('transactions');
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [isSeeding, setIsSeeding] = useState<boolean>(false);
   const [deletingTrxId, setDeletingTrxId] = useState<string | null>(null);
@@ -122,8 +124,10 @@ export const TransactionModule: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canEdit = role === 'ADMIN' || role === 'DIRECTOR';
+  const isAdmin = role === 'ADMIN';
+  const canEdit = role === 'ADMIN';
   const canDelete = role === 'ADMIN';
+  const canUpload = role === 'ADMIN';
 
   // Bank accounts map by entity / project (Step 6 query logic)
   const entityBankMap: Record<string, string[]> = {
@@ -271,9 +275,15 @@ export const TransactionModule: React.FC = () => {
   };
 
   const handleCopySql = () => {
-    navigator.clipboard.writeText(TRANSACTIONS_SQL_DDL);
+    const textToCopy = activeSqlTab === 'transactions' ? TRANSACTIONS_SQL_DDL : STORAGE_BUKTI_TRANSFER_SQL_DDL;
+    navigator.clipboard.writeText(textToCopy);
     setCopiedSql(true);
-    showToast('Skrip SQL DDL & Kebijakan RLS disalin ke clipboard!', 'success');
+    showToast(
+      activeSqlTab === 'transactions'
+        ? 'Skrip SQL DDL & Kebijakan RLS tabel transactions disalin ke clipboard!'
+        : 'Skrip SQL Storage & Kebijakan RLS bucket bukti_transfer disalin ke clipboard!',
+      'success'
+    );
     setTimeout(() => setCopiedSql(false), 2500);
   };
 
@@ -419,6 +429,11 @@ export const TransactionModule: React.FC = () => {
   };
 
   const handleProofFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canUpload) {
+      showToast('Akses Ditolak: Hanya akun Administrator (ADMIN) yang diizinkan mengunggah bukti transaksi ke Supabase Storage.', 'error');
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -473,6 +488,12 @@ export const TransactionModule: React.FC = () => {
 
       // 1. Upload proof file to Supabase Storage bucket 'bukti_transfer' if a new file is staged
       if (optimizedProof) {
+        if (!canUpload) {
+          showToast('Akses Ditolak: Hanya pengguna dengan hak ADMIN yang diizinkan mengunggah bukti transaksi.', 'error');
+          setIsSubmitting(false);
+          return;
+        }
+
         const storagePath = generateStorageProofPath(targetTrxId, optimizedProof.extension, formTanggal);
         
         const uploadRes = await uploadTransactionProof(
@@ -1460,75 +1481,93 @@ export const TransactionModule: React.FC = () => {
                   </span>
                 </div>
 
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleProofFileSelect}
-                  accept="image/jpeg,image/png,image/webp"
-                  className="hidden"
-                />
+                {canUpload ? (
+                  <>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleProofFileSelect}
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                    />
 
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isOptimizingProof || isSubmitting}
-                    leftIcon={
-                      isOptimizingProof ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-emerald-800" />
-                      ) : (
-                        <UploadCloud className="w-3 h-3" />
-                      )
-                    }
-                  >
-                    {isOptimizingProof ? 'Memproses Gambar...' : 'Pilih Gambar Bukti Transaksi'}
-                  </Button>
-
-                  {proofPreviewUrl || formFilelink ? (
-                    <div className="flex items-center gap-2 text-[11px] text-emerald-900 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
-                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <div className="flex flex-col">
-                        <span className="font-medium truncate max-w-[200px]">{fileName || 'Bukti Terlampir'}</span>
-                        {optimizedProof && (
-                          <span className="text-[9px] text-emerald-700 font-mono">
-                            {(optimizedProof.originalSize / 1024).toFixed(0)} KB → {(optimizedProof.optimizedSize / 1024).toFixed(0)} KB ({optimizedProof.extension.toUpperCase()})
-                          </span>
-                        )}
-                      </div>
-                      <button
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                      <Button
                         type="button"
-                        onClick={handleRemoveProof}
-                        className="text-stone-400 hover:text-rose-600 ml-1.5 p-0.5 rounded"
-                        title="Hapus / Ganti file"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isOptimizingProof || isSubmitting}
+                        leftIcon={
+                          isOptimizingProof ? (
+                            <Loader2 className="w-3 h-3 animate-spin text-emerald-800" />
+                          ) : (
+                            <UploadCloud className="w-3 h-3" />
+                          )
+                        }
                       >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-[11px] text-stone-400 italic">
-                      Belum ada bukti transaksi dipilih
-                    </span>
-                  )}
-                </div>
+                        {isOptimizingProof ? 'Memproses Gambar...' : 'Pilih Gambar Bukti Transaksi'}
+                      </Button>
 
-                {/* Thumbnail Preview if available */}
-                {proofPreviewUrl && (
-                  <div className="flex items-center gap-3 pt-1">
-                    <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-emerald-300 bg-stone-100 shadow-2xs shrink-0">
-                      <img
-                        src={proofPreviewUrl}
-                        alt="Preview Bukti"
-                        className="w-full h-full object-cover"
-                      />
+                      {proofPreviewUrl || formFilelink ? (
+                        <div className="flex items-center gap-2 text-[11px] text-emerald-900 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
+                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <div className="flex flex-col">
+                            <span className="font-medium truncate max-w-[200px]">{fileName || 'Bukti Terlampir'}</span>
+                            {optimizedProof && (
+                              <span className="text-[9px] text-emerald-700 font-mono">
+                                {(optimizedProof.originalSize / 1024).toFixed(0)} KB → {(optimizedProof.optimizedSize / 1024).toFixed(0)} KB ({optimizedProof.extension.toUpperCase()})
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleRemoveProof}
+                            className="text-stone-400 hover:text-rose-600 ml-1.5 p-0.5 rounded"
+                            title="Hapus / Ganti file"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-stone-400 italic">
+                          Belum ada bukti transaksi dipilih
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[11px] text-stone-600 space-y-0.5">
-                      <p className="font-medium text-emerald-950">Gambar siap di-upload ke Supabase Storage</p>
-                      <p className="text-[10px] text-stone-500">
-                        File akan otomatis disimpan ke bucket private <code>bukti_transfer</code> dan path referensi dicatat ke kolom <code>public.transactions.file_url</code>.
-                      </p>
+
+                    {/* Thumbnail Preview if available */}
+                    {proofPreviewUrl && (
+                      <div className="flex items-center gap-3 pt-1">
+                        <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-emerald-300 bg-stone-100 shadow-2xs shrink-0">
+                          <img
+                            src={proofPreviewUrl}
+                            alt="Preview Bukti"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="text-[11px] text-stone-600 space-y-0.5">
+                          <p className="font-medium text-emerald-950">Gambar siap di-upload ke Supabase Storage</p>
+                          <p className="text-[10px] text-stone-500">
+                            File akan otomatis disimpan ke bucket private <code>bukti_transfer</code> dan path referensi dicatat ke kolom <code>public.transactions.file_url</code>.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="p-3 bg-stone-100 rounded-lg border border-stone-200 text-stone-600 text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-stone-500 shrink-0" />
+                      <span className="text-[11px]">
+                        Pengunggahan bukti transaksi dibatasi khusus untuk <strong>ADMIN</strong>.
+                      </span>
                     </div>
+                    {formFilelink && (
+                      <span className="text-[10px] text-emerald-800 font-mono bg-emerald-50 px-2 py-1 rounded border border-emerald-200 truncate max-w-[180px]">
+                        {formFilelink}
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -1573,8 +1612,8 @@ export const TransactionModule: React.FC = () => {
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-800" />
                 <div>
-                  <h3 className="font-bold text-stone-900 font-serif">Skrip SQL & RLS PostgreSQL: public.transactions</h3>
-                  <p className="text-[11px] text-stone-500">19 Kolom Resmi + RLS Diaktifkan (ENABLE) + Kebijakan Izin Lengkap</p>
+                  <h3 className="font-bold text-stone-900 font-serif">Skrip SQL DDL & Kebijakan RLS Supabase</h3>
+                  <p className="text-[11px] text-stone-500">Tabel PostgreSQL & Supabase Storage Bucket</p>
                 </div>
               </div>
               <button onClick={() => setShowDdlModal(false)} className="p-1 text-stone-400 hover:text-stone-700">
@@ -1582,14 +1621,45 @@ export const TransactionModule: React.FC = () => {
               </button>
             </div>
 
+            {/* Tab navigation */}
+            <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setActiveSqlTab('transactions')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  activeSqlTab === 'transactions'
+                    ? 'bg-emerald-800 text-white shadow-xs'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                }`}
+              >
+                1. Table: public.transactions (19 Kolom)
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSqlTab('storage')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  activeSqlTab === 'storage'
+                    ? 'bg-emerald-800 text-white shadow-xs'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                }`}
+              >
+                2. Storage Bucket: bukti_transfer (RLS ADMIN)
+              </button>
+            </div>
+
             <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-1">
               <div className="flex items-center gap-1.5 font-bold text-emerald-900">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-                <span>Mengapa RLS Tetap Aktif (ENABLE)?</span>
+                <span>
+                  {activeSqlTab === 'transactions'
+                    ? 'Ketentuan RLS Tabel public.transactions'
+                    : 'Keamanan Bucket bukti_transfer (Hanya ADMIN yang Boleh Upload)'}
+                </span>
               </div>
               <p className="text-[11px] text-emerald-800 leading-relaxed">
-                RLS (Row Level Security) mengamankan data tabel Anda di tingkat baris. Agar query aplikasi tidak menghasilkan 0 baris kosong,
-                kebijakan akses (<code className="font-mono bg-emerald-100 px-1 py-0.5 rounded">CREATE POLICY</code>) untuk <code className="font-mono bg-emerald-100 px-1 py-0.5 rounded">SELECT</code>, <code className="font-mono bg-emerald-100 px-1 py-0.5 rounded">INSERT</code>, <code className="font-mono bg-emerald-100 px-1 py-0.5 rounded">UPDATE</code>, dan <code className="font-mono bg-emerald-100 px-1 py-0.5 rounded">DELETE</code> telah disertakan dalam skrip di bawah.
+                {activeSqlTab === 'transactions'
+                  ? 'RLS mengamankan data tabel di tingkat baris. Kebijakan akses lengkap untuk SELECT, INSERT, UPDATE, dan DELETE telah disertakan.'
+                  : 'Bucket dibuat PRIVATE dengan Row Level Security pada storage.objects. Kebijakan INSERT, UPDATE, DELETE hanya diizinkan untuk akun ADMIN (public.is_admin()).'}
               </p>
             </div>
 
@@ -1604,7 +1674,7 @@ export const TransactionModule: React.FC = () => {
                 </button>
               </div>
               <pre className="text-[11px] font-mono text-emerald-400 overflow-y-auto max-h-64 pr-24 leading-relaxed">
-                {TRANSACTIONS_SQL_DDL}
+                {activeSqlTab === 'transactions' ? TRANSACTIONS_SQL_DDL : STORAGE_BUKTI_TRANSFER_SQL_DDL}
               </pre>
             </div>
 
