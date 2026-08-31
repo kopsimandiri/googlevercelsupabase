@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { projectService, ProjectDetailInfo } from '../../services/projectService';
+import { productService, ProductItem } from '../../services/productService';
 import {
   projectExposureService,
   ProjectExposure,
@@ -42,7 +43,9 @@ export const ProjectModule: React.FC = () => {
   const [projects, setProjects] = useState<Array<ProjectDetailInfo & ProjectSummary>>([]);
   const [selectedProject, setSelectedProject] = useState<(ProjectDetailInfo & ProjectSummary) | null>(null);
   const [projectTrx, setProjectTrx] = useState<TransactionRecord[]>([]);
+  const [projectProducts, setProjectProducts] = useState<ProductItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(false);
 
   // Admin Project Updates State
   const exposures = projectExposureService.getExposures();
@@ -66,8 +69,12 @@ export const ProjectModule: React.FC = () => {
       setUpdatesList(updates);
       if (data.length > 0) {
         setSelectedProject(data[0]);
-        const trx = await projectService.getProjectTransactions(data[0].name);
+        const [trx, prods] = await Promise.all([
+          projectService.getProjectTransactions(data[0].name),
+          productService.getProductsByProject(data[0].name),
+        ]);
         setProjectTrx(trx);
+        setProjectProducts(prods);
       }
     } catch (err) {
       console.error(err);
@@ -82,8 +89,19 @@ export const ProjectModule: React.FC = () => {
 
   const handleSelectProject = async (p: ProjectDetailInfo & ProjectSummary) => {
     setSelectedProject(p);
-    const trx = await projectService.getProjectTransactions(p.name);
-    setProjectTrx(trx);
+    setIsLoadingProducts(true);
+    try {
+      const [trx, prods] = await Promise.all([
+        projectService.getProjectTransactions(p.name),
+        productService.getProductsByProject(p.name),
+      ]);
+      setProjectTrx(trx);
+      setProjectProducts(prods);
+    } catch (err) {
+      console.warn('Error loading project details & products:', err);
+    } finally {
+      setIsLoadingProducts(false);
+    }
   };
 
   const handlePostUpdate = async (e: React.FormEvent) => {
@@ -235,6 +253,59 @@ export const ProjectModule: React.FC = () => {
               <span className="font-bold text-emerald-950 block mb-1">Deskripsi & Ruang Lingkup Proyek:</span>
               <p className="leading-relaxed">{selectedProject.description}</p>
             </div>
+          </Card>
+
+          {/* Daftar Komoditas & Produk Sektor Riil (Supabase public.products) */}
+          <Card
+            title={`Katalog Komoditas & SKU — ${selectedProject.name}`}
+            subtitle={`Data komoditas terdaftar di Supabase (public.products) dengan relasi group_name = '${selectedProject.name}'`}
+            action={
+              <Badge variant="neutral" size="sm">
+                {projectProducts.length} SKU Terdaftar
+              </Badge>
+            }
+          >
+            {projectProducts.length === 0 ? (
+              <EmptyState
+                title="Belum Ada Komoditas Khusus di Database"
+                description={`Komoditas untuk sektor ${selectedProject.name} menggunakan acuan bawaan.`}
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-stone-200 bg-stone-50 text-stone-600 font-semibold uppercase tracking-wider text-[11px]">
+                      <th className="py-2.5 px-3">Kode SKU</th>
+                      <th className="py-2.5 px-3">Nama Komoditas / Produk</th>
+                      <th className="py-2.5 px-3">Sub-Kategori</th>
+                      <th className="py-2.5 px-3">Grade & Kemasan</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                      <th className="py-2.5 px-3 text-right">Harga Acuan</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {projectProducts.map((p) => (
+                      <tr key={p.sku_code || p.id} className="hover:bg-stone-50">
+                        <td className="py-2.5 px-3 font-mono font-bold text-emerald-950">{p.sku_code}</td>
+                        <td className="py-2.5 px-3 font-medium text-stone-900">{p.sku_name}</td>
+                        <td className="py-2.5 px-3 text-stone-600">{p.subgroup || p.brand || '-'}</td>
+                        <td className="py-2.5 px-3 text-stone-600">
+                          <span className="font-semibold text-stone-800">{p.grade}</span> • {p.packaging}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <Badge variant={p.availability === 'Tersedia' ? 'success' : 'warning'} size="sm">
+                            {p.availability}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-emerald-950 font-serif">
+                          {formatRupiah(p.defaultPrice)} / {p.unit}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Card>
 
           {/* Project Transactions History */}

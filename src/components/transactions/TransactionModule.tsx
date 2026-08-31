@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { transactionService, TransactionsMetaResult, TRANSACTIONS_SQL_DDL } from '../../services/transactionService';
 import { masterDataService } from '../../services/masterDataService';
 import { memberService } from '../../services/memberService';
+import { productService, ProductItem } from '../../services/productService';
+import { getSupabaseClient, isSupabaseConfigured } from '../../lib/supabase';
 import {
   validateAndOptimizeProofImage,
   generateStorageProofPath,
@@ -116,15 +118,15 @@ export const TransactionModule: React.FC = () => {
   // 2. Referal Area -> referral_type ('KOPERASI' | 'PROJECT')
   const [formReferal, setFormReferal] = useState<'KOPERASI' | 'PROJECT'>('KOPERASI');
   // 3. Entitas / Project -> area_name
-  const [formPlantation, setFormPlantation] = useState<string>('PUSAT JAKARTA');
+  const [formPlantation, setFormPlantation] = useState<string>('');
   // 4. Jenis Transaksi -> transaction_type ('MASUK' | 'KELUAR')
   const [formJenis, setFormJenis] = useState<'MASUK' | 'KELUAR'>('MASUK');
   // 5. Kategori -> category_name
-  const [formKategori, setFormKategori] = useState<string>('Simpanan Pokok Anggota');
+  const [formKategori, setFormKategori] = useState<string>('');
   // 6. Sumber Dana -> payment_method
-  const [formMetodeBayar, setFormMetodeBayar] = useState<string>('Bank BSI 7123456789 (a.n KOPSIM)');
+  const [formMetodeBayar, setFormMetodeBayar] = useState<string>('');
   // 7. Total Nominal Transaksi -> amount
-  const [formJumlah, setFormJumlah] = useState<number>(500000);
+  const [formJumlah, setFormJumlah] = useState<number>(0);
   // 8. Akun / Anggota / Project -> account_name_legacy
   const [formAkun, setFormAkun] = useState<string>('Kas Umum Koperasi (Non-Anggota)');
   // 9. Keterangan -> description
@@ -141,6 +143,27 @@ export const TransactionModule: React.FC = () => {
   const [formSkuName, setFormSkuName] = useState<string>('');
   const [formQty, setFormQty] = useState<number>(1);
   const [formHargaSatuan, setFormHargaSatuan] = useState<number>(0);
+
+  // 4 Cascading Dropdown States & Anti-Fail Trackers
+  // Field 3: Entitas / Project (from public.areas where referral_type = formReferal)
+  const [areaOptions, setAreaOptions] = useState<string[]>([]);
+  const [isLoadingAreas, setIsLoadingAreas] = useState<boolean>(false);
+  const [areaError, setAreaError] = useState<string | null>(null);
+
+  // Field 6: Sumber Dana (from public.areas where area_name = formPlantation: bank_account_1, 2, 3)
+  const [bankOptions, setBankOptions] = useState<string[]>([]);
+  const [isLoadingBanks, setIsLoadingBanks] = useState<boolean>(false);
+  const [bankError, setBankError] = useState<string | null>(null);
+
+  // Field 5: Kategori (from public.transaction_categories where type = formJenis)
+  const [categoryOptionsList, setCategoryOptionsList] = useState<string[]>([]);
+  const [isLoadingCategories, setIsLoadingCategories] = useState<boolean>(false);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+
+  // Field 11.1: Nama Produk / SKU (from public.products where group_name = formPlantation)
+  const [projectProducts, setProjectProducts] = useState<ProductItem[]>([]);
+  const [isLoadingProjectProducts, setIsLoadingProjectProducts] = useState<boolean>(false);
+  const [productError, setProductError] = useState<string | null>(null);
 
   // Optional customer / supplier link
   const [formCustomerId, setFormCustomerId] = useState<string>('');
@@ -385,44 +408,9 @@ export const TransactionModule: React.FC = () => {
     }
   }, [formQty, formHargaSatuan, formReferal]);
 
-  // Step 5: Categories list based on transaction_type (MASUK / KELUAR)
-  const categoryOptions = useMemo(() => {
-    if (formJenis === 'MASUK') {
-      return [
-        'Simpanan Pokok Anggota',
-        'Simpanan Wajib Anggota',
-        'Simpanan Sukarela / Manasuka',
-        'Penjualan Komoditas Riil',
-        'Penerimaan Termin Proyek',
-        'Penerimaan Kas & Pendapatan Lain',
-      ];
-    } else {
-      return [
-        'Biaya Operasional Kantor',
-        'Pembelian Bahan Baku / Komoditas',
-        'Pengadaan Sarana & Alat Kerja',
-        'Honor & Upah Petani / Nelayan',
-        'Biaya Logistik & Distribusi',
-        'Bagi Hasil / Penyaluran Dana',
-        'Biaya Pajak & Administrasi Bank',
-      ];
-    }
-  }, [formJenis]);
-
-  // Step 6: Available bank accounts based on selected area / project
-  const availableBankAccounts = useMemo(() => {
-    const list = entityBankMap[formPlantation];
-    if (list && list.length > 0) return list;
-    return [
-      'Bank Syariah Indonesia (BSI)',
-      'Bank Mandiri',
-      'Kas Tunai Kantor',
-    ];
-  }, [formPlantation]);
-
   // Step 8: Members belonging to selected work area (for KOPERASI)
   const filteredMembersForArea = useMemo(() => {
-    if (formReferal === 'PROJECT') return [];
+    if (formReferal === 'PROJECT' || !formPlantation) return [];
     const normalizedArea = formPlantation.toUpperCase();
     return members.filter((m) => {
       const mArea = (m.plantation || '').toUpperCase();
@@ -435,13 +423,267 @@ export const TransactionModule: React.FC = () => {
     });
   }, [members, formPlantation, formReferal]);
 
-  // Step 11.1: Available commodity products for project
-  const availableProductsForProject = useMemo(() => {
-    if (formReferal !== 'PROJECT') return [];
-    return projectProductsMap[formPlantation] || [
-      { name: 'Komoditas Sektor Riil Standar', defaultPrice: 50000, unit: 'Unit' },
-    ];
-  }, [formPlantation, formReferal]);
+  // =========================================================================
+  // 4 CASCADING DROPDOWN FETCHERS & ANTI-FAIL LOGIC (Supabase + Offline Fallbacks)
+  // =========================================================================
+
+  // 1. FIELD 3: Fetch areas based on referral_type ('KOPERASI' | 'PROJECT')
+  const fetchAreaOptions = useCallback(async (referralType: 'KOPERASI' | 'PROJECT') => {
+    setIsLoadingAreas(true);
+    setAreaError(null);
+    try {
+      const client = getSupabaseClient();
+      if (client && isSupabaseConfigured) {
+        const { data, error } = await client
+          .from('areas')
+          .select('area_name')
+          .eq('referral_type', referralType)
+          .order('area_name', { ascending: true });
+
+        if (error) throw error;
+        if (data && data.length > 0) {
+          const uniqueAreas = Array.from(
+            new Set(data.map((d: any) => String(d.area_name || '').trim()).filter(Boolean))
+          );
+          if (uniqueAreas.length > 0) {
+            setAreaOptions(uniqueAreas);
+            return;
+          }
+        }
+      }
+      // Offline fallback
+      const fallback = referralType === 'PROJECT'
+        ? ['TRADING IKAN', 'PERTANIAN', 'GARAM', 'MINYAK MERAH', 'PLYWOOD', 'DISTRIBUTOR MEATSHOP', 'SUPPLIER MBG', 'KAMPUNG HAJI']
+        : ['PUSAT JAKARTA', 'CABANG JAWA BARAT', 'CABANG JAWA TIMUR', 'CABANG JAWA TENGAH', 'CABANG SUMATERA'];
+      setAreaOptions(fallback);
+    } catch (err: any) {
+      console.warn('[TransactionModule] Gagal query public.areas:', err);
+      setAreaError('Gagal memuat daftar entitas dari database.');
+      const fallback = referralType === 'PROJECT'
+        ? ['TRADING IKAN', 'PERTANIAN', 'GARAM', 'MINYAK MERAH', 'PLYWOOD', 'DISTRIBUTOR MEATSHOP', 'SUPPLIER MBG', 'KAMPUNG HAJI']
+        : ['PUSAT JAKARTA', 'CABANG JAWA BARAT', 'CABANG JAWA TIMUR', 'CABANG JAWA TENGAH', 'CABANG SUMATERA'];
+      setAreaOptions(fallback);
+    } finally {
+      setIsLoadingAreas(false);
+    }
+  }, []);
+
+  // 2. FIELD 6: Fetch bank accounts based on selected area_name
+  const fetchBankAccountsForArea = useCallback(async (areaName: string) => {
+    if (!areaName) {
+      setBankOptions([]);
+      setBankError(null);
+      return;
+    }
+    setIsLoadingBanks(true);
+    setBankError(null);
+    try {
+      const client = getSupabaseClient();
+      if (client && isSupabaseConfigured) {
+        const { data, error } = await client
+          .from('areas')
+          .select('bank_account_1, bank_account_2, bank_account_3')
+          .eq('area_name', areaName)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (data) {
+          const accs = [data.bank_account_1, data.bank_account_2, data.bank_account_3]
+            .map((s) => (s ? String(s).trim() : ''))
+            .filter((s) => s.length > 0);
+          
+          if (accs.length > 0) {
+            setBankOptions(accs);
+            return;
+          }
+        }
+      }
+      // Offline / entityBankMap fallback
+      const fallbackAccs = (entityBankMap[areaName] || []).filter(Boolean);
+      setBankOptions(fallbackAccs);
+    } catch (err: any) {
+      console.warn('[TransactionModule] Gagal query rekening di public.areas:', err);
+      setBankError('Gagal memuat rekening entitas.');
+      const fallbackAccs = (entityBankMap[areaName] || []).filter(Boolean);
+      setBankOptions(fallbackAccs);
+    } finally {
+      setIsLoadingBanks(false);
+    }
+  }, []);
+
+  // 3. FIELD 5: Fetch categories based on transaction_type ('MASUK' | 'KELUAR')
+  const fetchCategoriesForType = useCallback(async (trxType: 'MASUK' | 'KELUAR') => {
+    setIsLoadingCategories(true);
+    setCategoryError(null);
+    try {
+      const client = getSupabaseClient();
+      if (client && isSupabaseConfigured) {
+        const { data, error } = await client
+          .from('transaction_categories')
+          .select('name')
+          .eq('type', trxType)
+          .order('name', { ascending: true });
+
+        if (error) throw error;
+        if (data && data.length > 0) {
+          const catNames = Array.from(
+            new Set(data.map((d: any) => String(d.name || '').trim()).filter(Boolean))
+          );
+          if (catNames.length > 0) {
+            setCategoryOptionsList(catNames);
+            return;
+          }
+        }
+      }
+      // Offline fallback
+      const fallbackCats = trxType === 'MASUK'
+        ? [
+            'Simpanan Pokok Anggota',
+            'Simpanan Wajib Anggota',
+            'Simpanan Sukarela / Manasuka',
+            'Penjualan Komoditas Riil',
+            'Penerimaan Termin Proyek',
+            'Penerimaan Kas & Pendapatan Lain',
+          ]
+        : [
+            'Biaya Operasional Kantor',
+            'Pembelian Bahan Baku / Komoditas',
+            'Pengadaan Sarana & Alat Kerja',
+            'Honor & Upah Petani / Nelayan',
+            'Biaya Logistik & Distribusi',
+            'Bagi Hasil / Penyaluran Dana',
+            'Biaya Pajak & Administrasi Bank',
+          ];
+      setCategoryOptionsList(fallbackCats);
+    } catch (err: any) {
+      console.warn('[TransactionModule] Gagal query public.transaction_categories:', err);
+      setCategoryError('Gagal memuat kategori transaksi.');
+      const fallbackCats = trxType === 'MASUK'
+        ? [
+            'Simpanan Pokok Anggota',
+            'Simpanan Wajib Anggota',
+            'Simpanan Sukarela / Manasuka',
+            'Penjualan Komoditas Riil',
+            'Penerimaan Termin Proyek',
+            'Penerimaan Kas & Pendapatan Lain',
+          ]
+        : [
+            'Biaya Operasional Kantor',
+            'Pembelian Bahan Baku / Komoditas',
+            'Pengadaan Sarana & Alat Kerja',
+            'Honor & Upah Petani / Nelayan',
+            'Biaya Logistik & Distribusi',
+            'Bagi Hasil / Penyaluran Dana',
+            'Biaya Pajak & Administrasi Bank',
+          ];
+      setCategoryOptionsList(fallbackCats);
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  }, []);
+
+  // 4. FIELD 11.1: Fetch commodity products for selected Project entity
+  const fetchProductsForProject = useCallback(async (projectName: string) => {
+    if (!projectName) {
+      setProjectProducts([]);
+      setProductError(null);
+      return;
+    }
+    setIsLoadingProjectProducts(true);
+    setProductError(null);
+    try {
+      const prods = await productService.getProductsByProject(projectName);
+      setProjectProducts(prods);
+    } catch (err: any) {
+      console.warn('[TransactionModule] Gagal query public.products:', err);
+      setProductError('Gagal memuat daftar produk.');
+      const fallbackList = projectProductsMap[projectName] || [];
+      setProjectProducts(
+        fallbackList.map((p, idx) => ({
+          id: `FALLBACK-${idx}`,
+          sku_code: `SKU-${idx + 1}`,
+          sku_name: p.name,
+          group_id: 'GRP',
+          group_name: projectName,
+          subgroup: '',
+          brand: '',
+          grade: 'Grade A',
+          packaging: 'Standard',
+          availability: 'Tersedia',
+          moq: 1,
+          supply_capacity: '',
+          defaultPrice: p.defaultPrice,
+          unit: p.unit,
+        }))
+      );
+    } finally {
+      setIsLoadingProjectProducts(false);
+    }
+  }, []);
+
+  // Cascading Effect Triggers
+  useEffect(() => {
+    fetchAreaOptions(formReferal);
+  }, [formReferal, fetchAreaOptions]);
+
+  useEffect(() => {
+    if (formPlantation) {
+      fetchBankAccountsForArea(formPlantation);
+      if (formReferal === 'PROJECT') {
+        fetchProductsForProject(formPlantation);
+      }
+    } else {
+      setBankOptions([]);
+      setProjectProducts([]);
+    }
+  }, [formPlantation, formReferal, fetchBankAccountsForArea, fetchProductsForProject]);
+
+  useEffect(() => {
+    fetchCategoriesForType(formJenis);
+  }, [formJenis, fetchCategoriesForType]);
+
+  // Cascading Change Handlers with Strict Reset Rules
+  const handleReferalChange = (newReferal: 'KOPERASI' | 'PROJECT') => {
+    setFormReferal(newReferal);
+    // WAJIB: Reset Field 3, Field 6, dan Field 11.1 saat Field 2 berubah
+    setFormPlantation('');
+    setFormMetodeBayar('');
+    setFormSkuName('');
+    setFormHargaSatuan(0);
+    setFormQty(1);
+    setFormJumlah(0);
+    if (newReferal === 'PROJECT') {
+      setFormAkun('DANA PROJECT');
+    } else {
+      setFormAkun('Kas Umum Koperasi (Non-Anggota)');
+    }
+  };
+
+  const handlePlantationChange = (newAreaName: string) => {
+    setFormPlantation(newAreaName);
+    // WAJIB: Reset Field 6 dan Field 11.1 saat Field 3 berubah
+    setFormMetodeBayar('');
+    setFormSkuName('');
+    setFormHargaSatuan(0);
+  };
+
+  const handleJenisChange = (newJenis: 'MASUK' | 'KELUAR') => {
+    setFormJenis(newJenis);
+    // WAJIB: Reset Field 5 saat Field 4 berubah
+    setFormKategori('');
+  };
+
+  const handleSkuNameChange = (newSkuName: string) => {
+    setFormSkuName(newSkuName);
+    const matched = projectProducts.find(
+      (p) => p.sku_name === newSkuName || p.sku_code === newSkuName
+    );
+    if (matched) {
+      setFormHargaSatuan(matched.defaultPrice || 0);
+    } else {
+      setFormHargaSatuan(0);
+    }
+  };
 
   // Load signed URL when viewing transaction detail
   useEffect(() => {
@@ -484,11 +726,11 @@ export const TransactionModule: React.FC = () => {
     setEditingTrx(null);
     setFormTanggal(new Date().toISOString().split('T')[0]);
     setFormReferal('KOPERASI');
-    setFormPlantation('PUSAT JAKARTA');
+    setFormPlantation('');
     setFormJenis('MASUK');
-    setFormKategori('Simpanan Pokok Anggota');
-    setFormMetodeBayar('Bank BSI 7123456789 (a.n KOPSIM)');
-    setFormJumlah(500000);
+    setFormKategori('');
+    setFormMetodeBayar('');
+    setFormJumlah(0);
     setFormAkun('Kas Umum Koperasi (Non-Anggota)');
     setFormKeterangan('');
     setFormFilelink('');
@@ -502,6 +744,8 @@ export const TransactionModule: React.FC = () => {
     setFormHargaSatuan(0);
     setFormCustomerId('');
     setFormSupplierId('');
+    fetchAreaOptions('KOPERASI');
+    fetchCategoriesForType('MASUK');
     setIsFormOpen(true);
   };
 
@@ -531,6 +775,14 @@ export const TransactionModule: React.FC = () => {
     setFormHargaSatuan(t.harga_satuan || 0);
     setFormCustomerId(t.customer_id || '');
     setFormSupplierId(t.supplier_id || '');
+    fetchAreaOptions(t.referal);
+    fetchCategoriesForType(t.jenis);
+    if (t.plantation) {
+      fetchBankAccountsForArea(t.plantation);
+      if (t.referal === 'PROJECT') {
+        fetchProductsForProject(t.plantation);
+      }
+    }
     setIsFormOpen(true);
   };
 
@@ -578,6 +830,22 @@ export const TransactionModule: React.FC = () => {
 
   const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formPlantation) {
+      showToast('Silakan pilih Entitas / Project terlebih dahulu (Field 3).', 'error');
+      return;
+    }
+    if (!formKategori) {
+      showToast('Silakan pilih Kategori Transaksi terlebih dahulu (Field 5).', 'error');
+      return;
+    }
+    if (!formMetodeBayar) {
+      showToast('Silakan pilih Rekening / Sumber Dana terlebih dahulu (Field 6).', 'error');
+      return;
+    }
+    if (formReferal === 'PROJECT' && !formSkuName) {
+      showToast('Silakan pilih Komoditas / SKU terlebih dahulu (Field 11.1).', 'error');
+      return;
+    }
     if (formJumlah <= 0) {
       showToast('Total nominal transaksi harus lebih dari Rp 0.', 'error');
       return;
@@ -1392,23 +1660,7 @@ export const TransactionModule: React.FC = () => {
                   </label>
                   <select
                     value={formReferal}
-                    onChange={(e: any) => {
-                      const val = e.target.value as 'KOPERASI' | 'PROJECT';
-                      setFormReferal(val);
-                      if (val === 'PROJECT') {
-                        setFormPlantation('TRADING IKAN');
-                        setFormAkun('DANA PROJECT');
-                        setFormSkuName('Ikan Tuna Segar Tangkap Laut (Yellowfin)');
-                        setFormHargaSatuan(65000);
-                        setFormQty(1);
-                      } else {
-                        setFormPlantation('PUSAT JAKARTA');
-                        setFormAkun('Kas Umum Koperasi (Non-Anggota)');
-                        setFormSkuName('');
-                        setFormHargaSatuan(0);
-                        setFormJumlah(500000);
-                      }
-                    }}
+                    onChange={(e: any) => handleReferalChange(e.target.value as 'KOPERASI' | 'PROJECT')}
                     className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors font-medium text-stone-900"
                   >
                     <option value="KOPERASI">KOPERASI</option>
@@ -1423,68 +1675,65 @@ export const TransactionModule: React.FC = () => {
               {/* 3. ENTITAS / PROJECT & 4. JENIS TRANSAKSI */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-stone-800 font-semibold mb-1 flex items-center gap-1.5">
-                    <Building className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>3. Entitas / Project *</span>
-                  </label>
-                  {formReferal === 'PROJECT' ? (
-                    <select
-                      value={formPlantation}
-                      onChange={(e) => {
-                        const entity = e.target.value;
-                        setFormPlantation(entity);
-                        // Auto-set first commodity product for this project
-                        const prods = projectProductsMap[entity];
-                        if (prods && prods.length > 0) {
-                          setFormSkuName(prods[0].name);
-                          setFormHargaSatuan(prods[0].defaultPrice);
-                        }
-                      }}
-                      className="w-full px-3 py-2 bg-amber-50/60 border border-amber-300 rounded-lg focus:outline-hidden focus:border-amber-700 focus:bg-white transition-colors font-semibold text-stone-900"
-                    >
-                      <option value="TRADING IKAN">TRADING IKAN</option>
-                      <option value="PERTANIAN">PERTANIAN</option>
-                      <option value="GARAM">GARAM</option>
-                      <option value="MINYAK MERAH">MINYAK MERAH</option>
-                      <option value="PLYWOOD">PLYWOOD</option>
-                      <option value="DISTRIBUTOR MEATSHOP">DISTRIBUTOR MEATSHOP</option>
-                      <option value="SUPPLIER MBG">SUPPLIER MBG</option>
-                      <option value="KAMPUNG HAJI">KAMPUNG HAJI</option>
-                    </select>
-                  ) : (
-                    <select
-                      value={formPlantation}
-                      onChange={(e) => setFormPlantation(e.target.value)}
-                      className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors font-semibold text-stone-900"
-                    >
-                      <option value="PUSAT JAKARTA">PUSAT JAKARTA</option>
-                      <option value="CABANG JAWA BARAT">CABANG JAWA BARAT</option>
-                      <option value="CABANG JAWA TIMUR">CABANG JAWA TIMUR</option>
-                      <option value="CABANG JAWA TENGAH">CABANG JAWA TENGAH</option>
-                      <option value="CABANG SUMATERA">CABANG SUMATERA</option>
-                    </select>
-                  )}
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-stone-800 font-semibold flex items-center gap-1.5">
+                      <Building className="w-3.5 h-3.5 text-emerald-800" />
+                      <span>3. Entitas / Project *</span>
+                    </label>
+                    {isLoadingAreas ? (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+                      </span>
+                    ) : areaError ? (
+                      <span className="text-[10px] text-rose-600 flex items-center gap-1">
+                        <AlertCircle className="w-2.5 h-2.5" />
+                        <span>Gagal memuat</span>
+                        <button
+                          type="button"
+                          onClick={() => fetchAreaOptions(formReferal)}
+                          className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
+                        >
+                          Coba lagi
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-stone-500 font-mono font-medium">
+                        {areaOptions.length} entitas
+                      </span>
+                    )}
+                  </div>
+                  <select
+                    value={formPlantation}
+                    onChange={(e) => handlePlantationChange(e.target.value)}
+                    disabled={isLoadingAreas}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-hidden transition-colors font-semibold text-stone-900 ${
+                      formReferal === 'PROJECT'
+                        ? 'bg-amber-50/60 border-amber-300 focus:border-amber-700 focus:bg-white'
+                        : 'bg-stone-50 border-stone-300 focus:border-emerald-700 focus:bg-white'
+                    } ${isLoadingAreas ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  >
+                    <option value="">-- Pilih Entitas / Project --</option>
+                    {areaOptions.map((area) => (
+                      <option key={area} value={area}>
+                        {area}
+                      </option>
+                    ))}
+                  </select>
                   <span className="text-[10px] text-stone-500 mt-0.5 block">
-                    Masuk ke kolom: <code>area_name</code>
+                    Masuk ke kolom: <code>area_name</code> (Filtered by <code>referral_type = '{formReferal}'</code>)
                   </span>
                 </div>
 
                 <div>
-                  <label className="block text-stone-800 font-semibold mb-1 flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>4. Jenis Transaksi *</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-stone-800 font-semibold flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-emerald-800" />
+                      <span>4. Jenis Transaksi *</span>
+                    </label>
+                  </div>
                   <select
                     value={formJenis}
-                    onChange={(e: any) => {
-                      const newJenis = e.target.value as 'MASUK' | 'KELUAR';
-                      setFormJenis(newJenis);
-                      if (newJenis === 'MASUK') {
-                        setFormKategori(formReferal === 'PROJECT' ? 'Penjualan Komoditas Riil' : 'Simpanan Pokok Anggota');
-                      } else {
-                        setFormKategori(formReferal === 'PROJECT' ? 'Pembelian Bahan Baku / Komoditas' : 'Biaya Operasional Kantor');
-                      }
-                    }}
+                    onChange={(e: any) => handleJenisChange(e.target.value as 'MASUK' | 'KELUAR')}
                     className={`w-full px-3 py-2 border rounded-lg focus:outline-hidden font-bold transition-colors ${
                       formJenis === 'MASUK'
                         ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
@@ -1503,44 +1752,108 @@ export const TransactionModule: React.FC = () => {
               {/* 5. KATEGORI & 6. SUMBER DANA */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-stone-800 font-semibold mb-1 flex items-center gap-1.5">
-                    <Briefcase className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>5. Kategori *</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-stone-800 font-semibold flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5 text-emerald-800" />
+                      <span>5. Kategori *</span>
+                    </label>
+                    {isLoadingCategories ? (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+                      </span>
+                    ) : categoryError ? (
+                      <span className="text-[10px] text-rose-600 flex items-center gap-1">
+                        <AlertCircle className="w-2.5 h-2.5" />
+                        <span>Gagal memuat</span>
+                        <button
+                          type="button"
+                          onClick={() => fetchCategoriesForType(formJenis)}
+                          className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
+                        >
+                          Coba lagi
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-stone-500 font-mono font-medium">
+                        {categoryOptionsList.length} kategori
+                      </span>
+                    )}
+                  </div>
                   <select
                     value={formKategori}
                     onChange={(e) => setFormKategori(e.target.value)}
-                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors"
+                    disabled={isLoadingCategories}
+                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
+                      isLoadingCategories ? 'opacity-70 cursor-not-allowed' : ''
+                    }`}
                   >
-                    {categoryOptions.map((cat) => (
+                    <option value="">-- Pilih Kategori Transaksi --</option>
+                    {categoryOptionsList.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>
                     ))}
                   </select>
                   <span className="text-[10px] text-stone-500 mt-0.5 block">
-                    Masuk ke kolom: <code>category_name</code>
+                    Masuk ke kolom: <code>category_name</code> (Filtered by <code>type = '{formJenis}'</code>)
                   </span>
                 </div>
 
                 <div>
-                  <label className="block text-stone-800 font-semibold mb-1 flex items-center gap-1.5">
-                    <Wallet className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>6. Sumber Dana *</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-stone-800 font-semibold flex items-center gap-1.5">
+                      <Wallet className="w-3.5 h-3.5 text-emerald-800" />
+                      <span>6. Sumber Dana *</span>
+                    </label>
+                    {isLoadingBanks ? (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+                      </span>
+                    ) : bankError ? (
+                      <span className="text-[10px] text-rose-600 flex items-center gap-1">
+                        <AlertCircle className="w-2.5 h-2.5" />
+                        <span>Gagal memuat</span>
+                        <button
+                          type="button"
+                          onClick={() => fetchBankAccountsForArea(formPlantation)}
+                          className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
+                        >
+                          Coba lagi
+                        </button>
+                      </span>
+                    ) : !formPlantation ? (
+                      <span className="text-[10px] text-amber-700 font-medium">Pilih entitas dahulu</span>
+                    ) : (
+                      <span className="text-[10px] text-stone-500 font-mono font-medium">
+                        {bankOptions.length} rekening
+                      </span>
+                    )}
+                  </div>
                   <select
                     value={formMetodeBayar}
                     onChange={(e) => setFormMetodeBayar(e.target.value)}
-                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors"
+                    disabled={isLoadingBanks || !formPlantation || bankOptions.length === 0}
+                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
+                      isLoadingBanks || !formPlantation || bankOptions.length === 0 ? 'opacity-70 cursor-not-allowed bg-stone-100' : ''
+                    }`}
                   >
-                    {availableBankAccounts.map((acc) => (
-                      <option key={acc} value={acc}>
-                        {acc}
-                      </option>
-                    ))}
+                    {!formPlantation ? (
+                      <option value="">Pilih Entitas/Project terlebih dahulu</option>
+                    ) : bankOptions.length === 0 && !isLoadingBanks ? (
+                      <option value="">Tidak ada sumber dana terdaftar untuk entitas ini</option>
+                    ) : (
+                      <>
+                        <option value="">-- Pilih Rekening / Sumber Dana --</option>
+                        {bankOptions.map((acc) => (
+                          <option key={acc} value={acc}>
+                            {acc}
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
                   <span className="text-[10px] text-stone-500 mt-0.5 block">
-                    Masuk ke kolom: <code>payment_method</code>
+                    Masuk ke: <code>payment_method</code> (Dari <code>areas.bank_account_1, 2, 3</code>)
                   </span>
                 </div>
               </div>
@@ -1620,29 +1933,59 @@ export const TransactionModule: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {/* 11.1 NAMA PRODUK */}
                     <div className="sm:col-span-1">
-                      <label className="block text-[11px] text-stone-800 font-semibold mb-1">
-                        11.1 Nama Produk *
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] text-stone-800 font-semibold">
+                          11.1 Komoditas / SKU *
+                        </label>
+                        {isLoadingProjectProducts ? (
+                          <span className="flex items-center gap-1 text-[10px] text-amber-700 font-medium">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+                          </span>
+                        ) : productError ? (
+                          <span className="text-[10px] text-rose-600 flex items-center gap-1">
+                            <AlertCircle className="w-2.5 h-2.5" />
+                            <span>Gagal</span>
+                            <button
+                              type="button"
+                              onClick={() => fetchProductsForProject(formPlantation)}
+                              className="underline font-semibold ml-0.5 text-amber-800 hover:text-amber-950"
+                            >
+                              Coba lagi
+                            </button>
+                          </span>
+                        ) : !formPlantation ? (
+                          <span className="text-[10px] text-amber-700 font-medium">Pilih entitas dahulu</span>
+                        ) : (
+                          <span className="text-[10px] text-emerald-800 font-mono font-medium">
+                            {projectProducts.length} produk
+                          </span>
+                        )}
+                      </div>
                       <select
                         value={formSkuName}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFormSkuName(val);
-                          const matched = availableProductsForProject.find((p) => p.name === val);
-                          if (matched) {
-                            setFormHargaSatuan(matched.defaultPrice);
-                          }
-                        }}
-                        className="w-full px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg focus:outline-hidden text-xs text-stone-900 font-medium"
+                        onChange={(e) => handleSkuNameChange(e.target.value)}
+                        disabled={isLoadingProjectProducts || !formPlantation || projectProducts.length === 0}
+                        className={`w-full px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg focus:outline-hidden text-xs text-stone-900 font-medium ${
+                          isLoadingProjectProducts || !formPlantation || projectProducts.length === 0 ? 'opacity-70 cursor-not-allowed bg-stone-100' : ''
+                        }`}
                       >
-                        {availableProductsForProject.map((p) => (
-                          <option key={p.name} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))}
+                        {!formPlantation ? (
+                          <option value="">Pilih Entitas/Project terlebih dahulu</option>
+                        ) : projectProducts.length === 0 && !isLoadingProjectProducts ? (
+                          <option value="">Tidak ada produk terdaftar untuk entitas ini</option>
+                        ) : (
+                          <>
+                            <option value="">-- Pilih Komoditas / SKU --</option>
+                            {projectProducts.map((p) => (
+                              <option key={p.sku_code || p.id} value={p.sku_name}>
+                                {p.sku_code ? `[${p.sku_code}] ` : ''}{p.sku_name} ({formatRupiah(p.defaultPrice)}/{p.unit})
+                              </option>
+                            ))}
+                          </>
+                        )}
                       </select>
                       <span className="text-[10px] text-amber-800 mt-0.5 block">
-                        Masuk ke: <code>product_name</code>
+                        Relasi: <code>public.products.group_name = '{formPlantation}'</code>
                       </span>
                     </div>
 

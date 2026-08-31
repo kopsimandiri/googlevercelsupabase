@@ -292,7 +292,7 @@ export interface MemberDbRecord {
   updated_at?: string;
 }
 
-// 6. products (9 kolom)
+// 6. products (9-15 kolom)
 export interface ProductDbRecord {
   id: string;
   sku_code: string;
@@ -301,6 +301,14 @@ export interface ProductDbRecord {
   group_name: string;
   subgroup?: string;
   brand?: string;
+  grade?: string;
+  packaging?: string;
+  availability?: string;
+  moq?: number;
+  supply_capacity?: string;
+  default_price?: number;
+  price?: number;
+  unit?: string;
   created_at?: string;
   updated_at?: string;
 }
