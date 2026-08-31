@@ -299,15 +299,15 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
 }
 
 /**
- * Maps TransactionRecord to Supabase public.transactions (19+ columns)
+ * Maps TransactionRecord to Supabase public.transactions (19 columns)
  */
 export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord>): any {
   const idVal = trx.id || `T${Date.now()}`;
   const nowStr = new Date().toISOString();
-  const currentUser = authService.getCurrentUser();
 
+  // Exactly matches the 19 standard columns of public.transactions
+  // Note: 'id' is omitted from payload so PostgreSQL auto-assigns nextval('transactions_id_seq')
   return {
-    id: idVal,
     transaction_no: idVal,
     transaction_date: trx.tanggal || nowStr.split('T')[0],
     referral_type: trx.referal || 'KOPERASI',
@@ -324,11 +324,6 @@ export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord
     customer_name: trx.customer_id || '',
     qty: cleanNumeric(trx.qty || 1),
     price: cleanNumeric(trx.harga_satuan || 0),
-    actor_user_id: currentUser?.id && currentUser.id.length === 36 ? currentUser.id : null,
-    actor_name: trx.login_as || currentUser?.username || currentUser?.role || 'ADMIN',
-    is_posted: true,
-    is_void: false,
-    created_at: nowStr,
     updated_at: nowStr,
   };
 }
@@ -692,14 +687,52 @@ export const transactionService = {
       try {
         const dbRow = mapTransactionRecordToSupabaseRow(newRecord);
         if (isEdit) {
-          const { error } = await client.from(TRANSACTIONS_TABLE_NAME).update(dbRow).eq('id', trxId);
-          if (!error) savedToSupabase = true;
+          const { error } = await client
+            .from(TRANSACTIONS_TABLE_NAME)
+            .update(dbRow)
+            .eq('transaction_no', trxId);
+
+          if (error) {
+            console.error('Supabase update transaction error:', error);
+            return {
+              success: false,
+              id: trxId,
+              error: `Gagal memperbarui data di Supabase (tabel ${TRANSACTIONS_TABLE_NAME}): ${error.message}`,
+            };
+          }
+          savedToSupabase = true;
         } else {
-          const { error } = await client.from(TRANSACTIONS_TABLE_NAME).insert([dbRow]);
-          if (!error) savedToSupabase = true;
+          const { error } = await client
+            .from(TRANSACTIONS_TABLE_NAME)
+            .insert([dbRow]);
+
+          if (error) {
+            console.error('Supabase insert transaction error:', error);
+            // Revert in-memory and local cache
+            list.shift();
+            inMemoryTransactions = list;
+            try {
+              if (typeof localStorage !== 'undefined') {
+                localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+              }
+            } catch {
+              // ignore
+            }
+            return {
+              success: false,
+              id: trxId,
+              error: `Gagal menyimpan transaksi ke database Supabase: ${error.message}`,
+            };
+          }
+          savedToSupabase = true;
         }
-      } catch (err) {
-        console.warn('Supabase transaction mutation fallback:', err);
+      } catch (err: any) {
+        console.error('Supabase transaction mutation exception:', err);
+        return {
+          success: false,
+          id: trxId,
+          error: `Terjadi kendala koneksi database Supabase: ${err?.message || String(err)}`,
+        };
       }
     }
 
@@ -734,9 +767,13 @@ export const transactionService = {
     const client = getSupabaseClient();
     if (client) {
       try {
-        const { error } = await client.from(TRANSACTIONS_TABLE_NAME).delete().eq('id', id);
+        const { error } = await client
+          .from(TRANSACTIONS_TABLE_NAME)
+          .delete()
+          .eq('transaction_no', id);
+
         if (error) {
-          await client.from(TRANSACTIONS_TABLE_NAME).delete().eq('transaction_no', id);
+          console.warn('Supabase delete transaction warning:', error);
         }
       } catch (err) {
         console.warn('Supabase delete transaction fallback:', err);

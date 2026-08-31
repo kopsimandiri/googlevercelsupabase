@@ -79,6 +79,9 @@ export const TransactionModule: React.FC = () => {
   const [viewingTrx, setViewingTrx] = useState<TransactionRecord | null>(null);
   const [viewingProofSignedUrl, setViewingProofSignedUrl] = useState<string | null>(null);
   const [isLoadingProofSignedUrl, setIsLoadingProofSignedUrl] = useState<boolean>(false);
+  const [quickProofTrx, setQuickProofTrx] = useState<TransactionRecord | null>(null);
+  const [quickProofUrl, setQuickProofUrl] = useState<string | null>(null);
+  const [isLoadingQuickProof, setIsLoadingQuickProof] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
   const [activeSqlTab, setActiveSqlTab] = useState<'transactions' | 'storage'>('transactions');
@@ -373,6 +376,22 @@ export const TransactionModule: React.FC = () => {
       isMounted = false;
     };
   }, [viewingTrx]);
+
+  const handleOpenQuickProof = async (t: TransactionRecord) => {
+    setQuickProofTrx(t);
+    setQuickProofUrl(null);
+    if (t.filelink) {
+      setIsLoadingQuickProof(true);
+      try {
+        const url = await getSignedProofUrl(t.filelink);
+        setQuickProofUrl(url);
+      } catch {
+        setQuickProofUrl(null);
+      } finally {
+        setIsLoadingQuickProof(false);
+      }
+    }
+  };
 
   const handleOpenAddModal = () => {
     setEditingTrx(null);
@@ -893,15 +912,15 @@ export const TransactionModule: React.FC = () => {
                       {t.filelink ? (
                         <button
                           type="button"
-                          onClick={() => setViewingTrx(t)}
-                          className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-medium underline"
-                          title={`Lihat Bukti: ${t.filelink}`}
+                          onClick={() => handleOpenQuickProof(t)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md text-[11px] font-semibold transition-all shadow-2xs hover:shadow-xs hover:border-emerald-400"
+                          title={`Klik untuk melihat lampiran bukti transfer (${t.filelink})`}
                         >
-                          <Paperclip className="w-3.5 h-3.5" />
-                          <span>Lihat</span>
+                          <Paperclip className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Lihat Bukti</span>
                         </button>
                       ) : (
-                        <span className="text-stone-400">-</span>
+                        <span className="text-stone-300 font-mono text-[11px]">-</span>
                       )}
                     </td>
                     <td className="py-3 px-3 text-center">
@@ -1083,6 +1102,124 @@ export const TransactionModule: React.FC = () => {
 
             <div className="pt-2 flex justify-end">
               <Button variant="outline" size="sm" onClick={() => setViewingTrx(null)}>
+                Tutup
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Proof Preview Modal */}
+      {quickProofTrx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-5 space-y-4 max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-800">
+                  <Paperclip className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-sm">Lampiran Bukti Transaksi</h3>
+                  <span className="text-[11px] text-stone-500 font-mono">
+                    ID: {quickProofTrx.id} • {formatDateIndo(quickProofTrx.tanggal)}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setQuickProofTrx(null);
+                  setQuickProofUrl(null);
+                }}
+                className="p-1 text-stone-400 hover:text-stone-700 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 text-xs">
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-stone-500 block text-[11px]">Kategori & Akun:</span>
+                  <span className="font-semibold text-stone-800 block truncate">{quickProofTrx.kategori}</span>
+                  <span className="text-[10px] text-stone-500 block font-mono truncate">{quickProofTrx.akun || '-'}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-stone-500 block text-[11px]">Nominal:</span>
+                  <span className="font-bold text-emerald-950 text-sm font-serif block">
+                    {formatRupiah(quickProofTrx.jumlah)}
+                  </span>
+                  <Badge variant={quickProofTrx.jenis === 'MASUK' ? 'success' : 'danger'} size="sm">
+                    {quickProofTrx.jenis}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="bg-stone-900 rounded-xl overflow-hidden min-h-64 flex items-center justify-center relative p-3 border border-stone-800">
+                {isLoadingQuickProof ? (
+                  <div className="flex flex-col items-center gap-2 text-stone-400 py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
+                    <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti_transfer)...</span>
+                  </div>
+                ) : quickProofUrl ? (
+                  <img
+                    src={quickProofUrl}
+                    alt={`Bukti Transaksi ${quickProofTrx.id}`}
+                    className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
+                  />
+                ) : (
+                  <div className="text-center p-6 text-stone-400 space-y-2">
+                    <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+                    <p className="text-xs text-stone-300">File tersimpan di bucket storage <code>bukti_transfer</code>:</p>
+                    <code className="text-[10px] text-emerald-400 bg-stone-950 px-2 py-1 rounded block break-all font-mono">
+                      {quickProofTrx.filelink}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenQuickProof(quickProofTrx)}
+                      className="mt-2 text-xs text-emerald-400 hover:underline inline-block font-semibold"
+                    >
+                      Coba muat ulang URL
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-[11px] text-stone-500 flex items-center justify-between px-1">
+                <span className="truncate max-w-[260px] font-mono text-[10px]">Path: {quickProofTrx.filelink}</span>
+                {quickProofUrl && (
+                  <a
+                    href={quickProofUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-semibold underline text-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Buka Ukuran Penuh</span>
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-stone-100 flex justify-between items-center">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const trx = quickProofTrx;
+                  setQuickProofTrx(null);
+                  setViewingTrx(trx);
+                }}
+              >
+                Detail Lengkap Transaksi
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setQuickProofTrx(null);
+                  setQuickProofUrl(null);
+                }}
+              >
                 Tutup
               </Button>
             </div>

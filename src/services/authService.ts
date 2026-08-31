@@ -128,15 +128,24 @@ export const authService = {
    */
   async signIn(credentials: AuthCredentials | { email?: string; identifier?: string; password: string }): Promise<UserSession> {
     const rawIdentifier = (credentials as any).identifier || (credentials as any).email || '';
-    const cleanEmail = rawIdentifier.trim();
+    let cleanEmail = rawIdentifier.trim();
     const { password } = credentials;
     const client = getSupabaseClient();
 
     if (!cleanEmail) {
-      throw new Error('Email akun pengurus wajib diisi.');
+      throw new Error('Email atau username akun pengurus wajib diisi.');
     }
     if (!password) {
       throw new Error('Password wajib diisi.');
+    }
+
+    // Auto-map username 'admin' to standard administrative email format if no @ domain provided
+    if (!cleanEmail.includes('@')) {
+      if (cleanEmail.toLowerCase() === 'admin') {
+        cleanEmail = 'admin@kopsim.id';
+      } else {
+        cleanEmail = `${cleanEmail.toLowerCase()}@kopsim.id`;
+      }
     }
 
     // Clear any previous member session

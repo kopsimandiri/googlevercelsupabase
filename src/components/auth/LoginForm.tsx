@@ -229,7 +229,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
               htmlFor="admin-email"
               className="block text-xs font-semibold text-stone-700 mb-1.5 uppercase tracking-wider"
             >
-              Email Akun Pengurus / Direksi
+              Email atau Username Pengurus
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-400">
@@ -237,11 +237,11 @@ export const LoginForm: React.FC<LoginFormProps> = ({
               </div>
               <input
                 id="admin-email"
-                type="email"
+                type="text"
                 required
                 value={adminEmail}
                 onChange={(e) => setAdminEmail(e.target.value)}
-                placeholder="koperasi.simandiri@gmail.com"
+                placeholder="admin@kopsim.id atau admin"
                 className="w-full pl-10 pr-3.5 py-2.5 bg-stone-50/80 border border-stone-300 rounded-lg text-sm text-stone-900 placeholder:text-stone-400 focus:outline-hidden focus:ring-2 focus:ring-amber-600 focus:bg-white transition-all"
               />
             </div>
