@@ -47,11 +47,17 @@ export async function fetchMemberFromSupabase(memberNoOrId: string): Promise<KTA
   const client = getSupabaseClient();
   if (client) {
     try {
-      const { data, error } = await client
+      let query = client
         .from('members')
-        .select('member_no, id, full_name, status, work_area, registered_at, avatar_url, created_at')
-        .or(`member_no.eq.${cleanId},id.eq.${cleanId},username.eq.${cleanId}`)
-        .limit(1);
+        .select('member_no, id, full_name, status, work_area, registered_at, avatar_url, created_at');
+
+      if (/^\d+$/.test(cleanId)) {
+        query = query.or(`member_no.eq.${cleanId},username.eq.${cleanId},id.eq.${cleanId}`);
+      } else {
+        query = query.or(`member_no.eq.${cleanId},username.eq.${cleanId}`);
+      }
+
+      const { data, error } = await query.limit(1);
 
       if (!error && data && data.length > 0) {
         const row = data[0];

@@ -265,19 +265,28 @@ export const authService = {
 
       // 2. Direct secure query against public.members table
       try {
-        const { data: memberRows, error: searchErr } = await client
+        let query = client
           .from('members')
-          .select('id, member_no, registered_at, full_name, gender, province, city, address, occupation, username, birth_date, birth_place, nik, work_area, legacy_password_hash, status')
-          .or(`username.ilike.${cleanUsername},member_no.ilike.${cleanUsername},id.ilike.${cleanUsername}`)
-          .limit(5);
+          .select('id, member_no, registered_at, full_name, gender, province, city, address, occupation, username, birth_date, birth_place, nik, work_area, legacy_password_hash, status');
+
+        // Check if cleanUsername is numeric (e.g. searching by bigint id)
+        const isNumeric = /^\d+$/.test(cleanUsername);
+        if (isNumeric) {
+          query = query.or(`username.ilike.${cleanUsername},member_no.ilike.${cleanUsername},nik.eq.${cleanUsername},id.eq.${cleanUsername}`);
+        } else {
+          query = query.or(`username.ilike.${cleanUsername},member_no.ilike.${cleanUsername},nik.eq.${cleanUsername}`);
+        }
+
+        const { data: memberRows, error: searchErr } = await query.limit(5);
 
         if (!searchErr && memberRows && memberRows.length > 0) {
           const target = cleanUsername.toLowerCase();
           const matchedRaw = memberRows.find((m: any) => {
             const u = (m.username || '').trim().toLowerCase();
             const n = (m.member_no || '').trim().toLowerCase();
-            const i = (m.id || '').trim().toLowerCase();
-            return u === target || n === target || i === target;
+            const nik = (m.nik || '').trim().toLowerCase();
+            const i = String(m.id || '').trim().toLowerCase();
+            return u === target || n === target || nik === target || i === target;
           });
 
           if (matchedRaw) {
@@ -286,8 +295,8 @@ export const authService = {
               throw new Error('Status keanggotaan Anda sedang tidak aktif. Silakan hubungi pengurus.');
             }
 
-            const storedHash = String(m.legacy_password_hash || '').trim();
-            // Strict match against stored password hash (no fallback strings)
+            const storedHash = String(m.legacy_password_hash || (m as any).password || '').trim();
+            // Strict match against stored password hash
             const isValid = storedHash !== '' && (cleanPassword === storedHash);
 
             if (isValid) {
@@ -313,6 +322,8 @@ export const authService = {
               };
 
               safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+              sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+              localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
               return memberSession;
             } else {
               throw new Error('Password anggota yang Anda masukkan tidak sesuai.');

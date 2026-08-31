@@ -645,12 +645,14 @@ export const memberService = {
     const client = getSupabaseClient();
     if (client) {
       try {
-        // Direct query to Supabase public.members by ID, member_no, or username
-        const { data, error } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .select('*')
-          .or(`id.ilike.%${cleanId}%,member_no.ilike.%${cleanId}%,username.ilike.%${cleanId}%,full_name.ilike.%${cleanId}%`)
-          .limit(1);
+        // Direct query to Supabase public.members by member_no, username, full_name, or numeric ID
+        let query = client.from(MEMBERS_TABLE_NAME).select('*');
+        if (/^\d+$/.test(cleanId)) {
+          query = query.or(`member_no.ilike.%${cleanId}%,username.ilike.%${cleanId}%,full_name.ilike.%${cleanId}%,id.eq.${cleanId}`);
+        } else {
+          query = query.or(`member_no.ilike.%${cleanId}%,username.ilike.%${cleanId}%,full_name.ilike.%${cleanId}%`);
+        }
+        const { data, error } = await query.limit(1);
 
         if (!error && data && data.length > 0) {
           return mapSupabaseMemberRowToMemberRecord(data[0]);

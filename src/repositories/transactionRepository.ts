@@ -67,10 +67,14 @@ export const transactionRepository = {
     }
 
     try {
-      const { error } = await client
-        .from('transactions')
-        .delete()
-        .or(`id.eq.${id},transaction_no.eq.${id}`);
+      const isNum = /^\d+$/.test(id);
+      let query = client.from('transactions').delete();
+      if (isNum) {
+        query = query.or(`id.eq.${id},transaction_no.eq.${id}`);
+      } else {
+        query = query.eq('transaction_no', id);
+      }
+      const { error } = await query;
       return { success: !error, error };
     } catch (err) {
       return { success: false, error: err };
