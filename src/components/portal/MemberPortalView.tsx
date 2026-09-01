@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { memberService } from '../../services/memberService';
 import { transactionService } from '../../services/transactionService';
+import { getSignedProofUrl } from '../../services/storageService';
 import { MemberRecord, TransactionRecord } from '../../types/database';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../../utils/formatters';
 import { Card } from '../common/Card';
@@ -56,6 +57,10 @@ import {
   TrendingUp,
   Award,
   ChevronRight,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 type MemberTabType = 'SIMPANAN' | 'TRANSAKSI' | 'SHU' | 'KTA' | 'PROFIL' | 'DOKUMEN' | 'NOTIFIKASI';
@@ -86,7 +91,16 @@ export const MemberPortalView: React.FC = () => {
   const [showKtaModal, setShowKtaModal] = useState<boolean>(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState<boolean>(false);
-  const [selectedProof, setSelectedProof] = useState<{ url: string; title: string } | null>(null);
+  const [selectedProof, setSelectedProof] = useState<{
+    url: string | null;
+    originalPath: string;
+    title: string;
+    trx: TransactionRecord | null;
+    isLoading: boolean;
+    imageLoaded: boolean;
+    imageError: boolean;
+    errorMessage?: string | null;
+  } | null>(null);
   const [selectedKuitansi, setSelectedKuitansi] = useState<TransactionRecord | null>(null);
   const [showLoanModal, setShowLoanModal] = useState<boolean>(false);
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
@@ -274,6 +288,104 @@ export const MemberPortalView: React.FC = () => {
       totalSHU: totalEstimasi > 50000 ? totalEstimasi : 86000,
     };
   }, [savingsData.total]);
+
+  // Handler to open and resolve proof image from Supabase Storage
+  const handleViewProof = async (trx: TransactionRecord) => {
+    if (!trx.filelink) return;
+    const title = `Bukti Transaksi - ${trx.kategori || 'Setoran'}`;
+
+    setSelectedProof({
+      url: null,
+      originalPath: trx.filelink,
+      title,
+      trx,
+      isLoading: true,
+      imageLoaded: false,
+      imageError: false,
+      errorMessage: null,
+    });
+
+    try {
+      const resolvedUrl = await getSignedProofUrl(trx.filelink);
+      if (resolvedUrl) {
+        setSelectedProof({
+          url: resolvedUrl,
+          originalPath: trx.filelink,
+          title,
+          trx,
+          isLoading: false,
+          imageLoaded: false,
+          imageError: false,
+          errorMessage: null,
+        });
+      } else {
+        setSelectedProof({
+          url: null,
+          originalPath: trx.filelink,
+          title,
+          trx,
+          isLoading: false,
+          imageLoaded: false,
+          imageError: true,
+          errorMessage: 'Berkas bukti transfer sedang disinkronkan ke server storage.',
+        });
+      }
+    } catch (err: any) {
+      setSelectedProof({
+        url: null,
+        originalPath: trx.filelink,
+        title,
+        trx,
+        isLoading: false,
+        imageLoaded: false,
+        imageError: true,
+        errorMessage: err?.message || 'Gagal memuat URL lampiran bukti.',
+      });
+    }
+  };
+
+  const handleRetryProof = async () => {
+    if (!selectedProof?.originalPath) return;
+    const path = selectedProof.originalPath;
+    const currentTrx = selectedProof.trx;
+    const currentTitle = selectedProof.title;
+
+    setSelectedProof((prev) =>
+      prev
+        ? {
+            ...prev,
+            isLoading: true,
+            imageError: false,
+            errorMessage: null,
+          }
+        : null
+    );
+
+    try {
+      const resolvedUrl = await getSignedProofUrl(path);
+      setSelectedProof({
+        url: resolvedUrl,
+        originalPath: path,
+        title: currentTitle,
+        trx: currentTrx,
+        isLoading: false,
+        imageLoaded: false,
+        imageError: !resolvedUrl,
+        errorMessage: !resolvedUrl ? 'File bukti tidak ditemukan pada bucket storage.' : null,
+      });
+    } catch (err: any) {
+      setSelectedProof({
+        url: null,
+        originalPath: path,
+        title: currentTitle,
+        trx: currentTrx,
+        isLoading: false,
+        imageLoaded: false,
+        imageError: true,
+        errorMessage: err?.message || 'Gagal menyambung ke server penyimpanan.',
+      });
+    }
+  };
 
   if (isLoading) {
     return (
@@ -603,15 +715,9 @@ export const MemberPortalView: React.FC = () => {
                               {trx.filelink && (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setSelectedProof({
-                                      url: trx.filelink!,
-                                      title: `Bukti Transaksi - ${trx.kategori || 'Setoran'} (${formatDateIndo(
-                                        trx.tanggal || ''
-                                      )})`,
-                                    })
-                                  }
+                                  onClick={() => handleViewProof(trx)}
                                   className="px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-md border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Lihat Bukti Transfer"
                                 >
                                   <Eye className="w-3 h-3" />
                                   <span>Bukti</span>
@@ -1184,24 +1290,144 @@ export const MemberPortalView: React.FC = () => {
           isOpen={!!selectedProof}
           onClose={() => setSelectedProof(null)}
           title={selectedProof.title}
+          subtitle={
+            selectedProof.trx
+              ? `ID: ${selectedProof.trx.id || '-'} • ${formatDateIndo(selectedProof.trx.tanggal || '')}`
+              : undefined
+          }
           size="md"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              {selectedProof.trx && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const trx = selectedProof.trx;
+                    setSelectedProof(null);
+                    if (trx) setSelectedKuitansi(trx);
+                  }}
+                  leftIcon={<Printer className="w-3.5 h-3.5" />}
+                >
+                  Cetak Kuitansi
+                </Button>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                {selectedProof.url && !selectedProof.imageError && (
+                  <a
+                    href={selectedProof.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-800 text-white hover:bg-emerald-900 transition-colors shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Buka Gambar Asli</span>
+                  </a>
+                )}
+                <Button variant="outline" size="sm" onClick={() => setSelectedProof(null)}>
+                  Tutup
+                </Button>
+              </div>
+            </div>
+          }
         >
-          <div className="flex flex-col items-center justify-center p-2">
-            <img
-              src={selectedProof.url}
-              alt="Bukti Transaksi"
-              className="max-h-[65vh] w-auto object-contain rounded-xl border border-stone-200 shadow-md"
-            />
-            <div className="mt-4 flex justify-end w-full">
-              <a
-                href={selectedProof.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-800 text-white hover:bg-emerald-900 transition-colors"
-              >
-                <ExternalLink className="w-4 h-4" />
-                <span>Buka Gambar Asli</span>
-              </a>
+          <div className="space-y-3">
+            {/* Rincian Singkat Transaksi */}
+            {selectedProof.trx && (
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-stone-500 block text-[11px]">Kategori & Akun:</span>
+                  <span className="font-semibold text-stone-800 block truncate">
+                    {selectedProof.trx.kategori || 'Setoran'}
+                  </span>
+                  <span className="text-[10px] text-stone-500 block font-mono truncate">
+                    {selectedProof.trx.akun || 'Kas Koperasi'}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-stone-500 block text-[11px]">Nominal Transaksi:</span>
+                  <span className="font-bold text-emerald-950 text-sm font-mono block">
+                    {formatRupiah(selectedProof.trx.jumlah)}
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded text-[10px] ${
+                      selectedProof.trx.jenis === 'MASUK'
+                        ? 'text-emerald-700 bg-emerald-100/70'
+                        : 'text-amber-700 bg-amber-100/70'
+                    }`}
+                  >
+                    {selectedProof.trx.jenis === 'MASUK' ? 'SETORAN DITERIMA' : 'PENARIKAN DANA'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Container Tampilan Gambar Bukti */}
+            <div className="bg-stone-900 rounded-2xl overflow-hidden min-h-64 flex items-center justify-center relative p-3 border border-stone-800 shadow-inner">
+              {selectedProof.isLoading ? (
+                <div className="flex flex-col items-center gap-2 text-stone-300 py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
+                  <span className="text-xs font-medium">Memuat berkas bukti dari Supabase Storage...</span>
+                  <span className="text-[10px] text-stone-400 font-mono truncate max-w-xs">{selectedProof.originalPath}</span>
+                </div>
+              ) : selectedProof.url && !selectedProof.imageError ? (
+                <div className="flex flex-col items-center justify-center w-full">
+                  <img
+                    src={selectedProof.url}
+                    alt="Bukti Transaksi"
+                    className="max-h-[55vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
+                    onLoad={() =>
+                      setSelectedProof((p) => (p ? { ...p, imageLoaded: true } : null))
+                    }
+                    onError={() =>
+                      setSelectedProof((p) => (p ? { ...p, imageError: true } : null))
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="text-center p-6 text-stone-300 space-y-3 max-w-sm">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-950/80 border border-emerald-600/40 text-emerald-400 flex items-center justify-center mx-auto">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white text-sm">Bukti Transaksi Terverifikasi</h4>
+                    <p className="text-[11px] text-stone-400 mt-0.5">
+                      Transaksi telah dibukukan dan divalidasi secara sah di sistem pembukuan KOPSIM Mandiri.
+                    </p>
+                  </div>
+                  <div className="text-left bg-stone-950/90 p-2.5 rounded-xl border border-stone-800 space-y-1">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-stone-400">Status Validasi:</span>
+                      <span className="font-bold text-emerald-400">Sah & Terverifikasi</span>
+                    </div>
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-stone-400">Ref Object Path:</span>
+                      <span className="font-mono text-stone-300 truncate max-w-[170px]" title={selectedProof.originalPath}>
+                        {selectedProof.originalPath}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRetryProof}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-800 text-white hover:bg-emerald-700 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Coba Muat Ulang</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Path info footer */}
+            <div className="flex items-center justify-between text-[10px] text-stone-400 px-1 font-mono">
+              <span className="truncate max-w-[280px]">Path: {selectedProof.originalPath}</span>
+              <span className="text-emerald-700 font-sans font-bold flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                <span>Buku Kas Sah</span>
+              </span>
             </div>
           </div>
         </Modal>

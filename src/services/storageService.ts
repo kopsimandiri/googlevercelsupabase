@@ -349,27 +349,52 @@ export async function deleteTransactionProof(storagePath: string): Promise<{ suc
 export async function getSignedProofUrl(storagePath: string, expiresInSeconds: number = 3600): Promise<string | null> {
   if (!storagePath) return null;
 
+  const trimmed = storagePath.trim();
+  if (!trimmed) return null;
+
   // If already a full URL or data URI, return as-is
-  if (storagePath.startsWith('http://') || storagePath.startsWith('https://') || storagePath.startsWith('data:') || storagePath.startsWith('/assets/')) {
-    return storagePath;
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('/assets/') ||
+    trimmed.startsWith('blob:')
+  ) {
+    return trimmed;
   }
 
   const client = getSupabaseClient();
   if (!client) return null;
 
+  // Clean path: remove leading slashes and optional bucket name prefix
+  let cleanPath = trimmed.replace(/^\/+/, '');
+  if (cleanPath.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
+    cleanPath = cleanPath.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
+  }
+
   try {
     const { data, error } = await client.storage
       .from(BUKTI_TRANSFER_BUCKET)
-      .createSignedUrl(storagePath, expiresInSeconds);
+      .createSignedUrl(cleanPath, expiresInSeconds);
 
-    if (error) {
-      console.warn('Gagal membuat signed URL bukti transfer:', error.message);
+    if (error || !data?.signedUrl) {
+      // Fallback: try getPublicUrl in case bucket is public or signed URL fails
+      const { data: pubData } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(cleanPath);
+      if (pubData?.publicUrl) {
+        return pubData.publicUrl;
+      }
+      console.warn('Gagal membuat signed URL bukti transfer:', error?.message);
       return null;
     }
 
-    return data?.signedUrl || null;
+    return data.signedUrl;
   } catch (err) {
     console.warn('Exception createSignedUrl:', err);
-    return null;
+    try {
+      const { data: pubData } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(cleanPath);
+      return pubData?.publicUrl || null;
+    } catch {
+      return null;
+    }
   }
 }
