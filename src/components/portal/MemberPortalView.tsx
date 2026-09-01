@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { memberService } from '../../services/memberService';
 import { transactionService } from '../../services/transactionService';
-import { getSignedProofUrl } from '../../services/storageService';
+import { getSignedProofUrl, getPublicProofUrl, isImageFile, isPdfFile } from '../../services/storageService';
 import { MemberRecord, TransactionRecord } from '../../types/database';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../../utils/formatters';
 import { Card } from '../common/Card';
@@ -293,32 +293,33 @@ export const MemberPortalView: React.FC = () => {
   const handleViewProof = async (trx: TransactionRecord) => {
     if (!trx.filelink) return;
     const title = `Bukti Transaksi - ${trx.kategori || 'Setoran'}`;
+    const resolvedUrl = getPublicProofUrl(trx.filelink);
 
     setSelectedProof({
-      url: null,
+      url: resolvedUrl || null,
       originalPath: trx.filelink,
       title,
       trx,
-      isLoading: true,
+      isLoading: !resolvedUrl,
       imageLoaded: false,
       imageError: false,
       errorMessage: null,
     });
 
-    try {
-      const resolvedUrl = await getSignedProofUrl(trx.filelink);
-      if (resolvedUrl) {
+    if (!resolvedUrl) {
+      try {
+        const url = await getSignedProofUrl(trx.filelink);
         setSelectedProof({
-          url: resolvedUrl,
+          url: url || null,
           originalPath: trx.filelink,
           title,
           trx,
           isLoading: false,
           imageLoaded: false,
-          imageError: false,
-          errorMessage: null,
+          imageError: !url,
+          errorMessage: !url ? 'Berkas bukti transfer sedang disinkronkan ke server storage.' : null,
         });
-      } else {
+      } catch (err: any) {
         setSelectedProof({
           url: null,
           originalPath: trx.filelink,
@@ -327,20 +328,9 @@ export const MemberPortalView: React.FC = () => {
           isLoading: false,
           imageLoaded: false,
           imageError: true,
-          errorMessage: 'Berkas bukti transfer sedang disinkronkan ke server storage.',
+          errorMessage: err?.message || 'Gagal memuat URL lampiran bukti.',
         });
       }
-    } catch (err: any) {
-      setSelectedProof({
-        url: null,
-        originalPath: trx.filelink,
-        title,
-        trx,
-        isLoading: false,
-        imageLoaded: false,
-        imageError: true,
-        errorMessage: err?.message || 'Gagal memuat URL lampiran bukti.',
-      });
     }
   };
 

@@ -10,6 +10,9 @@ import {
   uploadTransactionProof,
   deleteTransactionProof,
   getSignedProofUrl,
+  getPublicProofUrl,
+  isImageFile,
+  isPdfFile,
   ProofOptimizationResult,
   STORAGE_BUKTI_TRANSFER_SQL_DDL,
 } from '../../services/storageService';
@@ -884,7 +887,7 @@ export const TransactionModule: React.FC = () => {
         }
 
         uploadedStoragePath = uploadRes.path;
-        finalFileUrl = uploadRes.path;
+        finalFileUrl = uploadRes.publicUrl || uploadRes.path || '';
       }
 
       // 2. Prepare Transaction payload with storage reference in file_url (filelink)
@@ -1281,17 +1284,63 @@ export const TransactionModule: React.FC = () => {
                     </td>
                     <td className="py-3 px-3 text-center">
                       {t.filelink ? (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenQuickProof(t)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md text-[11px] font-semibold transition-all shadow-2xs hover:shadow-xs hover:border-emerald-400"
-                          title={`Klik untuk melihat lampiran bukti transfer (${t.filelink})`}
-                        >
-                          <Paperclip className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>Lihat Bukti</span>
-                        </button>
+                        (() => {
+                          const pubUrl = getPublicProofUrl(t.filelink);
+                          const isImg = isImageFile(t.filelink) || isImageFile(pubUrl);
+                          const isPdf = isPdfFile(t.filelink) || isPdfFile(pubUrl);
+
+                          if (isImg) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenQuickProof(t)}
+                                className="group relative inline-flex items-center gap-1.5 p-1 bg-stone-100 hover:bg-emerald-50 text-emerald-800 border border-stone-200 hover:border-emerald-300 rounded-lg text-[11px] font-semibold transition-all shadow-2xs cursor-pointer"
+                                title="Klik untuk memperbesar bukti gambar"
+                              >
+                                <img
+                                  src={pubUrl || t.filelink}
+                                  alt="Bukti"
+                                  className="w-7 h-7 object-cover rounded border border-stone-200 group-hover:scale-105 transition-transform"
+                                  onError={(e) => {
+                                    // Fallback to icon if thumbnail fails
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                                <span className="hidden sm:inline pr-1">Bukti</span>
+                              </button>
+                            );
+                          }
+
+                          if (isPdf) {
+                            return (
+                              <a
+                                href={pubUrl || t.filelink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-md text-[11px] font-semibold transition-colors"
+                                title="Buka Dokumen PDF di Tab Baru"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Lihat Lampiran</span>
+                              </a>
+                            );
+                          }
+
+                          return (
+                            <a
+                              href={pubUrl || t.filelink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 rounded-md text-[11px] font-semibold transition-colors"
+                              title="Buka Berkas Lampiran"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Lihat Lampiran</span>
+                            </a>
+                          );
+                        })()
                       ) : (
-                        <span className="text-stone-300 font-mono text-[11px]">-</span>
+                        <span className="text-stone-400 italic text-[11px]">Tidak ada lampiran</span>
                       )}
                     </td>
                     <td className="py-3 px-3 text-center">

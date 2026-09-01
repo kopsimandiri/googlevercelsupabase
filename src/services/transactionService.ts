@@ -3,6 +3,7 @@ import { CustomerRecord, SupplierRecord, TransactionRecord } from '../types/data
 import { cleanRupiah } from '../utils/formatters';
 import { authService } from './authService';
 import { auditService } from './auditService';
+import { extractStoragePath, getPublicProofUrl } from './storageService';
 
 const STORAGE_TRX_KEY = 'KOPSIM_TRANSACTIONS_DATA';
 export const TRANSACTIONS_TABLE_NAME = 'transactions';
@@ -1301,6 +1302,117 @@ export const transactionService = {
 
   getSuppliers(): SupplierRecord[] {
     return DEFAULT_SUPPLIERS;
+  },
+
+  /**
+   * Preview migration of legacy file_url values to complete Public URLs
+   */
+  async previewLegacyFileUrlMigration(): Promise<{
+    totalWithFile: number;
+    needsMigrationCount: number;
+    items: Array<{
+      id: string;
+      transaction_no: string;
+      old_file_url: string;
+      extracted_path: string | null;
+      new_public_url: string;
+    }>;
+  }> {
+    const client = getSupabaseClient();
+    if (!client) {
+      return { totalWithFile: 0, needsMigrationCount: 0, items: [] };
+    }
+
+    const { data, error } = await client
+      .from(TRANSACTIONS_TABLE_NAME)
+      .select('id, transaction_no, file_url')
+      .not('file_url', 'is', null)
+      .neq('file_url', '');
+
+    if (error || !data) {
+      console.error('Error fetching transactions for migration preview:', error);
+      return { totalWithFile: 0, needsMigrationCount: 0, items: [] };
+    }
+
+    const items: Array<{
+      id: string;
+      transaction_no: string;
+      old_file_url: string;
+      extracted_path: string | null;
+      new_public_url: string;
+    }> = [];
+
+    for (const row of data) {
+      const oldUrl = row.file_url || '';
+      const path = extractStoragePath(oldUrl);
+      const newUrl = getPublicProofUrl(oldUrl);
+
+      // Check if it's already in pure public URL format
+      const isAlreadyPublic =
+        oldUrl.startsWith('https://') &&
+        oldUrl.includes('/storage/v1/object/public/') &&
+        !oldUrl.includes('?token=');
+
+      if (!isAlreadyPublic && newUrl && newUrl !== oldUrl) {
+        items.push({
+          id: String(row.id || row.transaction_no),
+          transaction_no: row.transaction_no,
+          old_file_url: oldUrl,
+          extracted_path: path,
+          new_public_url: newUrl,
+        });
+      }
+    }
+
+    return {
+      totalWithFile: data.length,
+      needsMigrationCount: items.length,
+      items,
+    };
+  },
+
+  /**
+   * Executes batch update to migrate legacy file_url to clean Public URLs
+   */
+  async executeLegacyFileUrlMigration(): Promise<{
+    success: boolean;
+    updatedCount: number;
+    errors: string[];
+  }> {
+    const preview = await this.previewLegacyFileUrlMigration();
+    const client = getSupabaseClient();
+    if (!client) {
+      return { success: false, updatedCount: 0, errors: ['Supabase client not initialized'] };
+    }
+
+    let updatedCount = 0;
+    const errors: string[] = [];
+
+    for (const item of preview.items) {
+      try {
+        const { error } = await client
+          .from(TRANSACTIONS_TABLE_NAME)
+          .update({
+            file_url: item.new_public_url,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('transaction_no', item.transaction_no);
+
+        if (error) {
+          errors.push(`Gagal update TRX ${item.transaction_no}: ${error.message}`);
+        } else {
+          updatedCount++;
+        }
+      } catch (err: any) {
+        errors.push(`Exception TRX ${item.transaction_no}: ${err?.message}`);
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      updatedCount,
+      errors,
+    };
   },
 };
 

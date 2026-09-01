@@ -101,6 +101,7 @@ export interface ProofOptimizationResult {
 export interface StorageUploadResult {
   success: boolean;
   path?: string;
+  publicUrl?: string;
   error?: string;
 }
 
@@ -269,6 +270,7 @@ export function generateStorageProofPath(
 
 /**
  * Uploads optimized proof blob to Supabase Storage bucket 'bukti_transfer'
+ * and returns both the storage path and the permanent publicUrl.
  */
 export async function uploadTransactionProof(
   fileBlob: Blob | File,
@@ -283,10 +285,16 @@ export async function uploadTransactionProof(
     };
   }
 
+  // Ensure clean path without leading slashes
+  let cleanPath = storagePath.trim().replace(/^\/+/, '');
+  if (cleanPath.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
+    cleanPath = cleanPath.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
+  }
+
   try {
     const { data, error } = await client.storage
       .from(BUKTI_TRANSFER_BUCKET)
-      .upload(storagePath, fileBlob, {
+      .upload(cleanPath, fileBlob, {
         contentType: mimeType,
         cacheControl: '3600',
         upsert: false,
@@ -303,9 +311,16 @@ export async function uploadTransactionProof(
       };
     }
 
+    const savedPath = data?.path || cleanPath;
+
+    // STEP 2.1: Always get public URL for Public Bucket
+    const { data: pubData } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(savedPath);
+    const publicUrl = pubData?.publicUrl || '';
+
     return {
       success: true,
-      path: data?.path || storagePath,
+      path: savedPath,
+      publicUrl,
     };
   } catch (err: any) {
     console.error('STORAGE UPLOAD EXCEPTION:', err);
@@ -320,7 +335,7 @@ export async function uploadTransactionProof(
  * Rollback helper: deletes an uploaded object from storage if transaction database insertion fails.
  */
 export async function deleteTransactionProof(storagePath: string): Promise<{ success: boolean; error?: string }> {
-  if (!storagePath || storagePath.startsWith('http://') || storagePath.startsWith('https://') || storagePath.startsWith('data:')) {
+  if (!storagePath || storagePath.startsWith('data:') || storagePath.startsWith('blob:')) {
     return { success: true };
   }
 
@@ -329,8 +344,10 @@ export async function deleteTransactionProof(storagePath: string): Promise<{ suc
     return { success: false, error: 'Supabase client tidak tersedia.' };
   }
 
+  const cleanPath = extractStoragePath(storagePath) || storagePath;
+
   try {
-    const { error } = await client.storage.from(BUKTI_TRANSFER_BUCKET).remove([storagePath]);
+    const { error } = await client.storage.from(BUKTI_TRANSFER_BUCKET).remove([cleanPath]);
     if (error) {
       console.warn('Gagal menghapus file storage (rollback):', error.message);
       return { success: false, error: error.message };
@@ -343,58 +360,126 @@ export async function deleteTransactionProof(storagePath: string): Promise<{ suc
 }
 
 /**
- * Creates a temporary signed URL for private bucket objects so they can be viewed safely.
- * Returns null or direct URL if already a full link.
+ * Extracts pure storage path from any filelink format:
+ * - Direct path: "2026/08/TRX-001.webp"
+ * - Signed URL: "https://...supabase.co/storage/v1/object/sign/bukti_transfer/2026/08/TRX-001.webp?token=..."
+ * - Public URL: "https://...supabase.co/storage/v1/object/public/bukti_transfer/2026/08/TRX-001.webp"
  */
-export async function getSignedProofUrl(storagePath: string, expiresInSeconds: number = 3600): Promise<string | null> {
-  if (!storagePath) return null;
-
-  const trimmed = storagePath.trim();
+export function extractStoragePath(rawLinkOrUrl?: string | null): string | null {
+  if (!rawLinkOrUrl) return null;
+  const trimmed = rawLinkOrUrl.trim();
   if (!trimmed) return null;
 
-  // If already a full URL or data URI, return as-is
+  // If already a data URI or local asset
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
+    return trimmed;
+  }
+
+  try {
+    // If it's a URL
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const urlObj = new URL(trimmed);
+      let pathname = urlObj.pathname; // e.g. /storage/v1/object/public/bukti_transfer/2026/08/TRX-001.webp
+      
+      // Remove query parameters (?token=...)
+      // Match pattern /storage/v1/object/(public|sign|authenticated)/bukti_transfer/(.*)
+      const storageMatch = pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\/(.*)/);
+      if (storageMatch && storageMatch[2]) {
+        return decodeURIComponent(storageMatch[2]);
+      }
+
+      // If generic path ending with bucket
+      const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
+      if (bucketIdx !== -1) {
+        return decodeURIComponent(pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2));
+      }
+
+      return trimmed;
+    }
+  } catch {
+    // If URL parsing fails, treat as path
+  }
+
+  // Remove leading slashes and bucket prefix if any
+  let clean = trimmed.replace(/^\/+/, '');
+  if (clean.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
+    clean = clean.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
+  }
+  return clean;
+}
+
+/**
+ * Resolves consistent Public URL from any storage reference (path, legacy signed URL, or public URL).
+ */
+export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
+  if (!storagePathOrUrl) return '';
+  const trimmed = storagePathOrUrl.trim();
+  if (!trimmed) return '';
+
+  // Return immediately if data URI or local asset
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
+    return trimmed;
+  }
+
+  // If already a valid public Supabase URL without sign/token
   if (
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('data:') ||
-    trimmed.startsWith('/assets/') ||
-    trimmed.startsWith('blob:')
+    trimmed.startsWith('https://') &&
+    trimmed.includes('/storage/v1/object/public/') &&
+    !trimmed.includes('?token=')
   ) {
     return trimmed;
   }
 
   const client = getSupabaseClient();
-  if (!client) return null;
+  const path = extractStoragePath(trimmed);
+  if (!path) return '';
 
-  // Clean path: remove leading slashes and optional bucket name prefix
-  let cleanPath = trimmed.replace(/^\/+/, '');
-  if (cleanPath.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
-    cleanPath = cleanPath.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
-  }
-
-  try {
-    const { data, error } = await client.storage
-      .from(BUKTI_TRANSFER_BUCKET)
-      .createSignedUrl(cleanPath, expiresInSeconds);
-
-    if (error || !data?.signedUrl) {
-      // Fallback: try getPublicUrl in case bucket is public or signed URL fails
-      const { data: pubData } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(cleanPath);
-      if (pubData?.publicUrl) {
-        return pubData.publicUrl;
-      }
-      console.warn('Gagal membuat signed URL bukti transfer:', error?.message);
-      return null;
-    }
-
-    return data.signedUrl;
-  } catch (err) {
-    console.warn('Exception createSignedUrl:', err);
-    try {
-      const { data: pubData } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(cleanPath);
-      return pubData?.publicUrl || null;
-    } catch {
-      return null;
+  if (client) {
+    const { data } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(path);
+    if (data?.publicUrl) {
+      return data.publicUrl;
     }
   }
+
+  // Fallback direct URL builder if client is loading
+  const baseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+  if (baseUrl) {
+    return `${baseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${BUKTI_TRANSFER_BUCKET}/${path}`;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Checks if a file path or URL points to an image format.
+ */
+export function isImageFile(urlOrPath?: string | null): boolean {
+  if (!urlOrPath) return false;
+  const clean = urlOrPath.split('?')[0].toLowerCase();
+  return (
+    clean.endsWith('.jpg') ||
+    clean.endsWith('.jpeg') ||
+    clean.endsWith('.png') ||
+    clean.endsWith('.webp') ||
+    clean.endsWith('.gif') ||
+    clean.endsWith('.svg') ||
+    clean.startsWith('data:image/')
+  );
+}
+
+/**
+ * Checks if a file path or URL points to a PDF document.
+ */
+export function isPdfFile(urlOrPath?: string | null): boolean {
+  if (!urlOrPath) return false;
+  const clean = urlOrPath.split('?')[0].toLowerCase();
+  return clean.endsWith('.pdf') || clean.startsWith('data:application/pdf');
+}
+
+/**
+ * Legacy compatibility alias that returns the public URL.
+ */
+export async function getSignedProofUrl(storagePath: string): Promise<string | null> {
+  const url = getPublicProofUrl(storagePath);
+  return url || null;
 }
