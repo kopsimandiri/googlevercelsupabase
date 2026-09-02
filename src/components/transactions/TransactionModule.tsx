@@ -1400,30 +1400,7 @@ export const TransactionModule: React.FC = () => {
                           );
                         })()
                       ) : (
-                        <div className="flex flex-col items-center gap-1">
-                          <span className="text-stone-400 italic text-[11px]">Tidak ada lampiran</span>
-                          {canEdit && (
-                            <button
-                              type="button"
-                              onClick={() => handleSearchBucketForTrx(t)}
-                              disabled={isSearchingStorageId === t.id}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-md text-[10px] font-bold shadow-2xs hover:shadow-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer border border-amber-600"
-                              title={`Cari nama file di bucket storage untuk nomor ${t.id}`}
-                            >
-                              {isSearchingStorageId === t.id ? (
-                                <>
-                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                  <span>Mencari...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Search className="w-2.5 h-2.5" />
-                                  <span>Cari di Bucket</span>
-                                </>
-                              )}
-                            </button>
-                          )}
-                        </div>
+                        <span className="text-stone-400 font-medium text-xs">-</span>
                       )}
                     </td>
                     <td className="py-3 px-3 text-center">

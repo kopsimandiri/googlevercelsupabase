@@ -447,8 +447,8 @@ export async function uploadTransactionProof(
 }
 
 /**
- * Searches for a proof file in the storage bucket based on transaction_no.
- * Looks in root, year/month subdirectories, and candidate buckets.
+ * Searches for a proof file in the storage bucket based on transaction_no (e.g. T260421001).
+ * Looks in root, year/month subdirectories, parsed YYMMDD subfolders, and all storage buckets.
  */
 export async function findProofInBucketByTransactionNo(
   transactionNo: string,
@@ -467,53 +467,100 @@ export async function findProofInBucketByTransactionNo(
 
   const cleanTrxNo = transactionNo.trim();
   const searchPattern = cleanTrxNo.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const lowerTrxNo = cleanTrxNo.toLowerCase();
 
-  const activeBucket = await resolveActiveBucket();
-  const bucketList = Array.from(new Set([activeBucket, ...CANDIDATE_BUCKETS]));
+  // 1. Resolve all active and existing buckets in Supabase Storage
+  let bucketList = Array.from(new Set([_resolvedActiveBucket || BUKTI_TRANSFER_BUCKET, ...CANDIDATE_BUCKETS]));
+  try {
+    const { data: remoteBuckets } = await client.storage.listBuckets();
+    if (remoteBuckets && remoteBuckets.length > 0) {
+      const names = remoteBuckets.map((b) => b.name);
+      bucketList = Array.from(new Set([...bucketList, ...names]));
+    }
+  } catch {
+    // Ignore listBuckets failure if restricted
+  }
 
-  // Paths to inspect
-  const foldersToCheck: string[] = [''];
+  // 2. Build folder search list based on transaction_no format (e.g. T260421001 -> 2026-04-21)
+  const foldersToCheck: Set<string> = new Set(['', 'bukti_transfer', 'bukti', 'transaksi', 'transactions', 'uploads', 'proofs', 'proof']);
+
+  // Extract date from standard format like T260421001 or P260421001 (YYMMDD)
+  const idDateMatch = cleanTrxNo.match(/^[TPtp](\d{2})(\d{2})(\d{2})/);
+  if (idDateMatch) {
+    const yy = parseInt(idDateMatch[1], 10);
+    const mm = idDateMatch[2];
+    const dd = idDateMatch[3];
+    const fullYear = `20${String(yy).padStart(2, '0')}`;
+    foldersToCheck.add(`${fullYear}/${mm}`);
+    foldersToCheck.add(`${fullYear}/${mm}/${dd}`);
+    foldersToCheck.add(`${fullYear}-${mm}-${dd}`);
+    foldersToCheck.add(`${fullYear}_${mm}`);
+    foldersToCheck.add(fullYear);
+  }
+
+  // Also parse transactionDate if provided
   if (transactionDate) {
     const d = new Date(transactionDate);
     if (!isNaN(d.getTime())) {
       const yyyy = String(d.getFullYear());
       const mm = String(d.getMonth() + 1).padStart(2, '0');
-      foldersToCheck.unshift(`${yyyy}/${mm}`);
-      foldersToCheck.push(yyyy);
+      const dd = String(d.getDate()).padStart(2, '0');
+      foldersToCheck.add(`${yyyy}/${mm}`);
+      foldersToCheck.add(`${yyyy}/${mm}/${dd}`);
+      foldersToCheck.add(`${yyyy}-${mm}-${dd}`);
+      foldersToCheck.add(yyyy);
     }
   }
 
-  // Also add current year and recent years
+  // Add current and recent years
   const currentYear = new Date().getFullYear();
-  foldersToCheck.push(String(currentYear));
+  foldersToCheck.add(String(currentYear));
   for (let m = 1; m <= 12; m++) {
-    foldersToCheck.push(`${currentYear}/${String(m).padStart(2, '0')}`);
+    foldersToCheck.add(`${currentYear}/${String(m).padStart(2, '0')}`);
   }
 
   for (const bucket of bucketList) {
-    for (const folder of foldersToCheck) {
+    for (const folder of Array.from(foldersToCheck)) {
       try {
-        const { data: files, error } = await client.storage
+        // Attempt search with API search parameter first
+        let { data: files, error } = await client.storage
           .from(bucket)
           .list(folder, {
             limit: 100,
-            search: searchPattern,
+            search: cleanTrxNo,
             sortBy: { column: 'created_at', order: 'desc' },
           });
 
+        // Fallback: If no match with search param, list directory directly and match in JS
+        if (!error && (!files || files.length === 0)) {
+          const listRes = await client.storage
+            .from(bucket)
+            .list(folder, {
+              limit: 100,
+              sortBy: { column: 'created_at', order: 'desc' },
+            });
+          if (!listRes.error && listRes.data) {
+            files = listRes.data;
+          }
+        }
+
         if (!error && files && files.length > 0) {
-          // Look for direct or partial match on transactionNo
-          const match = files.find((f) => 
-            f.name.toLowerCase().includes(searchPattern.toLowerCase()) ||
-            f.name.toLowerCase().includes(cleanTrxNo.toLowerCase())
-          );
+          // Look for exact or substring match with transactionNo (e.g. T260421001.jpg, T260421001-xxx.webp)
+          const match = files.find((f) => {
+            const fNameLower = f.name.toLowerCase();
+            return (
+              fNameLower.includes(lowerTrxNo) ||
+              fNameLower.includes(searchPattern.toLowerCase()) ||
+              fNameLower.startsWith(lowerTrxNo)
+            );
+          });
 
           if (match) {
             const fullPath = folder ? `${folder}/${match.name}` : match.name;
             const { data: pubData } = client.storage.from(bucket).getPublicUrl(fullPath);
             const publicUrl = pubData?.publicUrl || '';
 
-            console.info(`[Storage] Found proof for ${transactionNo} at: ${bucket}/${fullPath}`);
+            console.info(`[Storage] Match found for ${transactionNo} at: ${bucket}/${fullPath}`);
             return {
               found: true,
               path: fullPath,
