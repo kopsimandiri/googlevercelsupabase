@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { transactionService, TransactionsMetaResult, TRANSACTIONS_SQL_DDL } from '../../services/transactionService';
+import { transactionService, TransactionsMetaResult, TRANSACTIONS_SQL_DDL, SplitCategoryItem } from '../../services/transactionService';
 import { masterDataService } from '../../services/masterDataService';
 import { memberService } from '../../services/memberService';
 import { productService, ProductItem } from '../../services/productService';
@@ -149,6 +149,38 @@ export const TransactionModule: React.FC = () => {
   const [formSkuName, setFormSkuName] = useState<string>('');
   const [formQty, setFormQty] = useState<number>(1);
   const [formHargaSatuan, setFormHargaSatuan] = useState<number>(0);
+
+  // Multi-Category Split State (1 Bukti Transfer -> Banyak Pos Pembukuan Transaksi)
+  const [isSplitMode, setIsSplitMode] = useState<boolean>(false);
+  const [splitItems, setSplitItems] = useState<SplitCategoryItem[]>([
+    { category_name: '', amount: 0, description: '' },
+    { category_name: '', amount: 0, description: '' },
+    { category_name: '', amount: 0, description: '' },
+  ]);
+
+  const handleAddSplitRow = () => {
+    setSplitItems((prev) => [...prev, { category_name: '', amount: 0, description: '' }]);
+  };
+
+  const handleRemoveSplitRow = (index: number) => {
+    if (splitItems.length <= 1) {
+      showToast('Minimal harus ada 1 baris pos kategori dalam mode split.', 'warning');
+      return;
+    }
+    setSplitItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateSplitRow = (index: number, field: keyof SplitCategoryItem, value: any) => {
+    setSplitItems((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  const totalSplitAmount = useMemo(() => {
+    return splitItems.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  }, [splitItems]);
 
   // 4 Cascading Dropdown States & Anti-Fail Trackers
   // Field 3: Entitas / Project (from public.areas where referral_type = formReferal)
@@ -762,6 +794,12 @@ export const TransactionModule: React.FC = () => {
 
   const handleOpenAddModal = () => {
     setEditingTrx(null);
+    setIsSplitMode(false);
+    setSplitItems([
+      { category_name: '', amount: 0, description: '' },
+      { category_name: '', amount: 0, description: '' },
+      { category_name: '', amount: 0, description: '' },
+    ]);
     setFormTanggal(new Date().toISOString().split('T')[0]);
     setFormReferal('KOPERASI');
     setFormPlantation('');
@@ -789,6 +827,7 @@ export const TransactionModule: React.FC = () => {
 
   const handleOpenEditModal = (t: TransactionRecord) => {
     setEditingTrx(t);
+    setIsSplitMode(false);
     setFormTanggal(t.tanggal);
     setFormReferal(t.referal);
     setFormPlantation(t.plantation);
@@ -868,6 +907,107 @@ export const TransactionModule: React.FC = () => {
 
   const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 1. SPLIT MODE HANDLER (1 Bukti Transfer -> Banyak Pos Transaksi)
+    if (!editingTrx && isSplitMode) {
+      if (!formPlantation) {
+        showToast('Silakan pilih Entitas / Project terlebih dahulu (Field 3).', 'error');
+        return;
+      }
+      if (!formMetodeBayar) {
+        showToast('Silakan pilih Rekening / Sumber Dana terlebih dahulu (Field 6).', 'error');
+        return;
+      }
+      if (splitItems.length === 0) {
+        showToast('Minimal harus ada 1 pos kategori dalam mode split.', 'error');
+        return;
+      }
+      const invalidSplit = splitItems.find((s) => !s.category_name || Number(s.amount) <= 0);
+      if (invalidSplit) {
+        showToast('Setiap baris split wajib memilih Kategori dan mengisi Nominal > Rp 0.', 'error');
+        return;
+      }
+      if (totalSplitAmount <= 0) {
+        showToast('Total nominal transaksi split harus lebih dari Rp 0.', 'error');
+        return;
+      }
+
+      setIsSubmitting(true);
+      let uploadedStoragePath: string | null = null;
+
+      try {
+        const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
+        const targetTrxId = await transactionService.generateTransactionId(formReferal, formTanggal);
+        let finalFileUrl = formFilelink;
+
+        // Upload single proof to Supabase Storage bucket 'bukti_transfer'
+        if (optimizedProof) {
+          if (!canUpload) {
+            showToast('Akses Ditolak: Hanya pengguna dengan hak ADMIN yang diizinkan mengunggah bukti transaksi.', 'error');
+            setIsSubmitting(false);
+            return;
+          }
+
+          const storagePath = generateStorageProofPath(targetTrxId, optimizedProof.extension, formTanggal);
+          const uploadRes = await uploadTransactionProof(
+            optimizedProof.file,
+            storagePath,
+            optimizedProof.mimeType
+          );
+
+          if (!uploadRes.success || !uploadRes.path) {
+            showToast(uploadRes.error || 'Gagal mengunggah file bukti transaksi ke Supabase Storage.', 'error');
+            setIsSubmitting(false);
+            return;
+          }
+
+          uploadedStoragePath = uploadRes.path;
+          finalFileUrl = uploadRes.publicUrl || uploadRes.path || '';
+        }
+
+        const res = await transactionService.saveSplitTransactions({
+          baseTrxId: targetTrxId,
+          tanggal: formTanggal,
+          referal: formReferal,
+          plantation: formPlantation,
+          jenis: formJenis,
+          metode_bayar: formMetodeBayar,
+          akun: finalAkun,
+          filelink: finalFileUrl,
+          customer_id: formCustomerId,
+          supplier_id: formSupplierId,
+          login_as: user?.name || role || 'ADMIN',
+          keterangan_umum: formKeterangan,
+          splits: splitItems,
+        });
+
+        if (!res.success) {
+          if (uploadedStoragePath) {
+            await deleteTransactionProof(uploadedStoragePath);
+          }
+          showToast(res.error || 'Gagal menyimpan transaksi split ke database.', 'error');
+          return;
+        }
+
+        showToast(
+          `Sukses membukukan ${res.count} pos transaksi (ID Induk: ${res.baseId}, Total: ${formatRupiah(totalSplitAmount)}) dengan 1 bukti transfer terhubung di Supabase Storage.`,
+          'success'
+        );
+        setIsFormOpen(false);
+        await executeSearch(true);
+        return;
+      } catch (err: any) {
+        if (uploadedStoragePath) {
+          await deleteTransactionProof(uploadedStoragePath);
+        }
+        showToast(err.message || 'Terjadi kesalahan saat memproses transaksi split.', 'error');
+        return;
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
+
+    // 2. SINGLE TRANSACTION HANDLER
     if (!formPlantation) {
       showToast('Silakan pilih Entitas / Project terlebih dahulu (Field 3).', 'error');
       return;
@@ -1298,7 +1438,15 @@ export const TransactionModule: React.FC = () => {
               <tbody className="divide-y divide-stone-100">
                 {transactions.map((t) => (
                   <tr key={t.id} className="hover:bg-stone-50/70">
-                    <td className="py-3 px-3 font-mono font-bold text-emerald-950">{t.id}</td>
+                    <td className="py-3 px-3 font-mono font-bold text-emerald-950">
+                      <div>{t.id}</div>
+                      {/[-_.]\d+$/.test(t.id) && (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded mt-0.5">
+                          <Layers className="w-2.5 h-2.5" />
+                          <span>Pos Split</span>
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-3 text-stone-600">{formatDateIndo(t.tanggal)}</td>
                     <td className="py-3 px-3">
                       <span className="font-semibold text-stone-800 block">{t.plantation}</span>
@@ -1940,136 +2088,305 @@ export const TransactionModule: React.FC = () => {
                 </div>
               </div>
 
-              {/* 5. KATEGORI & 6. SUMBER DANA */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-stone-800 font-semibold flex items-center gap-1.5">
-                      <Briefcase className="w-3.5 h-3.5 text-emerald-800" />
-                      <span>5. Kategori *</span>
-                    </label>
-                    {isLoadingCategories ? (
-                      <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
-                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+              {/* MODE SWITCHER: Transaksi Tunggal vs Multi-Kategori Split */}
+              {!editingTrx && formReferal === 'KOPERASI' && (
+                <div className="p-3 bg-gradient-to-r from-emerald-50 via-teal-50 to-stone-50 border border-emerald-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-emerald-800 shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-emerald-950 block">Mode Alokasi Pos Pembukuan</span>
+                      <span className="text-[10px] text-stone-600">
+                        {isSplitMode
+                          ? '1 Bukti Transfer (Foto) dialokasikan ke beberapa pos kategori transaksi'
+                          : '1 Transaksi Tunggal untuk 1 Pos Kategori'}
                       </span>
-                    ) : categoryError ? (
-                      <span className="text-[10px] text-rose-600 flex items-center gap-1">
-                        <AlertCircle className="w-2.5 h-2.5" />
-                        <span>Gagal memuat</span>
-                        <button
-                          type="button"
-                          onClick={() => fetchCategoriesForType(formJenis)}
-                          className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
-                        >
-                          Coba lagi
-                        </button>
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-stone-500 font-mono font-medium">
-                        {categoryOptionsList.length} kategori
-                      </span>
-                    )}
+                    </div>
                   </div>
-                  <select
-                    value={formKategori}
-                    onChange={(e) => setFormKategori(e.target.value)}
-                    disabled={isLoadingCategories}
-                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
-                      isLoadingCategories ? 'opacity-70 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    <option value="">-- Pilih Kategori Transaksi --</option>
-                    {categoryOptionsList.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-stone-500 mt-0.5 block">
-                    Masuk ke kolom: <code>category_name</code> (Filtered by <code>type = '{formJenis}'</code>)
-                  </span>
+                  <div className="flex items-center bg-white p-0.5 rounded-lg border border-emerald-300 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => setIsSplitMode(false)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                        !isSplitMode ? 'bg-emerald-700 text-white shadow-xs' : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Tunggal (1 Pos)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSplitMode(true)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
+                        isSplitMode ? 'bg-emerald-700 text-white shadow-xs' : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      <Layers className="w-3 h-3" />
+                      <span>Split Kategori ({splitItems.length} Pos)</span>
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-stone-800 font-semibold flex items-center gap-1.5">
-                      <Wallet className="w-3.5 h-3.5 text-emerald-800" />
-                      <span>6. Sumber Dana *</span>
-                    </label>
-                    {isLoadingBanks ? (
-                      <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
-                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
-                      </span>
-                    ) : bankError ? (
-                      <span className="text-[10px] text-rose-600 flex items-center gap-1">
-                        <AlertCircle className="w-2.5 h-2.5" />
-                        <span>Gagal memuat</span>
-                        <button
-                          type="button"
-                          onClick={() => fetchBankAccountsForArea(formPlantation)}
-                          className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
-                        >
-                          Coba lagi
-                        </button>
-                      </span>
-                    ) : !formPlantation ? (
-                      <span className="text-[10px] text-amber-700 font-medium">Pilih entitas dahulu</span>
-                    ) : (
-                      <span className="text-[10px] text-stone-500 font-mono font-medium">
-                        {bankOptions.length} rekening
-                      </span>
-                    )}
-                  </div>
-                  <select
-                    value={formMetodeBayar}
-                    onChange={(e) => setFormMetodeBayar(e.target.value)}
-                    disabled={isLoadingBanks || !formPlantation || bankOptions.length === 0}
-                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
-                      isLoadingBanks || !formPlantation || bankOptions.length === 0 ? 'opacity-70 cursor-not-allowed bg-stone-100' : ''
-                    }`}
-                  >
-                    {!formPlantation ? (
-                      <option value="">Pilih Entitas/Project terlebih dahulu</option>
-                    ) : bankOptions.length === 0 && !isLoadingBanks ? (
-                      <option value="">Tidak ada sumber dana terdaftar untuk entitas ini</option>
-                    ) : (
-                      <>
-                        <option value="">-- Pilih Rekening / Sumber Dana --</option>
-                        {bankOptions.map((acc) => (
-                          <option key={acc} value={acc}>
-                            {acc}
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                  <span className="text-[10px] text-stone-500 mt-0.5 block">
-                    Masuk ke: <code>payment_method</code> (Dari <code>areas.bank_account_1, 2, 3</code>)
-                  </span>
+              {/* 6. SUMBER DANA */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-stone-800 font-semibold flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>6. Sumber Dana / Rekening Bank *</span>
+                  </label>
+                  {isLoadingBanks ? (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                      <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+                    </span>
+                  ) : bankError ? (
+                    <span className="text-[10px] text-rose-600 flex items-center gap-1">
+                      <AlertCircle className="w-2.5 h-2.5" />
+                      <span>Gagal memuat</span>
+                      <button
+                        type="button"
+                        onClick={() => fetchBankAccountsForArea(formPlantation)}
+                        className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
+                      >
+                        Coba lagi
+                      </button>
+                    </span>
+                  ) : !formPlantation ? (
+                    <span className="text-[10px] text-amber-700 font-medium">Pilih entitas dahulu</span>
+                  ) : (
+                    <span className="text-[10px] text-stone-500 font-mono font-medium">
+                      {bankOptions.length} rekening
+                    </span>
+                  )}
                 </div>
+                <select
+                  value={formMetodeBayar}
+                  onChange={(e) => setFormMetodeBayar(e.target.value)}
+                  disabled={isLoadingBanks || !formPlantation || bankOptions.length === 0}
+                  className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
+                    isLoadingBanks || !formPlantation || bankOptions.length === 0 ? 'opacity-70 cursor-not-allowed bg-stone-100' : ''
+                  }`}
+                >
+                  {!formPlantation ? (
+                    <option value="">Pilih Entitas/Project terlebih dahulu</option>
+                  ) : bankOptions.length === 0 && !isLoadingBanks ? (
+                    <option value="">Tidak ada sumber dana terdaftar untuk entitas ini</option>
+                  ) : (
+                    <>
+                      <option value="">-- Pilih Rekening / Sumber Dana --</option>
+                      {bankOptions.map((acc) => (
+                        <option key={acc} value={acc}>
+                          {acc}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+                <span className="text-[10px] text-stone-500 mt-0.5 block">
+                  Masuk ke: <code>payment_method</code> (Dari <code>areas.bank_account_1, 2, 3</code>)
+                </span>
               </div>
 
-              {/* 7. TOTAL NOMINAL TRANSAKSI (Rp) - (Jika KOPERASI muncul biasa, Jika PROJECT otomatis dari 11.4) */}
-              {formReferal === 'KOPERASI' && (
-                <div className="p-3.5 bg-emerald-50/50 border border-emerald-200 rounded-xl">
-                  <label className="block text-emerald-950 font-bold text-xs mb-1">
-                    7. Total Nominal Transaksi (Rp) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 font-bold text-stone-500">Rp</span>
-                    <input
-                      type="number"
-                      min="1000"
-                      step="1000"
-                      required
-                      value={formJumlah}
-                      onChange={(e) => setFormJumlah(Number(e.target.value))}
-                      className="w-full pl-10 pr-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:border-emerald-700 font-mono font-bold text-base text-emerald-950"
-                    />
+              {/* SINGLE MODE: FIELD 5 KATEGORI & FIELD 7 NOMINAL */}
+              {!isSplitMode && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-stone-800 font-semibold flex items-center gap-1.5">
+                        <Briefcase className="w-3.5 h-3.5 text-emerald-800" />
+                        <span>5. Kategori *</span>
+                      </label>
+                      {isLoadingCategories ? (
+                        <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" /> Memuat...
+                        </span>
+                      ) : categoryError ? (
+                        <span className="text-[10px] text-rose-600 flex items-center gap-1">
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          <span>Gagal memuat</span>
+                          <button
+                            type="button"
+                            onClick={() => fetchCategoriesForType(formJenis)}
+                            className="underline font-semibold ml-0.5 text-emerald-700 hover:text-emerald-900"
+                          >
+                            Coba lagi
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-stone-500 font-mono font-medium">
+                          {categoryOptionsList.length} kategori
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      value={formKategori}
+                      onChange={(e) => setFormKategori(e.target.value)}
+                      disabled={isLoadingCategories}
+                      className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
+                        isLoadingCategories ? 'opacity-70 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      <option value="">-- Pilih Kategori Transaksi --</option>
+                      {categoryOptionsList.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-stone-500 mt-0.5 block">
+                      Masuk ke kolom: <code>category_name</code> (Filtered by <code>type = '{formJenis}'</code>)
+                    </span>
                   </div>
-                  <span className="text-[10px] text-emerald-800 mt-1 block">
-                    Masuk ke kolom: <code>amount</code> (Nilai: {formatRupiah(formJumlah)})
-                  </span>
+
+                  {formReferal === 'KOPERASI' && (
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-200 rounded-xl">
+                      <label className="block text-emerald-950 font-bold text-xs mb-1">
+                        7. Total Nominal Transaksi (Rp) *
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 font-bold text-stone-500">Rp</span>
+                        <input
+                          type="number"
+                          min="1000"
+                          step="1000"
+                          required
+                          value={formJumlah}
+                          onChange={(e) => setFormJumlah(Number(e.target.value))}
+                          className="w-full pl-10 pr-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:border-emerald-700 font-mono font-bold text-base text-emerald-950"
+                        />
+                      </div>
+                      <span className="text-[10px] text-emerald-800 mt-1 block">
+                        Masuk ke kolom: <code>amount</code> (Nilai: {formatRupiah(formJumlah)})
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SPLIT MODE: MULTI-CATEGORY BUILDER (1 BUKTI TRANSFER -> BANYAK POS KATEGORI) */}
+              {isSplitMode && !editingTrx && formReferal === 'KOPERASI' && (
+                <div className="p-4 bg-emerald-50/40 border-2 border-emerald-300 rounded-2xl space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-emerald-800" />
+                      <span className="text-xs font-bold text-emerald-950 uppercase tracking-wider">
+                        Alokasi Pos Kategori & Nominal (1 Bukti Transfer $\rightarrow$ {splitItems.length} Pos)
+                      </span>
+                    </div>
+                    <Badge variant="success" size="sm">
+                      Multi-Category Split
+                    </Badge>
+                  </div>
+
+                  <p className="text-[11px] text-stone-600">
+                    Satu bukti transfer (foto) akan diunggah <strong>1 kali ke Supabase Storage</strong> dan otomatis dihubungkan ke seluruh pos transaksi di bawah ini dengan penomoran sub-transaksi (contoh: <code>T251229001-1</code>, <code>T251229001-2</code>, <code>T251229001-3</code>).
+                  </p>
+
+                  <div className="space-y-2.5">
+                    {splitItems.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-white border border-stone-300 hover:border-emerald-400 rounded-xl shadow-2xs space-y-2 transition-all"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 bg-emerald-800 text-white font-mono font-bold text-xs rounded-md">
+                              Pos #{idx + 1}
+                            </span>
+                            <span className="text-[11px] font-semibold text-stone-700">
+                              {item.category_name || 'Pilih Kategori'}
+                            </span>
+                          </div>
+                          {splitItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSplitRow(idx)}
+                              className="text-stone-400 hover:text-rose-600 p-1 rounded-md transition-colors"
+                              title="Hapus baris pos ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                          {/* Kategori Dropdown */}
+                          <div className="sm:col-span-5">
+                            <label className="block text-[10px] text-stone-600 font-semibold mb-0.5">
+                              Kategori Transaksi *
+                            </label>
+                            <select
+                              value={item.category_name}
+                              onChange={(e) => handleUpdateSplitRow(idx, 'category_name', e.target.value)}
+                              required
+                              className="w-full px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg text-xs font-semibold text-stone-900 focus:outline-hidden focus:border-emerald-700 focus:bg-white"
+                            >
+                              <option value="">-- Pilih Kategori --</option>
+                              {categoryOptionsList.map((cat) => (
+                                <option key={cat} value={cat}>
+                                  {cat}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Nominal Input */}
+                          <div className="sm:col-span-4">
+                            <label className="block text-[10px] text-stone-600 font-semibold mb-0.5">
+                              Nominal Pos (Rp) *
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-2 top-1.5 text-xs font-bold text-stone-400">Rp</span>
+                              <input
+                                type="number"
+                                min="1000"
+                                step="1000"
+                                required
+                                placeholder="0"
+                                value={item.amount || ''}
+                                onChange={(e) => handleUpdateSplitRow(idx, 'amount', Number(e.target.value))}
+                                className="w-full pl-8 pr-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg text-xs font-mono font-bold text-emerald-950 focus:outline-hidden focus:border-emerald-700 focus:bg-white"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Keterangan Pos */}
+                          <div className="sm:col-span-3">
+                            <label className="block text-[10px] text-stone-600 font-semibold mb-0.5">
+                              Uraian Khusus Pos
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Catatan pos..."
+                              value={item.description || ''}
+                              onChange={(e) => handleUpdateSplitRow(idx, 'description', e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg text-xs text-stone-900 focus:outline-hidden focus:border-emerald-700 focus:bg-white"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 border-t border-emerald-200">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddSplitRow}
+                      leftIcon={<Plus className="w-3.5 h-3.5 text-emerald-700" />}
+                    >
+                      + Tambah Pos Kategori Baru
+                    </Button>
+
+                    {/* Total Akumulasi Bukti Transfer */}
+                    <div className="text-right w-full sm:w-auto bg-white p-2.5 rounded-xl border border-emerald-300 shadow-2xs">
+                      <span className="text-[10px] text-stone-500 block uppercase font-semibold">
+                        Total Nilai Bukti Transfer (Akumulasi {splitItems.length} Pos):
+                      </span>
+                      <span className="text-base font-bold text-emerald-950 font-serif">
+                        {formatRupiah(totalSplitAmount)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
 

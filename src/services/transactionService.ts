@@ -440,6 +440,32 @@ export interface TransactionSearchResult {
 
 let inMemoryTransactions: TransactionRecord[] | null = null;
 
+export interface SplitCategoryItem {
+  id?: string;
+  category_name: string;
+  amount: number;
+  description?: string;
+  sku_name?: string;
+  qty?: number;
+  harga_satuan?: number;
+}
+
+export interface SaveSplitTransactionsParams {
+  baseTrxId: string;
+  tanggal: string;
+  referal: 'KOPERASI' | 'PROJECT';
+  plantation: string;
+  jenis: 'MASUK' | 'KELUAR';
+  metode_bayar: string;
+  akun: string;
+  filelink: string;
+  customer_id?: string;
+  supplier_id?: string;
+  login_as?: string;
+  keterangan_umum?: string;
+  splits: SplitCategoryItem[];
+}
+
 export const transactionService = {
   getAllTransactionsRaw,
 
@@ -917,6 +943,164 @@ export const transactionService = {
     }
 
     return { success: true, id: trxId, source: savedToSupabase ? 'SUPABASE' : 'LOCAL' };
+  },
+
+  /**
+   * Menyimpan transaksi multi-kategori / split pos pembukuan dalam 1 kali proses
+   * Memecah 1 nomor transaksi induk (contoh: T251229001) menjadi sub-nomor unik (T251229001-1, T251229001-2, T251229001-3)
+   * dengan 1 bukti transfer (file_url) yang sama persis di Supabase Storage.
+   */
+  async saveSplitTransactions(
+    params: SaveSplitTransactionsParams
+  ): Promise<{ success: boolean; baseId: string; ids: string[]; error?: string; count: number }> {
+    const {
+      baseTrxId,
+      tanggal,
+      referal,
+      plantation,
+      jenis,
+      metode_bayar,
+      akun,
+      filelink,
+      customer_id = '',
+      supplier_id = '',
+      login_as = 'ADMIN',
+      keterangan_umum = '',
+      splits,
+    } = params;
+
+    if (!splits || splits.length === 0) {
+      return { success: false, baseId: baseTrxId, ids: [], error: 'Minimal 1 pos kategori harus ditentukan.', count: 0 };
+    }
+
+    const totalSplits = splits.length;
+    const newRecords: TransactionRecord[] = [];
+    const generatedIds: string[] = [];
+
+    let areaJenis: 'KOPERASI PUSAT' | 'KOPERASI CABANG' | 'PROJECT' = 'KOPERASI PUSAT';
+    if (referal === 'PROJECT') {
+      areaJenis = 'PROJECT';
+    } else if ((plantation || '').toUpperCase().includes('CABANG')) {
+      areaJenis = 'KOPERASI CABANG';
+    }
+
+    // Construct individual records
+    for (let i = 0; i < totalSplits; i++) {
+      const sp = splits[i];
+      const subTrxId = totalSplits === 1 ? baseTrxId : `${baseTrxId}-${i + 1}`;
+      generatedIds.push(subTrxId);
+
+      const splitDesc = totalSplits > 1
+        ? `[Split ${i + 1}/${totalSplits}] ${keterangan_umum ? keterangan_umum + ' - ' : ''}${sp.description || sp.category_name}`
+        : (sp.description || keterangan_umum || sp.category_name);
+
+      const itemQty = referal === 'PROJECT' ? (sp.qty || 1) : 1;
+      const itemPrice = referal === 'PROJECT' ? (sp.harga_satuan || sp.amount) : sp.amount;
+
+      const record: TransactionRecord = {
+        id: subTrxId,
+        tanggal: tanggal || new Date().toISOString().split('T')[0],
+        referal,
+        plantation: plantation || 'PUSAT JAKARTA',
+        jenis,
+        kategori: sp.category_name,
+        metode_bayar,
+        jumlah: sp.amount,
+        akun,
+        keterangan: splitDesc,
+        filelink,
+        sku_name: referal === 'PROJECT' ? (sp.sku_name || '') : '',
+        qty: itemQty,
+        harga_satuan: itemPrice,
+        customer_id,
+        supplier_id,
+        login_as,
+        logtime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        area_jenis: areaJenis,
+      };
+
+      newRecords.push(record);
+    }
+
+    // 1. Update in-memory & Local Storage
+    let list = this.getStoredTransactions();
+    // Prepend all new records
+    list = [...newRecords, ...list];
+    inMemoryTransactions = list;
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2. Audit Log
+    await auditService.logActivity(
+      'CREATE_TRANSACTION',
+      'transactions',
+      baseTrxId,
+      null,
+      {
+        baseId: baseTrxId,
+        splitCount: totalSplits,
+        ids: generatedIds,
+        categories: splits.map((s) => s.category_name),
+        totalAmount: splits.reduce((acc, curr) => acc + curr.amount, 0),
+        filelink,
+      }
+    );
+
+    // 3. Insert to Supabase public.transactions in single batch
+    let savedToSupabase = false;
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const dbRows = newRecords.map((r) => mapTransactionRecordToSupabaseRow(r));
+        const { error } = await client.from(TRANSACTIONS_TABLE_NAME).insert(dbRows);
+
+        if (error) {
+          console.error('Supabase batch insert split transactions error:', error);
+          // Revert in-memory
+          list = list.filter((item) => !generatedIds.includes(item.id));
+          inMemoryTransactions = list;
+          try {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(list));
+            }
+          } catch {
+            // ignore
+          }
+
+          return {
+            success: false,
+            baseId: baseTrxId,
+            ids: [],
+            error: `Gagal menyimpan ${totalSplits} pos split ke Supabase: ${error.message}`,
+            count: 0,
+          };
+        }
+
+        savedToSupabase = true;
+      } catch (err: any) {
+        console.error('Supabase split batch insert exception:', err);
+        return {
+          success: false,
+          baseId: baseTrxId,
+          ids: [],
+          error: `Kendala koneksi database saat menyimpan split transaksi: ${err?.message || String(err)}`,
+          count: 0,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      baseId: baseTrxId,
+      ids: generatedIds,
+      count: totalSplits,
+    };
   },
 
   async deleteTransaction(id: string): Promise<{ success: boolean; error?: string }> {

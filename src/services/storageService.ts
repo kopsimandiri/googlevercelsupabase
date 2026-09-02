@@ -583,8 +583,12 @@ export async function findProofInBucketByTransactionNo(
   if (!client) return { found: false };
 
   const cleanTrxNo = transactionNo.trim();
+  // Support split transaction IDs (e.g. T251229001-1 or T251229001_3 -> base T251229001)
+  const baseTrxNo = cleanTrxNo.replace(/[-_.]\d+$/, '');
   const searchPattern = cleanTrxNo.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const baseSearchPattern = baseTrxNo.replace(/[^a-zA-Z0-9_-]/g, '_');
   const lowerTrxNo = cleanTrxNo.toLowerCase();
+  const lowerBaseTrxNo = baseTrxNo.toLowerCase();
 
   // 1. Resolve all active and existing buckets in Supabase Storage
   let bucketList = Array.from(new Set([_resolvedActiveBucket || BUKTI_TRANSFER_BUCKET, ...CANDIDATE_BUCKETS]));
@@ -602,7 +606,7 @@ export async function findProofInBucketByTransactionNo(
   const foldersToCheck: Set<string> = new Set(['', 'bukti_transfer', 'bukti', 'transaksi', 'transactions', 'uploads', 'proofs', 'proof']);
 
   // Extract date from standard format like T260421001 or P260421001 (YYMMDD)
-  const idDateMatch = cleanTrxNo.match(/^[TPtp](\d{2})(\d{2})(\d{2})/);
+  const idDateMatch = (baseTrxNo || cleanTrxNo).match(/^[TPtp](\d{2})(\d{2})(\d{2})/);
   if (idDateMatch) {
     const yy = parseInt(idDateMatch[1], 10);
     const mm = idDateMatch[2];
@@ -667,8 +671,11 @@ export async function findProofInBucketByTransactionNo(
             const fNameLower = f.name.toLowerCase();
             return (
               fNameLower.includes(lowerTrxNo) ||
+              fNameLower.includes(lowerBaseTrxNo) ||
               fNameLower.includes(searchPattern.toLowerCase()) ||
-              fNameLower.startsWith(lowerTrxNo)
+              fNameLower.includes(baseSearchPattern.toLowerCase()) ||
+              fNameLower.startsWith(lowerTrxNo) ||
+              fNameLower.startsWith(lowerBaseTrxNo)
             );
           });
 
