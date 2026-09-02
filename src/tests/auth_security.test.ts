@@ -111,26 +111,26 @@ export function evaluateRlsPolicy(
     if (bucketId === 'bukti_transfer') {
       if (operation === 'SELECT') {
         // Public read policy: Anyone can view / render proof images
-        return { allowed: true, reason: 'Public read allowed for bukti_transfer bucket (bukti_transfer_public_read).' };
+        return { allowed: true, reason: 'Public read allowed for bukti_transfer bucket (bukti_transfer_select_public).' };
       }
       if (operation === 'INSERT') {
         // Authorized insert policy: ADMIN and DIRECTOR only
         if (role === 'ADMIN' || role === 'DIRECTOR') {
-          return { allowed: true, reason: 'ADMIN and DIRECTOR are authorized to upload proof objects (bukti_transfer_authorized_insert).' };
+          return { allowed: true, reason: 'ADMIN and DIRECTOR are authorized to upload proof objects (bukti_transfer_insert_authorized).' };
         }
         return { allowed: false, reason: 'Non-authorized users are strictly forbidden from uploading proof objects.' };
       }
       if (operation === 'UPDATE') {
         // Admin update policy: ADMIN only
         if (role === 'ADMIN') {
-          return { allowed: true, reason: 'Only ADMIN can replace / update proof objects (bukti_transfer_admin_update).' };
+          return { allowed: true, reason: 'Only ADMIN can replace / update proof objects (bukti_transfer_update_admin).' };
         }
         return { allowed: false, reason: 'Only ADMIN is authorized to modify existing proof objects.' };
       }
       if (operation === 'DELETE') {
         // Admin delete policy: ADMIN only
         if (role === 'ADMIN') {
-          return { allowed: true, reason: 'Only ADMIN can delete proof objects (bukti_transfer_admin_delete).' };
+          return { allowed: true, reason: 'Only ADMIN can delete proof objects (bukti_transfer_delete_admin).' };
         }
         return { allowed: false, reason: 'Only ADMIN is authorized to delete proof objects.' };
       }

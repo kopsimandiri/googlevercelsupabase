@@ -81,9 +81,10 @@ export async function resolveActiveBucket(): Promise<string> {
 
 export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
 -- KOPSIM MANDIRI: BUKTI_TRANSFER PUBLIC STORAGE BUCKET & RLS POLICIES
--- Description: Configures PUBLIC bucket 'bukti_transfer' for direct preview access.
---              Upload (INSERT) is restricted to ADMIN and DIRECTOR.
---              Update (UPDATE) & Deletion (DELETE) are strictly restricted to ADMIN.
+-- Migration: 20260826000006_storage_bukti_transfer_public_rls.sql
+-- Description: Configures PUBLIC bucket 'bukti_transfer' and strictly restricts
+--              upload (INSERT) to ADMIN & DIRECTOR, and UPDATE/DELETE to ADMIN.
+--              SELECT is open to PUBLIC for direct proof preview rendering.
 -- ==============================================================================
 
 -- 1. Buat / Pastikan bucket 'bukti_transfer' berstatus PUBLIC
@@ -113,22 +114,27 @@ DROP POLICY IF EXISTS "bukti_transfer_admin_director_select" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_select" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_admin_insert" ON storage.objects;
 DROP POLICY IF EXISTS "Allow authenticated uploads to bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "Allow authenticated uploads" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_insert" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_authorized_insert" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_public_read" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_select_public" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_insert_authorized" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_admin_update" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_update_admin" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_update" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_admin_delete" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_delete_admin" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_delete" ON storage.objects;
 
--- 4. POLICY 1: SELECT tetap publik (publicly readable untuk render langsung tanpa signed URL)
-CREATE POLICY "bukti_transfer_public_read"
+-- 4. POLICY 1: SELECT (Public Read untuk render langsung bukti transfer di UI)
+CREATE POLICY "bukti_transfer_select_public"
   ON storage.objects FOR SELECT
   TO public
   USING (bucket_id = 'bukti_transfer');
 
--- 5. POLICY 2: INSERT hanya untuk user login dengan role ADMIN atau DIRECTOR
-CREATE POLICY "bukti_transfer_authorized_insert"
+-- 5. POLICY 2: INSERT (Hanya user terautentikasi dengan role ADMIN atau DIRECTOR)
+CREATE POLICY "bukti_transfer_insert_authorized"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -140,8 +146,8 @@ CREATE POLICY "bukti_transfer_authorized_insert"
     )
   );
 
--- 6. POLICY 3: UPDATE hanya ADMIN
-CREATE POLICY "bukti_transfer_admin_update"
+-- 6. POLICY 3: UPDATE (Hanya ADMIN)
+CREATE POLICY "bukti_transfer_update_admin"
   ON storage.objects FOR UPDATE
   TO authenticated
   USING (
@@ -153,8 +159,8 @@ CREATE POLICY "bukti_transfer_admin_update"
     )
   );
 
--- 7. POLICY 4: DELETE hanya ADMIN
-CREATE POLICY "bukti_transfer_admin_delete"
+-- 7. POLICY 4: DELETE (Hanya ADMIN)
+CREATE POLICY "bukti_transfer_delete_admin"
   ON storage.objects FOR DELETE
   TO authenticated
   USING (
@@ -360,6 +366,24 @@ export async function uploadTransactionProof(
     return {
       success: false,
       error: 'Supabase client belum terhubung. Pastikan koneksi dan kredensial Supabase sudah aktif.',
+    };
+  }
+
+  // Defensive Check: Verifikasi sesi Supabase Auth aktif sebelum mengirim request ke Storage API
+  try {
+    const { data: sessionData, error: sessionErr } = await client.auth.getSession();
+    if (sessionErr || !sessionData?.session?.user) {
+      console.warn('[Storage] Upload rejected: Sesi Supabase Auth tidak aktif / null.');
+      return {
+        success: false,
+        error: 'Sesi login Anda tidak valid untuk upload file, silakan login ulang',
+      };
+    }
+  } catch (authCheckErr) {
+    console.warn('[Storage] Auth session verification exception:', authCheckErr);
+    return {
+      success: false,
+      error: 'Sesi login Anda tidak valid untuk upload file, silakan login ulang',
     };
   }
 
