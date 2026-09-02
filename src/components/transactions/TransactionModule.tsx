@@ -9,7 +9,6 @@ import {
   generateStorageProofPath,
   uploadTransactionProof,
   deleteTransactionProof,
-  getSignedProofUrl,
   getPublicProofUrl,
   isImageFile,
   isPdfFile,
@@ -699,40 +698,27 @@ export const TransactionModule: React.FC = () => {
     }
   };
 
-  // Load signed URL when viewing transaction detail
+  // Load public URL when viewing transaction detail
   useEffect(() => {
-    let isMounted = true;
     if (viewingTrx?.filelink) {
-      setIsLoadingProofSignedUrl(true);
-      getSignedProofUrl(viewingTrx.filelink)
-        .then((url) => {
-          if (isMounted) setViewingProofSignedUrl(url);
-        })
-        .finally(() => {
-          if (isMounted) setIsLoadingProofSignedUrl(false);
-        });
+      const url = getPublicProofUrl(viewingTrx.filelink);
+      setViewingProofSignedUrl(url || null);
+      setIsLoadingProofSignedUrl(false);
     } else {
       setViewingProofSignedUrl(null);
       setIsLoadingProofSignedUrl(false);
     }
-    return () => {
-      isMounted = false;
-    };
   }, [viewingTrx]);
 
   const handleOpenQuickProof = async (t: TransactionRecord) => {
     setQuickProofTrx(t);
-    setQuickProofUrl(null);
     if (t.filelink) {
-      setIsLoadingQuickProof(true);
-      try {
-        const url = await getSignedProofUrl(t.filelink);
-        setQuickProofUrl(url);
-      } catch {
-        setQuickProofUrl(null);
-      } finally {
-        setIsLoadingQuickProof(false);
-      }
+      const url = getPublicProofUrl(t.filelink);
+      setQuickProofUrl(url || null);
+      setIsLoadingQuickProof(false);
+    } else {
+      setQuickProofUrl(null);
+      setIsLoadingQuickProof(false);
     }
   };
 
@@ -818,7 +804,7 @@ export const TransactionModule: React.FC = () => {
     setOptimizedProof(null);
     setProofError(null);
     if (t.filelink) {
-      getSignedProofUrl(t.filelink).then((url) => setProofPreviewUrl(url));
+      setProofPreviewUrl(getPublicProofUrl(t.filelink));
     } else {
       setProofPreviewUrl(null);
     }

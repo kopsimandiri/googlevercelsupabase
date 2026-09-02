@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { memberService } from '../../services/memberService';
 import { transactionService } from '../../services/transactionService';
-import { getSignedProofUrl, getPublicProofUrl, isImageFile, isPdfFile } from '../../services/storageService';
+import { getPublicProofUrl, isImageFile, isPdfFile } from '../../services/storageService';
 import { MemberRecord, TransactionRecord } from '../../types/database';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../../utils/formatters';
 import { Card } from '../common/Card';
@@ -290,7 +290,7 @@ export const MemberPortalView: React.FC = () => {
   }, [savingsData.total]);
 
   // Handler to open and resolve proof image from Supabase Storage
-  const handleViewProof = async (trx: TransactionRecord) => {
+  const handleViewProof = (trx: TransactionRecord) => {
     if (!trx.filelink) return;
     const title = `Bukti Transaksi - ${trx.kategori || 'Setoran'}`;
     const resolvedUrl = getPublicProofUrl(trx.filelink);
@@ -300,81 +300,30 @@ export const MemberPortalView: React.FC = () => {
       originalPath: trx.filelink,
       title,
       trx,
-      isLoading: !resolvedUrl,
+      isLoading: false,
       imageLoaded: false,
-      imageError: false,
-      errorMessage: null,
+      imageError: !resolvedUrl,
+      errorMessage: !resolvedUrl ? 'File bukti tidak ditemukan pada bucket storage.' : null,
     });
-
-    if (!resolvedUrl) {
-      try {
-        const url = await getSignedProofUrl(trx.filelink);
-        setSelectedProof({
-          url: url || null,
-          originalPath: trx.filelink,
-          title,
-          trx,
-          isLoading: false,
-          imageLoaded: false,
-          imageError: !url,
-          errorMessage: !url ? 'Berkas bukti transfer sedang disinkronkan ke server storage.' : null,
-        });
-      } catch (err: any) {
-        setSelectedProof({
-          url: null,
-          originalPath: trx.filelink,
-          title,
-          trx,
-          isLoading: false,
-          imageLoaded: false,
-          imageError: true,
-          errorMessage: err?.message || 'Gagal memuat URL lampiran bukti.',
-        });
-      }
-    }
   };
 
-  const handleRetryProof = async () => {
+  const handleRetryProof = () => {
     if (!selectedProof?.originalPath) return;
     const path = selectedProof.originalPath;
-    const currentTrx = selectedProof.trx;
-    const currentTitle = selectedProof.title;
+    const resolvedUrl = getPublicProofUrl(path);
 
     setSelectedProof((prev) =>
       prev
         ? {
             ...prev,
-            isLoading: true,
-            imageError: false,
-            errorMessage: null,
+            url: resolvedUrl || null,
+            isLoading: false,
+            imageLoaded: false,
+            imageError: !resolvedUrl,
+            errorMessage: !resolvedUrl ? 'File bukti tidak ditemukan pada bucket storage.' : null,
           }
         : null
     );
-
-    try {
-      const resolvedUrl = await getSignedProofUrl(path);
-      setSelectedProof({
-        url: resolvedUrl,
-        originalPath: path,
-        title: currentTitle,
-        trx: currentTrx,
-        isLoading: false,
-        imageLoaded: false,
-        imageError: !resolvedUrl,
-        errorMessage: !resolvedUrl ? 'File bukti tidak ditemukan pada bucket storage.' : null,
-      });
-    } catch (err: any) {
-      setSelectedProof({
-        url: null,
-        originalPath: path,
-        title: currentTitle,
-        trx: currentTrx,
-        isLoading: false,
-        imageLoaded: false,
-        imageError: true,
-        errorMessage: err?.message || 'Gagal menyambung ke server penyimpanan.',
-      });
-    }
   };
 
   if (isLoading) {
