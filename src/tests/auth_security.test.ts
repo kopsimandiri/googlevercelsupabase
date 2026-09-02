@@ -109,17 +109,30 @@ export function evaluateRlsPolicy(
   if (table === 'storage.objects') {
     const bucketId = targetRow.bucket_id || 'bukti_transfer';
     if (bucketId === 'bukti_transfer') {
-      if (operation === 'INSERT' || operation === 'UPDATE' || operation === 'DELETE') {
-        if (role === 'ADMIN') {
-          return { allowed: true, reason: 'ADMIN has full write/upload access to bukti_transfer bucket.' };
-        }
-        return { allowed: false, reason: 'Non-admin users are strictly forbidden from uploading or modifying proof objects.' };
-      }
       if (operation === 'SELECT') {
+        // Public read policy: Anyone can view / render proof images
+        return { allowed: true, reason: 'Public read allowed for bukti_transfer bucket (bukti_transfer_public_read).' };
+      }
+      if (operation === 'INSERT') {
+        // Authorized insert policy: ADMIN and DIRECTOR only
         if (role === 'ADMIN' || role === 'DIRECTOR') {
-          return { allowed: true, reason: 'ADMIN and DIRECTOR can view and inspect transaction proofs.' };
+          return { allowed: true, reason: 'ADMIN and DIRECTOR are authorized to upload proof objects (bukti_transfer_authorized_insert).' };
         }
-        return { allowed: false, reason: 'Public and general member access to private proof bucket is restricted.' };
+        return { allowed: false, reason: 'Non-authorized users are strictly forbidden from uploading proof objects.' };
+      }
+      if (operation === 'UPDATE') {
+        // Admin update policy: ADMIN only
+        if (role === 'ADMIN') {
+          return { allowed: true, reason: 'Only ADMIN can replace / update proof objects (bukti_transfer_admin_update).' };
+        }
+        return { allowed: false, reason: 'Only ADMIN is authorized to modify existing proof objects.' };
+      }
+      if (operation === 'DELETE') {
+        // Admin delete policy: ADMIN only
+        if (role === 'ADMIN') {
+          return { allowed: true, reason: 'Only ADMIN can delete proof objects (bukti_transfer_admin_delete).' };
+        }
+        return { allowed: false, reason: 'Only ADMIN is authorized to delete proof objects.' };
       }
     }
   }
@@ -255,11 +268,11 @@ export const securityTestCases: SecurityTestCase[] = [
     },
   },
 
-  // 5. STORAGE RLS - ADMIN UPLOAD ONLY (bucket: bukti_transfer)
+  // 5. STORAGE RLS - AUTHORIZED UPLOAD (ADMIN/DIRECTOR) & ADMIN UPDATE/DELETE (bucket: bukti_transfer)
   {
     id: 'SEC-07',
     category: 'STORAGE_RLS',
-    description: 'STORAGE BUKTI_TRANSFER: Only ADMIN can upload (INSERT) and delete (DELETE)',
+    description: 'STORAGE BUKTI_TRANSFER: ADMIN & DIRECTOR can upload (INSERT); only ADMIN can UPDATE/DELETE; others denied',
     expectedResult: 'PASS',
     run: async () => {
       const adminCtx = { role: 'ADMIN' as UserRole, userId: 'admin-001' };
@@ -267,67 +280,79 @@ export const securityTestCases: SecurityTestCase[] = [
       const memCtx = { role: 'ANGGOTA' as UserRole, userId: 'mem-001' };
       const anonCtx = { role: null as any, userId: null };
 
-      // 1. ADMIN Upload -> ALLOWED
+      // 1. ADMIN Upload & Delete -> ALLOWED
       const adminInsert = evaluateRlsPolicy('storage.objects', 'INSERT', adminCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
+      const adminUpdate = evaluateRlsPolicy('storage.objects', 'UPDATE', adminCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
       const adminDelete = evaluateRlsPolicy('storage.objects', 'DELETE', adminCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
 
-      // 2. DIRECTOR Upload -> STRICTLY DENIED
+      // 2. DIRECTOR Upload -> ALLOWED; Update/Delete -> STRICTLY DENIED
       const dirInsert = evaluateRlsPolicy('storage.objects', 'INSERT', dirCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-002.webp' });
+      const dirUpdate = evaluateRlsPolicy('storage.objects', 'UPDATE', dirCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-002.webp' });
+      const dirDelete = evaluateRlsPolicy('storage.objects', 'DELETE', dirCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-002.webp' });
 
-      // 3. ANGGOTA Upload -> STRICTLY DENIED
+      // 3. ANGGOTA Upload/Update/Delete -> STRICTLY DENIED
       const memInsert = evaluateRlsPolicy('storage.objects', 'INSERT', memCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-003.webp' });
+      const memDelete = evaluateRlsPolicy('storage.objects', 'DELETE', memCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-003.webp' });
 
-      // 4. Anonymous Upload -> STRICTLY DENIED
+      // 4. Anonymous Upload/Update/Delete -> STRICTLY DENIED
       const anonInsert = evaluateRlsPolicy('storage.objects', 'INSERT', anonCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-004.webp' });
+      const anonDelete = evaluateRlsPolicy('storage.objects', 'DELETE', anonCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-004.webp' });
 
       const allValid =
         adminInsert.allowed &&
+        adminUpdate.allowed &&
         adminDelete.allowed &&
-        !dirInsert.allowed &&
+        dirInsert.allowed &&
+        !dirUpdate.allowed &&
+        !dirDelete.allowed &&
         !memInsert.allowed &&
-        !anonInsert.allowed;
+        !memDelete.allowed &&
+        !anonInsert.allowed &&
+        !anonDelete.allowed;
 
       if (allValid) {
         return {
           success: true,
-          message: 'Storage RLS verified: ONLY ADMIN can upload/modify objects in bucket "bukti_transfer".',
+          message: 'Storage RLS verified: ADMIN & DIRECTOR can upload (INSERT); only ADMIN can UPDATE/DELETE; others denied.',
         };
       }
 
       return {
         success: false,
         message: 'Storage RLS boundary violation detected for bukti_transfer!',
-        details: { adminInsert, adminDelete, dirInsert, memInsert, anonInsert },
+        details: { adminInsert, adminUpdate, adminDelete, dirInsert, dirUpdate, dirDelete, memInsert, anonInsert },
       };
     },
   },
 
-  // 6. STORAGE RLS - PRIVATE BUCKET READ (ADMIN & DIRECTOR)
+  // 6. STORAGE RLS - PUBLIC READ (bukti_transfer_public_read)
   {
     id: 'SEC-08',
     category: 'STORAGE_RLS',
-    description: 'STORAGE BUKTI_TRANSFER: ADMIN & DIRECTOR can view (SELECT); general public denied',
+    description: 'STORAGE BUKTI_TRANSFER: Public read allowed (SELECT) for direct proof display without signed tokens',
     expectedResult: 'PASS',
     run: async () => {
       const adminCtx = { role: 'ADMIN' as UserRole, userId: 'admin-001' };
       const dirCtx = { role: 'DIRECTOR' as UserRole, userId: 'dir-001' };
+      const memCtx = { role: 'ANGGOTA' as UserRole, userId: 'mem-001' };
       const anonCtx = { role: null as any, userId: null };
 
       const adminSelect = evaluateRlsPolicy('storage.objects', 'SELECT', adminCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
       const dirSelect = evaluateRlsPolicy('storage.objects', 'SELECT', dirCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
+      const memSelect = evaluateRlsPolicy('storage.objects', 'SELECT', memCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
       const anonSelect = evaluateRlsPolicy('storage.objects', 'SELECT', anonCtx, { bucket_id: 'bukti_transfer', name: '2026/08/TRX-001.webp' });
 
-      if (adminSelect.allowed && dirSelect.allowed && !anonSelect.allowed) {
+      if (adminSelect.allowed && dirSelect.allowed && memSelect.allowed && anonSelect.allowed) {
         return {
           success: true,
-          message: 'Storage RLS read access verified for ADMIN and DIRECTOR on private bucket "bukti_transfer".',
+          message: 'Storage RLS public read verified: proof images can be previewed directly by all roles and unauthenticated viewers.',
         };
       }
 
       return {
         success: false,
         message: 'Storage read permission violation detected!',
-        details: { adminSelect, dirSelect, anonSelect },
+        details: { adminSelect, dirSelect, memSelect, anonSelect },
       };
     },
   },

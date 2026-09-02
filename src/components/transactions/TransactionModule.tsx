@@ -2442,13 +2442,13 @@ export const TransactionModule: React.FC = () => {
                 <span>
                   {activeSqlTab === 'transactions'
                     ? 'Ketentuan RLS Tabel public.transactions'
-                    : 'Keamanan Bucket bukti_transfer (Hanya ADMIN yang Boleh Upload)'}
+                    : 'Keamanan Bucket bukti_transfer (Public Read & Authorized Upload)'}
                 </span>
               </div>
               <p className="text-[11px] text-emerald-800 leading-relaxed">
                 {activeSqlTab === 'transactions'
                   ? 'RLS mengamankan data tabel di tingkat baris. Kebijakan akses lengkap untuk SELECT, INSERT, UPDATE, dan DELETE telah disertakan.'
-                  : 'Bucket dibuat PRIVATE dengan Row Level Security pada storage.objects. Kebijakan INSERT, UPDATE, DELETE hanya diizinkan untuk akun ADMIN (public.is_admin()).'}
+                  : 'Bucket berstatus PUBLIC untuk SELECT (preview bukti tanpa signed token), sedangkan INSERT diizinkan untuk ADMIN & DIRECTOR, serta UPDATE/DELETE hanya untuk ADMIN.'}
               </p>
             </div>
 

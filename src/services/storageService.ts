@@ -80,89 +80,90 @@ export async function resolveActiveBucket(): Promise<string> {
 }
 
 export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
--- KOPSIM MANDIRI: BUKTI_TRANSFER STORAGE BUCKET & RLS POLICIES
--- Description: Configures private bucket 'bukti_transfer' and strictly restricts
---              upload (INSERT), modification (UPDATE), and deletion (DELETE)
---              to authenticated users with ADMIN role.
---              DIRECTOR, ANGGOTA, and Anonymous users are strictly DENIED upload.
+-- KOPSIM MANDIRI: BUKTI_TRANSFER PUBLIC STORAGE BUCKET & RLS POLICIES
+-- Description: Configures PUBLIC bucket 'bukti_transfer' for direct preview access.
+--              Upload (INSERT) is restricted to ADMIN and DIRECTOR.
+--              Update (UPDATE) & Deletion (DELETE) are strictly restricted to ADMIN.
 -- ==============================================================================
 
--- 1. Pastikan bucket privat 'bukti_transfer' terdaftar di storage.buckets
+-- 1. Buat / Pastikan bucket 'bukti_transfer' berstatus PUBLIC
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
   'bukti_transfer',
   'bukti_transfer',
-  FALSE,
+  TRUE, -- PUBLIC BUCKET
   10485760, -- 10MB
-  ARRAY['image/jpeg', 'image/png', 'image/webp']
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
 )
 ON CONFLICT (id) DO UPDATE SET
-  public = FALSE,
+  public = TRUE,
   file_size_limit = 10485760,
-  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp'];
+  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
 -- 2. Aktifkan Row Level Security pada storage.objects
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
--- ==============================================================================
--- 3. STORAGE RLS POLICIES FOR 'bukti_transfer'
--- ==============================================================================
-
--- A. INSERT: HANYA ADMIN YANG BOLEH UPLOAD
+-- 3. DROP SEMUA POLICY LAMA (Bersihkan policy lama & eksperimental)
+DROP POLICY IF EXISTS "Public Read bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "Public Insert bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "Public Update bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "Public Delete bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_public_select" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_admin_director_select" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_select" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_admin_insert" ON storage.objects;
 DROP POLICY IF EXISTS "Allow authenticated uploads to bukti_transfer" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_insert" ON storage.objects;
-
-CREATE POLICY "bukti_transfer_admin_insert"
-  ON storage.objects
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (
-    bucket_id = 'bukti_transfer' AND
-    public.is_admin()
-  );
-
--- B. UPDATE: HANYA ADMIN YANG BOLEH MEMPERBARUI FILE
+DROP POLICY IF EXISTS "bukti_transfer_authorized_insert" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_public_read" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_admin_update" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_update" ON storage.objects;
-
-CREATE POLICY "bukti_transfer_admin_update"
-  ON storage.objects
-  FOR UPDATE
-  TO authenticated
-  USING (
-    bucket_id = 'bukti_transfer' AND
-    public.is_admin()
-  )
-  WITH CHECK (
-    bucket_id = 'bukti_transfer' AND
-    public.is_admin()
-  );
-
--- C. DELETE: HANYA ADMIN YANG BOLEH MENGHAPUS FILE (Rollback & Cleanup)
 DROP POLICY IF EXISTS "bukti_transfer_admin_delete" ON storage.objects;
 DROP POLICY IF EXISTS "bukti_transfer_delete" ON storage.objects;
 
-CREATE POLICY "bukti_transfer_admin_delete"
-  ON storage.objects
-  FOR DELETE
+-- 4. POLICY 1: SELECT tetap publik (publicly readable untuk render langsung tanpa signed URL)
+CREATE POLICY "bukti_transfer_public_read"
+  ON storage.objects FOR SELECT
+  TO public
+  USING (bucket_id = 'bukti_transfer');
+
+-- 5. POLICY 2: INSERT hanya untuk user login dengan role ADMIN atau DIRECTOR
+CREATE POLICY "bukti_transfer_authorized_insert"
+  ON storage.objects FOR INSERT
   TO authenticated
-  USING (
-    bucket_id = 'bukti_transfer' AND
-    public.is_admin()
+  WITH CHECK (
+    bucket_id = 'bukti_transfer'
+    AND EXISTS (
+      SELECT 1 FROM public.user_roles ur
+      JOIN public.roles r ON r.id = ur.role_id
+      WHERE ur.user_id = auth.uid() AND r.name IN ('ADMIN', 'DIRECTOR')
+    )
   );
 
--- D. SELECT: ADMIN & DIREKSI BISA MELIHAT BUKTI (Signed URLs / Audit)
-DROP POLICY IF EXISTS "bukti_transfer_admin_director_select" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_select" ON storage.objects;
-
-CREATE POLICY "bukti_transfer_admin_director_select"
-  ON storage.objects
-  FOR SELECT
+-- 6. POLICY 3: UPDATE hanya ADMIN
+CREATE POLICY "bukti_transfer_admin_update"
+  ON storage.objects FOR UPDATE
   TO authenticated
   USING (
-    bucket_id = 'bukti_transfer' AND
-    public.is_director_or_admin()
+    bucket_id = 'bukti_transfer'
+    AND EXISTS (
+      SELECT 1 FROM public.user_roles ur
+      JOIN public.roles r ON r.id = ur.role_id
+      WHERE ur.user_id = auth.uid() AND r.name = 'ADMIN'
+    )
+  );
+
+-- 7. POLICY 4: DELETE hanya ADMIN
+CREATE POLICY "bukti_transfer_admin_delete"
+  ON storage.objects FOR DELETE
+  TO authenticated
+  USING (
+    bucket_id = 'bukti_transfer'
+    AND EXISTS (
+      SELECT 1 FROM public.user_roles ur
+      JOIN public.roles r ON r.id = ur.role_id
+      WHERE ur.user_id = auth.uid() AND r.name = 'ADMIN'
+    )
   );
 `;
 
