@@ -737,12 +737,11 @@ export const MembershipModule: React.FC = () => {
                       <td className="p-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <Button
-                            variant="outline"
+                            variant="amber"
                             size="xs"
-                            className="bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100"
                             onClick={() => setIdCardMember(m)}
                             title="Cetak Kartu Tanda Anggota (KTA Digital)"
-                            leftIcon={<CreditCard className="w-3 h-3 text-amber-700" />}
+                            leftIcon={<CreditCard className="w-3 h-3 text-stone-950" />}
                           >
                             KTA
                           </Button>
@@ -750,7 +749,7 @@ export const MembershipModule: React.FC = () => {
                           {canEdit && (
                             <button
                               onClick={() => handleOpenEditModal(m)}
-                              className="p-1.5 text-stone-600 hover:text-emerald-800 hover:bg-stone-100 rounded-md transition-colors"
+                              className="p-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 border border-blue-200 hover:border-blue-600 cursor-pointer"
                               title="Edit Data Anggota"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
@@ -760,7 +759,7 @@ export const MembershipModule: React.FC = () => {
                           {canDelete && (
                             <button
                               onClick={() => handleDeleteMember(m.id, m.nama)}
-                              className="p-1.5 text-stone-400 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors"
+                              className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 border border-rose-200 hover:border-rose-600 cursor-pointer"
                               title="Hapus Anggota"
                             >
                               <Trash2 className="w-3.5 h-3.5" />

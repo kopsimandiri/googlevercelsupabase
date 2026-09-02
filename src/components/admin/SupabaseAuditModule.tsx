@@ -437,30 +437,30 @@ export const SupabaseAuditModule: React.FC = () => {
                 placeholder={`Cari dalam ${activeTable}...`}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-stone-300 focus:outline-hidden focus:ring-1 focus:ring-primary-700 w-40 sm:w-56 bg-white"
+                className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-stone-300 focus:outline-hidden focus:ring-1 focus:ring-emerald-700 w-40 sm:w-56 bg-white"
               />
             </div>
 
             <Button
-              variant="outline"
+              variant="blue"
               size="sm"
               onClick={() => handleSeedToSupabase(activeTable)}
               title="Kirim baseline data lokal ke Supabase cloud"
-              leftIcon={<UploadCloud className="w-3.5 h-3.5 text-primary-700" />}
+              leftIcon={<UploadCloud className="w-3.5 h-3.5 text-white" />}
               className="text-xs"
             >
               Sinkron ke Cloud
             </Button>
 
             <Button
-              variant="outline"
+              variant="purple"
               size="sm"
               onClick={() => {
                 setSelectedDdlTable(activeTable);
                 setShowDdlModal(true);
               }}
               title="Lihat DDL SQL untuk tabel ini"
-              leftIcon={<Code2 className="w-3.5 h-3.5" />}
+              leftIcon={<Code2 className="w-3.5 h-3.5 text-white" />}
               className="text-xs"
             >
               DDL SQL
@@ -481,7 +481,7 @@ export const SupabaseAuditModule: React.FC = () => {
               variant="primary"
               size="sm"
               onClick={handleOpenCreateModal}
-              leftIcon={<Plus className="w-3.5 h-3.5" />}
+              leftIcon={<Plus className="w-3.5 h-3.5 text-white" />}
               className="text-xs font-bold"
             >
               Tambah Record
@@ -548,11 +548,11 @@ export const SupabaseAuditModule: React.FC = () => {
                       );
                     })}
                     <td className="p-3 text-right whitespace-nowrap sticky right-0 bg-white shadow-xs">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1.5">
                         {canEdit && (
                           <button
                             onClick={() => handleOpenEditModal(row)}
-                            className="p-1.5 text-stone-500 hover:text-primary-800 hover:bg-stone-100 rounded"
+                            className="p-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 border border-blue-200 hover:border-blue-600"
                             title="Edit record"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
@@ -561,7 +561,7 @@ export const SupabaseAuditModule: React.FC = () => {
                         {canDelete && (
                           <button
                             onClick={() => handleDelete(row.id)}
-                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
+                            className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 border border-rose-200 hover:border-rose-600"
                             title="Hapus record (Admin only)"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

@@ -28,6 +28,7 @@ import { EmptyState } from '../common/EmptyState';
 import { ErrorState } from '../common/ErrorState';
 import { Pagination } from '../common/Pagination';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { Modal } from '../common/Modal';
 import {
   FileSpreadsheet,
   Plus,
@@ -62,6 +63,9 @@ import {
   AlertCircle,
   Loader2,
   Image as ImageIcon,
+  Printer,
+  FolderSearch,
+  FileCheck,
 } from 'lucide-react';
 
 export const TransactionModule: React.FC = () => {
@@ -171,6 +175,13 @@ export const TransactionModule: React.FC = () => {
   // Optional customer / supplier link
   const [formCustomerId, setFormCustomerId] = useState<string>('');
   const [formSupplierId, setFormSupplierId] = useState<string>('');
+
+  // Storage bucket search & recovery states
+  const [isSearchingStorageId, setIsSearchingStorageId] = useState<string | null>(null);
+  const [isScanningAllStorage, setIsScanningAllStorage] = useState<boolean>(false);
+
+  // Kuitansi Modal State
+  const [selectedKuitansi, setSelectedKuitansi] = useState<TransactionRecord | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -725,6 +736,44 @@ export const TransactionModule: React.FC = () => {
     }
   };
 
+  const handleSearchBucketForTrx = async (t: TransactionRecord) => {
+    setIsSearchingStorageId(t.id);
+    try {
+      const res = await transactionService.findAndLinkTransactionProof(t.id, t.tanggal);
+      if (res.found && res.publicUrl) {
+        showToast(`Berhasil! Ditemukan berkas bukti untuk ${t.id} di bucket storage dan dihubungkan ke transaksi.`, 'success');
+        await executeSearch(false);
+      } else {
+        showToast(`Tidak ditemukan file bukti untuk ${t.id} di bucket storage. Silakan upload berkas baru jika diperlukan.`, 'warning');
+      }
+    } catch (err: any) {
+      showToast(`Gagal mencari di bucket storage: ${err?.message || 'Error'}`, 'error');
+    } finally {
+      setIsSearchingStorageId(null);
+    }
+  };
+
+  const handleScanAllStorage = async () => {
+    setIsScanningAllStorage(true);
+    try {
+      const res = await transactionService.scanAndRecoverBucketProofs();
+      if (res.recoveredCount > 0) {
+        showToast(`Selesai scan storage: ${res.recoveredCount} bukti transfer berhasil ditemukan dan dihubungkan ke database!`, 'success');
+        await executeSearch(false);
+      } else {
+        showToast(`Scan storage selesai: ${res.scannedCount} transaksi tanpa bukti diperiksa. Tidak ada berkas baru yang cocok.`, 'info');
+      }
+    } catch (err: any) {
+      showToast(`Gagal scan storage: ${err?.message || 'Error'}`, 'error');
+    } finally {
+      setIsScanningAllStorage(false);
+    }
+  };
+
+  const handleOpenReceipt = (t: TransactionRecord) => {
+    setSelectedKuitansi(t);
+  };
+
   const handleOpenAddModal = () => {
     setEditingTrx(null);
     setFormTanggal(new Date().toISOString().split('T')[0]);
@@ -996,6 +1045,17 @@ export const TransactionModule: React.FC = () => {
             leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
           >
             Refresh
+          </Button>
+
+          <Button
+            variant="amber"
+            size="sm"
+            onClick={handleScanAllStorage}
+            isLoading={isScanningAllStorage}
+            leftIcon={<FolderSearch className="w-3.5 h-3.5" />}
+            title="Scan bucket storage dan hubungkan bukti transfer berdasarkan nomor transaksi"
+          >
+            Cari Bukti di Storage
           </Button>
 
           <Button
@@ -1294,19 +1354,19 @@ export const TransactionModule: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleOpenQuickProof(t)}
-                                className="group relative inline-flex items-center gap-1.5 p-1 bg-stone-100 hover:bg-emerald-50 text-emerald-800 border border-stone-200 hover:border-emerald-300 rounded-lg text-[11px] font-semibold transition-all shadow-2xs cursor-pointer"
+                                className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
                                 title="Klik untuk memperbesar bukti gambar"
                               >
+                                <Eye className="w-3.5 h-3.5 shrink-0" />
                                 <img
                                   src={pubUrl || t.filelink}
                                   alt="Bukti"
-                                  className="w-7 h-7 object-cover rounded border border-stone-200 group-hover:scale-105 transition-transform"
+                                  className="w-4 h-4 object-cover rounded bg-white/20"
                                   onError={(e) => {
-                                    // Fallback to icon if thumbnail fails
                                     (e.target as HTMLElement).style.display = 'none';
                                   }}
                                 />
-                                <span className="hidden sm:inline pr-1">Bukti</span>
+                                <span className="hidden sm:inline">Lihat Bukti</span>
                               </button>
                             );
                           }
@@ -1317,10 +1377,10 @@ export const TransactionModule: React.FC = () => {
                                 href={pubUrl || t.filelink}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-md text-[11px] font-semibold transition-colors"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-blue-700"
                                 title="Buka Dokumen PDF di Tab Baru"
                               >
-                                <FileText className="w-3.5 h-3.5" />
+                                <FileText className="w-3.5 h-3.5 shrink-0" />
                                 <span>Lihat Lampiran</span>
                               </a>
                             );
@@ -1331,32 +1391,62 @@ export const TransactionModule: React.FC = () => {
                               href={pubUrl || t.filelink}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 rounded-md text-[11px] font-semibold transition-colors"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-sky-700"
                               title="Buka Berkas Lampiran"
                             >
-                              <ExternalLink className="w-3.5 h-3.5" />
+                              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                               <span>Lihat Lampiran</span>
                             </a>
                           );
                         })()
                       ) : (
-                        <span className="text-stone-400 italic text-[11px]">Tidak ada lampiran</span>
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="text-stone-400 italic text-[11px]">Tidak ada lampiran</span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => handleSearchBucketForTrx(t)}
+                              disabled={isSearchingStorageId === t.id}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-md text-[10px] font-bold shadow-2xs hover:shadow-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer border border-amber-600"
+                              title={`Cari nama file di bucket storage untuk nomor ${t.id}`}
+                            >
+                              {isSearchingStorageId === t.id ? (
+                                <>
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  <span>Mencari...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Search className="w-2.5 h-2.5" />
+                                  <span>Cari di Bucket</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="py-3 px-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
+                      <div className="flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => setViewingTrx(t)}
-                          className="p-1 text-stone-500 hover:text-emerald-800 hover:bg-emerald-50 rounded"
-                          title="Detail Transaksi"
+                          className="p-1.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer border border-emerald-200 hover:border-emerald-600"
+                          title="Lihat Detail Transaksi"
                         >
                           <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenReceipt(t)}
+                          className="p-1.5 bg-purple-50 hover:bg-purple-600 text-purple-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer border border-purple-200 hover:border-purple-600"
+                          title="Cetak Kuitansi Resmi"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
                         </button>
                         {canEdit && (
                           <button
                             onClick={() => handleOpenEditModal(t)}
-                            className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded"
-                            title="Edit"
+                            className="p-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer border border-blue-200 hover:border-blue-600"
+                            title="Edit Transaksi"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -1364,8 +1454,8 @@ export const TransactionModule: React.FC = () => {
                         {canDelete && (
                           <button
                             onClick={() => handleDelete(t.id)}
-                            className="p-1 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded"
-                            title="Hapus"
+                            className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white rounded-lg transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer border border-rose-200 hover:border-rose-600"
+                            title="Hapus Transaksi"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1660,6 +1750,95 @@ export const TransactionModule: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Official Kuitansi Modal */}
+      {selectedKuitansi && (
+        <Modal
+          isOpen={!!selectedKuitansi}
+          onClose={() => setSelectedKuitansi(null)}
+          title="Kuitansi Resmi Transaksi Koperasi"
+          subtitle={`No. Transaksi: ${selectedKuitansi.id}`}
+          size="md"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedKuitansi(null)}
+              >
+                Tutup
+              </Button>
+              <Button
+                variant="purple"
+                size="sm"
+                onClick={() => {
+                  window.print();
+                }}
+                leftIcon={<Printer className="w-4 h-4" />}
+              >
+                Cetak Kuitansi Resmi
+              </Button>
+            </div>
+          }
+        >
+          <div className="p-5 bg-stone-50 rounded-2xl border border-stone-200/90 space-y-4 text-xs sm:text-sm">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+              <div>
+                <h3 className="font-bold text-stone-900 font-serif text-base">Koperasi Syarikat Islam Mandiri</h3>
+                <p className="text-[11px] text-stone-500">Badan Hukum No. AHU-0001234.AH.01.26.TAHUN 2024</p>
+              </div>
+              <Badge variant={selectedKuitansi.jenis === 'MASUK' ? 'success' : 'warning'} size="sm">
+                {selectedKuitansi.jenis === 'MASUK' ? 'PENERIMAAN KAS' : 'PENGELUARAN KAS'}
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Akun / Pihak Terkait</span>
+                <span className="font-bold text-stone-900 text-xs">{selectedKuitansi.akun || 'Kas Umum Koperasi'}</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Nomor Transaksi</span>
+                <span className="font-mono font-bold text-emerald-950 text-xs">{selectedKuitansi.id}</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Kategori Transaksi</span>
+                <span className="font-semibold text-stone-800 text-xs">{selectedKuitansi.kategori}</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Tanggal Pembukuan</span>
+                <span className="font-mono text-stone-800 text-xs">{formatDateIndo(selectedKuitansi.tanggal || '')}</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Entitas / Area</span>
+                <span className="font-semibold text-stone-800 text-xs">{selectedKuitansi.plantation} ({selectedKuitansi.referal})</span>
+              </div>
+              <div>
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Sumber Dana / Rekening</span>
+                <span className="font-mono text-stone-800 text-xs">{selectedKuitansi.metodeBayar || '-'}</span>
+              </div>
+            </div>
+
+            {selectedKuitansi.keterangan && (
+              <div className="p-2.5 bg-white rounded-xl border border-stone-200">
+                <span className="text-[10px] text-stone-400 block uppercase font-bold">Uraian / Keterangan</span>
+                <p className="text-stone-700 text-xs mt-0.5">{selectedKuitansi.keterangan}</p>
+              </div>
+            )}
+
+            <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 text-center">
+              <span className="text-xs text-emerald-800 font-semibold block uppercase">Total Nominal:</span>
+              <span className="text-2xl font-bold font-mono text-emerald-950 tracking-tight">
+                {formatRupiah(selectedKuitansi.jumlah)}
+              </span>
+            </div>
+
+            <p className="text-[10px] text-stone-400 text-center italic">
+              Kuitansi ini dihasilkan secara elektronik dari sistem ERP Koperasi Syarikat Islam Mandiri dan sah sebagai bukti pembukuan transaksi.
+            </p>
+          </div>
+        </Modal>
       )}
 
       {/* ========================================================================= */}
@@ -2141,19 +2320,19 @@ export const TransactionModule: React.FC = () => {
                     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                       <Button
                         type="button"
-                        variant="outline"
-                        size="xs"
+                        variant="blue"
+                        size="sm"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isOptimizingProof || isSubmitting}
                         leftIcon={
                           isOptimizingProof ? (
-                            <Loader2 className="w-3 h-3 animate-spin text-emerald-800" />
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
                           ) : (
-                            <UploadCloud className="w-3 h-3" />
+                            <UploadCloud className="w-3.5 h-3.5" />
                           )
                         }
                       >
-                        {isOptimizingProof ? 'Memproses Gambar...' : 'Pilih Gambar Bukti Transaksi'}
+                        {isOptimizingProof ? 'Memproses Gambar...' : 'Upload Berkas Bukti Transaksi'}
                       </Button>
 
                       {proofPreviewUrl || formFilelink ? (

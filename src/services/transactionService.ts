@@ -3,7 +3,7 @@ import { CustomerRecord, SupplierRecord, TransactionRecord } from '../types/data
 import { cleanRupiah } from '../utils/formatters';
 import { authService } from './authService';
 import { auditService } from './auditService';
-import { extractStoragePath, getPublicProofUrl } from './storageService';
+import { extractStoragePath, getPublicProofUrl, findProofInBucketByTransactionNo } from './storageService';
 
 const STORAGE_TRX_KEY = 'KOPSIM_TRANSACTIONS_DATA';
 export const TRANSACTIONS_TABLE_NAME = 'transactions';
@@ -1412,6 +1412,83 @@ export const transactionService = {
       success: errors.length === 0,
       updatedCount,
       errors,
+    };
+  },
+
+  /**
+   * Searches the storage bucket for a matching proof file for a specific transaction_no
+   * and automatically updates the database row if found.
+   */
+  async findAndLinkTransactionProof(transactionNo: string, transactionDate?: string): Promise<{
+    found: boolean;
+    publicUrl?: string;
+    path?: string;
+    updated: boolean;
+  }> {
+    if (!transactionNo) return { found: false, updated: false };
+
+    const searchRes = await findProofInBucketByTransactionNo(transactionNo, transactionDate);
+    if (!searchRes.found || !searchRes.publicUrl) {
+      return { found: false, updated: false };
+    }
+
+    const client = getSupabaseClient();
+    let updated = false;
+
+    if (client) {
+      try {
+        const { error } = await client
+          .from(TRANSACTIONS_TABLE_NAME)
+          .update({
+            file_url: searchRes.publicUrl,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('transaction_no', transactionNo);
+
+        if (!error) {
+          updated = true;
+          console.info(`[TransactionService] Auto-linked proof for ${transactionNo} -> ${searchRes.publicUrl}`);
+        }
+      } catch (err) {
+        console.warn(`[TransactionService] Failed to auto-link proof in DB for ${transactionNo}:`, err);
+      }
+    }
+
+    return {
+      found: true,
+      publicUrl: searchRes.publicUrl,
+      path: searchRes.path,
+      updated,
+    };
+  },
+
+  /**
+   * Scans all transactions that are missing file_url or have invalid links,
+   * searches the storage bucket for matching files by transaction_no, and links them.
+   */
+  async scanAndRecoverBucketProofs(): Promise<{
+    scannedCount: number;
+    recoveredCount: number;
+    recoveredItems: Array<{ transaction_no: string; publicUrl: string }>;
+  }> {
+    const trxs = await this.getTransactions();
+    const missingTrxs = trxs.filter((t) => !t.filelink || t.filelink.trim() === '' || t.filelink === '-');
+    const recoveredItems: Array<{ transaction_no: string; publicUrl: string }> = [];
+
+    for (const trx of missingTrxs) {
+      const res = await this.findAndLinkTransactionProof(trx.id, trx.tanggal);
+      if (res.found && res.publicUrl) {
+        recoveredItems.push({
+          transaction_no: trx.id,
+          publicUrl: res.publicUrl,
+        });
+      }
+    }
+
+    return {
+      scannedCount: missingTrxs.length,
+      recoveredCount: recoveredItems.length,
+      recoveredItems,
     };
   },
 };

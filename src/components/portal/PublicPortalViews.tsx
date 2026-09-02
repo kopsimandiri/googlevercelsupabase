@@ -538,7 +538,7 @@ export const FileManagementView: React.FC = () => {
         title="Repositori Dokumen & Berkas Bukti (File Management)"
         subtitle="Penyimpanan terpusat dokumen legalitas, bukti transfer bank, dan scan KTP anggota"
         action={
-          <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white hover:bg-emerald-900 transition-colors">
+          <label className="cursor-pointer inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs hover:shadow active:scale-95 transition-all border border-emerald-700">
             <Upload className="w-3.5 h-3.5" />
             <span>Unggah Dokumen</span>
             <input type="file" onChange={handleSimulateUpload} className="hidden" />

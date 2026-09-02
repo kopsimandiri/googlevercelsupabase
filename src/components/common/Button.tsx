@@ -1,8 +1,20 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'gold' | 'outline' | 'danger' | 'ghost';
-export type ButtonSize = 'sm' | 'md' | 'lg';
+export type ButtonVariant =
+  | 'primary'
+  | 'secondary'
+  | 'success'
+  | 'blue'
+  | 'info'
+  | 'purple'
+  | 'amber'
+  | 'warning'
+  | 'gold'
+  | 'outline'
+  | 'danger'
+  | 'ghost';
+export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
@@ -25,23 +37,36 @@ export const Button: React.FC<ButtonProps> = ({
 }) => {
   const variantClasses: Record<ButtonVariant, string> = {
     primary:
-      'bg-primary-700 text-white hover:bg-primary-900 focus-visible:ring-primary-700 shadow-sm active:bg-primary-950 font-semibold',
-    secondary:
-      'bg-emerald-50 border border-primary-700 text-primary-900 hover:bg-emerald-100 hover:text-primary-950 focus-visible:ring-primary-700 font-semibold shadow-xs',
+      'bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-emerald-700 font-semibold transition-all border border-emerald-800',
+    success:
+      'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-emerald-600 font-semibold transition-all border border-emerald-700',
+    blue:
+      'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-blue-600 font-semibold transition-all border border-blue-700',
+    info:
+      'bg-sky-600 hover:bg-sky-700 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-sky-600 font-semibold transition-all border border-sky-700',
+    purple:
+      'bg-purple-600 hover:bg-purple-700 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-purple-600 font-semibold transition-all border border-purple-700',
+    amber:
+      'bg-amber-500 hover:bg-amber-600 text-stone-950 shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-amber-500 font-bold transition-all border border-amber-600',
+    warning:
+      'bg-amber-600 hover:bg-amber-700 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-amber-600 font-semibold transition-all border border-amber-700',
     gold:
-      'bg-accent-gold text-stone-950 hover:bg-accent-gold-dark hover:text-white focus-visible:ring-accent-gold shadow-sm font-bold active:bg-amber-800',
+      'bg-amber-400 hover:bg-amber-500 text-stone-950 hover:text-black focus-visible:ring-amber-400 shadow-sm font-bold active:scale-[0.98] transition-all border border-amber-500',
+    secondary:
+      'bg-emerald-50 border border-emerald-200 text-emerald-900 hover:bg-emerald-100 hover:border-emerald-300 focus-visible:ring-emerald-600 font-semibold shadow-2xs transition-all',
     outline:
-      'bg-white text-stone-800 border border-stone-300 hover:bg-stone-100 hover:text-stone-950 hover:border-stone-400 focus-visible:ring-stone-400 font-medium shadow-xs',
+      'bg-white text-stone-700 border border-stone-200 hover:bg-stone-50 hover:text-stone-900 hover:border-stone-300 focus-visible:ring-stone-400 font-medium shadow-2xs transition-all',
     danger:
-      'bg-rose-700 text-white hover:bg-rose-800 focus-visible:ring-rose-600 shadow-sm active:bg-rose-900 font-semibold',
+      'bg-rose-600 hover:bg-rose-700 text-white shadow-sm hover:shadow active:scale-[0.98] focus-visible:ring-rose-600 font-semibold transition-all border border-rose-700',
     ghost:
-      'bg-transparent text-stone-600 hover:bg-stone-100 hover:text-stone-900 focus-visible:ring-stone-300 font-medium',
+      'bg-transparent text-stone-600 hover:bg-stone-100 hover:text-stone-900 focus-visible:ring-stone-300 font-medium transition-colors',
   };
 
   const sizeClasses: Record<ButtonSize, string> = {
-    sm: 'px-4 py-2 text-xs rounded-lg gap-1.5',
-    md: 'px-6 py-3 text-sm rounded-xl gap-2',
-    lg: 'px-8 py-3.5 text-base rounded-xl gap-2.5',
+    xs: 'px-2.5 py-1 text-[11px] rounded-md gap-1',
+    sm: 'px-3.5 py-1.5 text-xs rounded-lg gap-1.5',
+    md: 'px-5 py-2.5 text-sm rounded-xl gap-2',
+    lg: 'px-7 py-3.5 text-base rounded-xl gap-2.5',
   };
 
   return (

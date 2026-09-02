@@ -842,8 +842,8 @@ export const NewsAdminModule: React.FC = () => {
                     </span>
                   </div>
 
-                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-stone-300 hover:border-emerald-700 rounded-lg text-xs font-semibold text-stone-700 hover:text-emerald-800 cursor-pointer shadow-2xs transition-all">
-                    <Upload className="w-3.5 h-3.5 text-emerald-800" />
+                  <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-xs font-semibold text-white cursor-pointer shadow-xs hover:shadow active:scale-95 transition-all border border-emerald-700">
+                    <Upload className="w-3.5 h-3.5 text-white" />
                     <span>Unggah Foto</span>
                     <input
                       type="file"

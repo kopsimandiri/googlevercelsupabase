@@ -1,6 +1,83 @@
 import { getSupabaseClient } from '../lib/supabase';
 
 export const BUKTI_TRANSFER_BUCKET = 'bukti_transfer';
+export const CANDIDATE_BUCKETS = ['bukti_transfer', 'bukti-transfer', 'transaksi', 'bukti_transaksi', 'documents', 'public', 'uploads'];
+
+// In-memory cache for resolved active bucket
+let _resolvedActiveBucket: string | null = null;
+
+/**
+ * Automatically discovers the existing active bucket or creates 'bukti_transfer' as public.
+ */
+export async function resolveActiveBucket(): Promise<string> {
+  if (_resolvedActiveBucket) return _resolvedActiveBucket;
+
+  const client = getSupabaseClient();
+  if (!client) return BUKTI_TRANSFER_BUCKET;
+
+  try {
+    const { data: buckets, error } = await client.storage.listBuckets();
+    if (!error && buckets && buckets.length > 0) {
+      // 1. Check if 'bukti_transfer' exists
+      const exactMatch = buckets.find((b) => b.name === BUKTI_TRANSFER_BUCKET || b.id === BUKTI_TRANSFER_BUCKET);
+      if (exactMatch) {
+        _resolvedActiveBucket = exactMatch.name;
+        return exactMatch.name;
+      }
+
+      // 2. Check candidate names in order
+      for (const cand of CANDIDATE_BUCKETS) {
+        const match = buckets.find((b) => b.name.toLowerCase() === cand.toLowerCase() || b.id.toLowerCase() === cand.toLowerCase());
+        if (match) {
+          console.info(`[Storage] Active bucket resolved to: "${match.name}"`);
+          _resolvedActiveBucket = match.name;
+          return match.name;
+        }
+      }
+
+      // 3. Check any bucket containing 'bukti' or 'transfer' or 'transaksi'
+      const fuzzyMatch = buckets.find((b) => 
+        b.name.toLowerCase().includes('bukti') || 
+        b.name.toLowerCase().includes('transfer') || 
+        b.name.toLowerCase().includes('transaksi')
+      );
+      if (fuzzyMatch) {
+        console.info(`[Storage] Fuzzy matched bucket: "${fuzzyMatch.name}"`);
+        _resolvedActiveBucket = fuzzyMatch.name;
+        return fuzzyMatch.name;
+      }
+
+      // 4. If any public bucket exists, fallback to first public bucket
+      const firstPublic = buckets.find((b) => b.public);
+      if (firstPublic) {
+        console.info(`[Storage] Fallback to public bucket: "${firstPublic.name}"`);
+        _resolvedActiveBucket = firstPublic.name;
+        return firstPublic.name;
+      }
+    }
+
+    // Attempt to auto-create public bucket 'bukti_transfer' if permitted
+    try {
+      const { data: newBucket, error: createErr } = await client.storage.createBucket(BUKTI_TRANSFER_BUCKET, {
+        public: true,
+        fileSizeLimit: 10485760, // 10MB
+        allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+      });
+      if (!createErr && newBucket) {
+        console.info('[Storage] Created new public bucket:', BUKTI_TRANSFER_BUCKET);
+        _resolvedActiveBucket = BUKTI_TRANSFER_BUCKET;
+        return BUKTI_TRANSFER_BUCKET;
+      }
+    } catch {
+      // Ignore createBucket failure if restricted by RLS
+    }
+  } catch (err) {
+    console.warn('[Storage] Exception during resolveActiveBucket:', err);
+  }
+
+  _resolvedActiveBucket = BUKTI_TRANSFER_BUCKET;
+  return BUKTI_TRANSFER_BUCKET;
+}
 
 export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
 -- KOPSIM MANDIRI: BUKTI_TRANSFER STORAGE BUCKET & RLS POLICIES
@@ -269,8 +346,8 @@ export function generateStorageProofPath(
 }
 
 /**
- * Uploads optimized proof blob to Supabase Storage bucket 'bukti_transfer'
- * and returns both the storage path and the permanent publicUrl.
+ * Uploads optimized proof blob to Supabase Storage bucket with auto-resolution and auto-creation fallback.
+ * Returns both the storage path and the permanent publicUrl.
  */
 export async function uploadTransactionProof(
   fileBlob: Blob | File,
@@ -285,20 +362,58 @@ export async function uploadTransactionProof(
     };
   }
 
-  // Ensure clean path without leading slashes
+  const activeBucket = await resolveActiveBucket();
+
+  // Ensure clean path without leading slashes or bucket prefix
   let cleanPath = storagePath.trim().replace(/^\/+/, '');
-  if (cleanPath.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
-    cleanPath = cleanPath.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
+  if (cleanPath.startsWith(`${activeBucket}/`)) {
+    cleanPath = cleanPath.replace(new RegExp(`^${activeBucket}/+`), '');
+  }
+  for (const b of CANDIDATE_BUCKETS) {
+    if (cleanPath.startsWith(`${b}/`)) {
+      cleanPath = cleanPath.replace(new RegExp(`^${b}/+`), '');
+    }
   }
 
   try {
-    const { data, error } = await client.storage
-      .from(BUKTI_TRANSFER_BUCKET)
+    let { data, error } = await client.storage
+      .from(activeBucket)
       .upload(cleanPath, fileBlob, {
         contentType: mimeType,
         cacheControl: '3600',
-        upsert: false,
+        upsert: true,
       });
+
+    // If bucket was not found, attempt auto-create or retry on candidate buckets
+    if (error && (error.message?.toLowerCase().includes('not found') || (error as any)?.statusCode === '404' || (error as any)?.statusCode === 404)) {
+      console.warn(`[Storage] Bucket "${activeBucket}" not found, attempting recovery...`);
+      
+      // Try to create the bucket 'bukti_transfer' as public
+      try {
+        await client.storage.createBucket(BUKTI_TRANSFER_BUCKET, {
+          public: true,
+          fileSizeLimit: 10485760,
+          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+        });
+      } catch (cErr) {
+        console.warn('[Storage] Create bucket attempt:', cErr);
+      }
+
+      // Retry upload on BUKTI_TRANSFER_BUCKET
+      const retryRes = await client.storage
+        .from(BUKTI_TRANSFER_BUCKET)
+        .upload(cleanPath, fileBlob, {
+          contentType: mimeType,
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (!retryRes.error) {
+        data = retryRes.data;
+        error = null;
+        _resolvedActiveBucket = BUKTI_TRANSFER_BUCKET;
+      }
+    }
 
     if (error) {
       console.error('SUPABASE STORAGE UPLOAD ERROR:', error);
@@ -306,16 +421,16 @@ export async function uploadTransactionProof(
       return {
         success: false,
         error: isRlsError
-          ? `Gagal upload ke bucket "${BUKTI_TRANSFER_BUCKET}": new row violates row-level security policy (Akses Ditolak: Hanya pengguna dengan hak ADMIN yang diizinkan mengunggah bukti transaksi).`
-          : `Gagal upload ke bucket "${BUKTI_TRANSFER_BUCKET}": ${error.message}`,
+          ? `Gagal upload ke storage: Akses ditolak oleh kebijakan keamanan RLS. Hubungi Administrator Koperasi.`
+          : `Gagal upload ke bucket "${activeBucket}": ${error.message}`,
       };
     }
 
     const savedPath = data?.path || cleanPath;
 
     // STEP 2.1: Always get public URL for Public Bucket
-    const { data: pubData } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(savedPath);
-    const publicUrl = pubData?.publicUrl || '';
+    const { data: pubData } = client.storage.from(activeBucket).getPublicUrl(savedPath);
+    const publicUrl = pubData?.publicUrl || getPublicProofUrl(savedPath);
 
     return {
       success: true,
@@ -329,6 +444,92 @@ export async function uploadTransactionProof(
       error: err?.message || 'Terjadi kesalahan jaringan saat mengunggah file bukti.',
     };
   }
+}
+
+/**
+ * Searches for a proof file in the storage bucket based on transaction_no.
+ * Looks in root, year/month subdirectories, and candidate buckets.
+ */
+export async function findProofInBucketByTransactionNo(
+  transactionNo: string,
+  transactionDate?: string
+): Promise<{
+  found: boolean;
+  path?: string;
+  publicUrl?: string;
+  bucketName?: string;
+  fileName?: string;
+}> {
+  if (!transactionNo) return { found: false };
+
+  const client = getSupabaseClient();
+  if (!client) return { found: false };
+
+  const cleanTrxNo = transactionNo.trim();
+  const searchPattern = cleanTrxNo.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  const activeBucket = await resolveActiveBucket();
+  const bucketList = Array.from(new Set([activeBucket, ...CANDIDATE_BUCKETS]));
+
+  // Paths to inspect
+  const foldersToCheck: string[] = [''];
+  if (transactionDate) {
+    const d = new Date(transactionDate);
+    if (!isNaN(d.getTime())) {
+      const yyyy = String(d.getFullYear());
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      foldersToCheck.unshift(`${yyyy}/${mm}`);
+      foldersToCheck.push(yyyy);
+    }
+  }
+
+  // Also add current year and recent years
+  const currentYear = new Date().getFullYear();
+  foldersToCheck.push(String(currentYear));
+  for (let m = 1; m <= 12; m++) {
+    foldersToCheck.push(`${currentYear}/${String(m).padStart(2, '0')}`);
+  }
+
+  for (const bucket of bucketList) {
+    for (const folder of foldersToCheck) {
+      try {
+        const { data: files, error } = await client.storage
+          .from(bucket)
+          .list(folder, {
+            limit: 100,
+            search: searchPattern,
+            sortBy: { column: 'created_at', order: 'desc' },
+          });
+
+        if (!error && files && files.length > 0) {
+          // Look for direct or partial match on transactionNo
+          const match = files.find((f) => 
+            f.name.toLowerCase().includes(searchPattern.toLowerCase()) ||
+            f.name.toLowerCase().includes(cleanTrxNo.toLowerCase())
+          );
+
+          if (match) {
+            const fullPath = folder ? `${folder}/${match.name}` : match.name;
+            const { data: pubData } = client.storage.from(bucket).getPublicUrl(fullPath);
+            const publicUrl = pubData?.publicUrl || '';
+
+            console.info(`[Storage] Found proof for ${transactionNo} at: ${bucket}/${fullPath}`);
+            return {
+              found: true,
+              path: fullPath,
+              publicUrl,
+              bucketName: bucket,
+              fileName: match.name,
+            };
+          }
+        }
+      } catch {
+        // Skip inaccessible folder/bucket
+      }
+    }
+  }
+
+  return { found: false };
 }
 
 /**
@@ -433,9 +634,10 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   const client = getSupabaseClient();
   const path = extractStoragePath(trimmed);
   if (!path) return '';
+  const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
 
   if (client) {
-    const { data } = client.storage.from(BUKTI_TRANSFER_BUCKET).getPublicUrl(path);
+    const { data } = client.storage.from(bucketName).getPublicUrl(path);
     if (data?.publicUrl) {
       return data.publicUrl;
     }
@@ -444,7 +646,7 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   // Fallback direct URL builder if client is loading
   const baseUrl = import.meta.env.VITE_SUPABASE_URL || '';
   if (baseUrl) {
-    return `${baseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${BUKTI_TRANSFER_BUCKET}/${path}`;
+    return `${baseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${bucketName}/${path}`;
   }
 
   return trimmed;
