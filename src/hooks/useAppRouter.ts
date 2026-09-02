@@ -16,6 +16,7 @@ export const ROUTE_DEFINITIONS: RouteMapping[] = [
   { path: '/tentang', page: 'TEAM', boundary: 'PUBLIC' },
   { path: '/sejarah', page: 'HISTORY', boundary: 'PUBLIC' },
   { path: '/berita', page: 'NEWS_LIST', boundary: 'PUBLIC' },
+  { path: '/berita/detail', page: 'NEWS_DETAIL', boundary: 'PUBLIC' },
   { path: '/proyek', page: 'PORTOFOLIO', boundary: 'PUBLIC' },
   { path: '/berkas', page: 'FILES', boundary: 'PUBLIC' },
 
@@ -49,8 +50,9 @@ export function pageToPath(page: ActivePage, subTab?: string): string {
     case 'HISTORY':
       return '/sejarah';
     case 'NEWS_LIST':
-    case 'NEWS_DETAIL':
       return '/berita';
+    case 'NEWS_DETAIL':
+      return subTab ? `/berita/${subTab}` : '/berita/detail';
     case 'PORTOFOLIO':
       return '/proyek';
     case 'FILES':
@@ -100,6 +102,10 @@ export function pathToPage(currentPath: string): { page: ActivePage; tab?: strin
   }
 
   // Prefix matching
+  if (normalized.startsWith('/berita/')) {
+    const articleId = normalized.replace('/berita/', '');
+    return { page: 'NEWS_DETAIL', tab: articleId, boundary: 'PUBLIC' };
+  }
   if (normalized.startsWith('/admin')) {
     return { page: 'REPORTS_DASHBOARD', boundary: 'ADMIN' };
   }

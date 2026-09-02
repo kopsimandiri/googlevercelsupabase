@@ -57,6 +57,7 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
   const { showToast } = useNotification();
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(null);
   const [selectedExposure, setSelectedExposure] = useState<ProjectExposure | null>(null);
+  const [selectedProjectUpdate, setSelectedProjectUpdate] = useState<ProjectUpdate | null>(null);
   const [isInquiryOpen, setIsInquiryOpen] = useState(false);
   const [inquiryName, setInquiryName] = useState('');
   const [inquiryPhone, setInquiryPhone] = useState('');
@@ -239,7 +240,8 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
               return (
                 <div
                   key={upd.id}
-                  className="p-5 bg-surface rounded-[var(--radius-card)] border border-stone-200/80 shadow-2xs hover:border-primary-700/50 transition-all space-y-3 flex flex-col justify-between"
+                  onClick={() => setSelectedProjectUpdate(upd)}
+                  className="p-5 bg-surface rounded-[var(--radius-card)] border border-stone-200/80 shadow-2xs hover:border-primary-700/50 hover:shadow-md transition-all space-y-3 flex flex-col justify-between cursor-pointer group"
                 >
                   <div className="space-y-2.5">
                     {upd.foto_url && (
@@ -251,7 +253,7 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
                           onError={(e) => {
                             (e.currentTarget as HTMLImageElement).src = '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
                           }}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                       </div>
                     )}
@@ -266,7 +268,7 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
                       </span>
                     </div>
 
-                    <h4 className="text-sm font-bold text-text-dark leading-snug line-clamp-2">
+                    <h4 className="text-sm font-bold text-text-dark leading-snug line-clamp-2 group-hover:text-primary-700 transition-colors">
                       {upd.judul}
                     </h4>
 
@@ -275,15 +277,24 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
                     </p>
                   </div>
 
-                  {matchedProject && (
-                    <button
-                      onClick={() => setSelectedExposure(matchedProject)}
-                      className="pt-2 border-t border-stone-100 text-[11px] font-semibold text-primary-700 hover:text-primary-900 flex items-center gap-1 cursor-pointer transition-colors text-left"
-                    >
-                      <span>Lihat profil proyek {matchedProject.tagline}</span>
+                  <div className="pt-2 border-t border-stone-100 flex items-center justify-between text-[11px] font-semibold text-primary-700">
+                    <span className="flex items-center gap-1 group-hover:underline">
+                      <span>Baca laporan selengkapnya</span>
                       <ArrowRight className="w-3 h-3" />
-                    </button>
-                  )}
+                    </span>
+                    {matchedProject && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedExposure(matchedProject);
+                        }}
+                        className="text-stone-500 hover:text-stone-900 text-[10px] bg-stone-100 px-2 py-0.5 rounded-sm"
+                      >
+                        Profil Proyek
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -379,6 +390,81 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
           project={selectedExposure}
           onClose={() => setSelectedExposure(null)}
         />
+      )}
+
+      {/* Project Update (Laporan Lapangan) Detail Modal */}
+      {selectedProjectUpdate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-accent-gold-dark font-mono bg-accent-gold/10 px-2 py-0.5 rounded-sm">
+                  Laporan Lapangan
+                </span>
+                <span className="text-[10px] text-text-muted font-mono flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-stone-400" />
+                  {formatDateIndo(selectedProjectUpdate.tanggal)}
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedProjectUpdate(null)}
+                className="p-1 text-stone-400 hover:text-stone-700 rounded-lg hover:bg-stone-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {selectedProjectUpdate.foto_url && (
+              <div className="w-full aspect-16/9 rounded-xl overflow-hidden bg-stone-100">
+                <img
+                  src={selectedProjectUpdate.foto_url}
+                  alt={selectedProjectUpdate.judul}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = '/assets/portfolio/perikanan-ikan-layang-ambon.jpg';
+                  }}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <h3 className="text-lg font-bold text-text-dark font-serif leading-snug">
+                {selectedProjectUpdate.judul}
+              </h3>
+              <p className="text-xs text-stone-700 leading-relaxed whitespace-pre-line">
+                {selectedProjectUpdate.narasi}
+              </p>
+            </div>
+
+            <div className="pt-3 border-t border-stone-100 flex items-center justify-between">
+              {(() => {
+                const matchedProject = exposures.find((e) => e.id === selectedProjectUpdate.project_id);
+                return matchedProject ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => {
+                      const proj = matchedProject;
+                      setSelectedProjectUpdate(null);
+                      setSelectedExposure(proj);
+                    }}
+                  >
+                    Lihat Profil Proyek Lengkap
+                  </Button>
+                ) : <span />;
+              })()}
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setSelectedProjectUpdate(null)}
+              >
+                Tutup Laporan
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Product Detail Modal */}

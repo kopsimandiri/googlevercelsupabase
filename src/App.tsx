@@ -1,4 +1,4 @@
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider, useNotification } from './context/NotificationContext';
 import { TopNavbar } from './components/layout/TopNavbar';
@@ -16,6 +16,7 @@ import { LoadingState } from './components/common/LoadingState';
 import { useAppRouter } from './hooks/useAppRouter';
 import { ActivePage } from './types/navigation';
 import { NewsArticle } from './types/news';
+import { newsService } from './services/newsService';
 
 // Static Lightweight Public Portal Views
 import {
@@ -80,7 +81,7 @@ import {
 } from 'lucide-react';
 
 function AppContent() {
-  const { activePage, navigate } = useAppRouter();
+  const { activePage, activeTab, navigate } = useAppRouter();
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
@@ -88,6 +89,17 @@ function AppContent() {
 
   const { isAuthenticated, isLoading } = useAuth();
   const { showToast } = useNotification();
+
+  // If navigating directly to a news detail URL with article ID, hydrate selectedArticle
+  useEffect(() => {
+    if (activePage === 'NEWS_DETAIL' && !selectedArticle && activeTab && activeTab !== 'detail') {
+      newsService.getArticleById(activeTab).then((article) => {
+        if (article) {
+          setSelectedArticle(article);
+        }
+      });
+    }
+  }, [activePage, activeTab, selectedArticle]);
 
   const handleNavigate = (page: ActivePage) => {
     navigate(page);
