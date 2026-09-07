@@ -21,6 +21,8 @@ import {
   FileText,
   AlertCircle,
   ExternalLink,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface PublicRegisterModalProps {
@@ -67,10 +69,10 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   // State Bukti Transfer Upload
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
-  const [isUploadingProof, setIsUploadingProof] = useState(false);
   const [isProofUploaded, setIsProofUploaded] = useState(false);
   const [uploadedTrxId, setUploadedTrxId] = useState<string | null>(null);
   const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null);
+  const [copiedRekening, setCopiedRekening] = useState(false);
 
   // Ambil data cabang/wilayah dari Supabase tabel 'areas' (kolom area_name)
   useEffect(() => {
@@ -117,6 +119,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
       setIsProofUploaded(false);
       setUploadedTrxId(null);
       setUploadedFileUrl(null);
+      setCopiedRekening(false);
     }
   }, [isOpen]);
 
@@ -159,74 +162,26 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
     }
   };
 
-  // Upload bukti transfer ke bucket 'bukti_transfer' dan catat ke tabel 'transactions'
-  const handleUploadProof = async () => {
-    if (!proofFile) {
-      showToast('Silakan pilih berkas bukti transfer terlebih dahulu.', 'error');
-      return;
+  const handleRemoveFile = () => {
+    setProofFile(null);
+    setProofPreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
-    if (!registeredMemberId) {
-      showToast('Nomor anggota belum terdaftar.', 'error');
-      return;
-    }
+  };
 
-    setIsUploadingProof(true);
-    try {
-      // 1. Simpan berkas bukti transfer ke Supabase Storage bucket 'bukti_transfer'
-      const uploadRes = await uploadPublicRegistrationProof(
-        proofFile,
-        registeredMemberId,
-        proofFile.name
-      );
-
-      if (!uploadRes.success || !uploadRes.fileUrl) {
-        showToast(uploadRes.error || 'Gagal mengunggah bukti transfer.', 'error');
-        setIsUploadingProof(false);
-        return;
-      }
-
-      // 2. Catat transaksi setoran awal ke tabel Supabase 'transactions' dengan kolom 'file_url'
-      const nowStr = new Date().toISOString().split('T')[0];
-      const trxRes = await transactionService.saveTransaction({
-        tanggal: nowStr,
-        referal: 'KOPERASI',
-        plantation: plantation || 'PUSAT JAKARTA',
-        jenis: 'MASUK',
-        kategori: 'Simpanan Pokok & Wajib Anggota Baru',
-        metode_bayar: 'Transfer Bank BSI',
-        jumlah: totalSetoranAwal,
-        filelink: uploadRes.fileUrl,
-        akun: 'Bank BSI',
-        keterangan: `Setoran awal pendaftaran anggota baru a.n. ${nama} (No. Registrasi: ${registeredMemberId})`,
-        customer_id: registeredMemberId,
-        login_as: nama || 'CALON ANGGOTA',
-      });
-
-      if (trxRes.success) {
-        setIsProofUploaded(true);
-        setUploadedTrxId(trxRes.id);
-        setUploadedFileUrl(uploadRes.fileUrl);
-        showToast(
-          'Bukti transfer berhasil diunggah dan diverifikasi ke sistem transaksi KOPSIM!',
-          'success',
-          'Upload Berhasil'
-        );
-        if (onSuccess) onSuccess();
-      } else {
-        showToast(trxRes.error || 'Gagal mencatat transaksi setoran awal.', 'error');
-      }
-    } catch (err: any) {
-      console.error('[PublicRegisterModal] Upload proof error:', err);
-      showToast(err.message || 'Terjadi kesalahan saat mengunggah bukti transfer.', 'error');
-    } finally {
-      setIsUploadingProof(false);
-    }
+  const handleCopyRekening = () => {
+    navigator.clipboard.writeText('7200112233');
+    setCopiedRekening(true);
+    showToast('Nomor rekening BSI (7200112233) berhasil disalin!', 'success');
+    setTimeout(() => setCopiedRekening(false), 2500);
   };
 
   if (!isOpen) return null;
 
   const totalSetoranAwal = simpananPokok + simpananWajibAwal + (Number(simpananSukarelaAwal) || 0);
 
+  // Submit Terpadu 1 Halaman: Simpan Anggota + Upload Bukti + Catat Transaksi
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -246,14 +201,15 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      // 1. Simpan pendaftaran anggota baru ke Supabase
       const res = await memberService.saveMember(
         {
-          nama,
+          nama: nama.trim(),
           gender: 'L',
-          alamat,
+          alamat: alamat.trim(),
           kota: kota || 'Jakarta',
           provinsi,
-          pekerjaan,
+          pekerjaan: pekerjaan.trim() || 'Wiraswasta',
           plantation,
           area_jenis: plantation.toUpperCase().includes('PUSAT') ? 'KOPERASI PUSAT' : 'KOPERASI CABANG',
           simpanan_pokok: simpananPokok,
@@ -263,24 +219,75 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
         },
         {
           nik: cleanNik,
-          phone: noHp,
-          email,
+          phone: noHp.trim(),
+          email: email.trim(),
           work_area: plantation,
         }
       );
 
-      if (res.success && res.id) {
-        setRegisteredMemberId(res.id);
-        setIsRegistered(true);
-        showToast(
-          `Pendaftaran berhasil! Nomor Anggota Baru: ${res.id}`,
-          'success',
-          'Pendaftaran Diterima'
-        );
-        if (onSuccess) onSuccess();
-      } else {
-        showToast(res.error || 'Gagal memproses pendaftaran.', 'error');
+      if (!res.success || !res.id) {
+        showToast(res.error || 'Gagal memproses pendaftaran anggota.', 'error');
+        setIsSubmitting(false);
+        return;
       }
+
+      const newMemberId = res.id;
+      setRegisteredMemberId(newMemberId);
+
+      // 2. Jika ada berkas bukti transfer yang dilampirkan, proses upload & catat transaksi
+      let proofUploaded = false;
+      let finalFileUrl: string | null = null;
+      let finalTrxId: string | null = null;
+
+      if (proofFile) {
+        try {
+          const uploadRes = await uploadPublicRegistrationProof(
+            proofFile,
+            newMemberId,
+            proofFile.name
+          );
+
+          if (uploadRes.success && uploadRes.fileUrl) {
+            finalFileUrl = uploadRes.fileUrl;
+            setUploadedFileUrl(finalFileUrl);
+
+            const nowStr = new Date().toISOString().split('T')[0];
+            const trxRes = await transactionService.saveTransaction({
+              tanggal: nowStr,
+              referal: 'KOPERASI',
+              plantation: plantation || 'PUSAT JAKARTA',
+              jenis: 'MASUK',
+              kategori: 'Simpanan Pokok & Wajib Anggota Baru',
+              metode_bayar: 'Transfer Bank BSI',
+              jumlah: totalSetoranAwal,
+              filelink: finalFileUrl,
+              akun: 'Bank BSI',
+              keterangan: `Setoran awal pendaftaran anggota baru a.n. ${nama} (No. Registrasi: ${newMemberId})`,
+              customer_id: newMemberId,
+              login_as: nama || 'CALON ANGGOTA',
+            });
+
+            if (trxRes.success) {
+              proofUploaded = true;
+              finalTrxId = trxRes.id || null;
+              setUploadedTrxId(finalTrxId);
+              setIsProofUploaded(true);
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('[PublicRegisterModal] Upload bukti warning:', uploadErr);
+        }
+      }
+
+      setIsRegistered(true);
+      showToast(
+        proofUploaded
+          ? `Pendaftaran dan bukti transfer berhasil dikirim! No. Anggota: ${newMemberId}`
+          : `Pendaftaran berhasil! No. Anggota: ${newMemberId}`,
+        'success',
+        'Registrasi Berhasil'
+      );
+      if (onSuccess) onSuccess();
     } catch (err: any) {
       showToast(err.message || 'Terjadi kesalahan sistem pendaftaran.', 'error');
     } finally {
@@ -291,31 +298,31 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   return (
     <div
       id="public-register-modal-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/65 backdrop-blur-xs overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/65 backdrop-blur-xs overflow-y-auto"
     >
-      <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-xl w-full p-6 space-y-4 my-8 max-h-[92vh] flex flex-col">
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-2xl w-full p-5 sm:p-6 space-y-4 my-6 max-h-[94vh] flex flex-col">
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-stone-100 pb-3 shrink-0">
           <div className="flex items-center gap-3">
             <KopsimLogo size="md" badgeBackground={true} />
             <div>
-              <h3 className="font-bold text-stone-900 font-serif text-sm">
-                Pendaftaran Anggota Baru KOPSIM
+              <h3 className="font-bold text-stone-900 font-serif text-sm sm:text-base">
+                Formulir Pendaftaran Anggota Baru KOPSIM
               </h3>
               <p className="text-[11px] text-stone-500">
-                Koperasi Syarikat Islam Mandiri — Form Registrasi Online
+                Lengkapi biodata dan lampirkan bukti transfer setoran awal dalam 1 formulir terpadu
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 text-stone-400 hover:text-stone-700 rounded-lg transition-colors"
+            className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Success Confirmation View */}
+        {/* Success Confirmation View (Setelah Submit Berhasil) */}
         {isRegistered ? (
           <div className="space-y-4 py-3 text-center overflow-y-auto flex-1 pr-1">
             <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-inner">
@@ -323,324 +330,376 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
             </div>
             <div className="space-y-1">
               <h4 className="text-base font-bold text-emerald-950 font-serif">
-                Alhamdulillah! Registrasi Berhasil
+                Alhamdulillah! Pendaftaran Berhasil Dikirim
               </h4>
               <p className="text-xs text-stone-600 max-w-md mx-auto leading-relaxed">
-                Formulir pendaftaran Anda telah tercatat di sistem KOPSIM Mandiri dengan Nomor Registrasi:
+                Formulir pendaftaran dan rincian keanggotaan Anda telah tercatat resmi di sistem KOPSIM Mandiri:
               </p>
-              <div className="inline-block px-4 py-2 bg-stone-100 border border-stone-300 rounded-xl font-mono font-bold text-emerald-950 text-sm mt-2">
-                {registeredMemberId}
+              <div className="inline-block px-4 py-2 bg-emerald-50 border border-emerald-300 rounded-xl font-mono font-bold text-emerald-950 text-sm mt-2 shadow-xs">
+                Nomor Registrasi: {registeredMemberId}
               </div>
             </div>
 
-            {/* Rekening Transfer Simpanan */}
-            <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl text-left text-xs space-y-2">
-              <span className="font-bold text-emerald-900 block">
-                Instruksi Pembayaran Simpanan Awal:
-              </span>
-              <div className="flex justify-between font-mono font-bold text-stone-800 text-sm border-b border-emerald-200 pb-1.5">
-                <span>Total Setoran Awal:</span>
-                <span className="text-emerald-950">{formatRupiah(totalSetoranAwal)}</span>
-              </div>
-              <p className="text-[11px] text-stone-600">
-                Silakan transfer setoran awal ke rekening resmi Koperasi Syarikat Islam Mandiri:
-              </p>
-              <div className="p-2.5 bg-white rounded-lg border border-emerald-300 font-mono text-xs">
-                <span className="text-stone-500 block">Bank Syariah Indonesia (BSI)</span>
-                <strong className="text-emerald-950 text-sm">No. Rek: 7200112233</strong>
-                <span className="text-stone-500 block">a.n. Koperasi Syarikat Islam Mandiri</span>
-              </div>
-              <p className="text-[10px] text-stone-500 italic">
-                * Tim verifikasi kepengurusan akan memvalidasi setoran dan mengaktifkan KTA Digital Anda dalam 1x24 jam.
-              </p>
-            </div>
-
-            {/* Upload Bukti Transfer Section */}
-            <div className="p-4 bg-stone-50 border border-stone-200 rounded-xl text-left space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xs">
-                    <UploadCloud className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h5 className="font-bold text-stone-900 text-xs">
-                      Unggah Bukti Transfer Setoran Awal
-                    </h5>
-                    <p className="text-[11px] text-stone-500">
-                      Tersimpan di sistem KOPSIM & otomatis diverifikasi pengurus
-                    </p>
-                  </div>
+            {/* Status Bukti Transfer */}
+            {isProofUploaded ? (
+              <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-xl text-left space-y-2 max-w-lg mx-auto">
+                <div className="flex items-center gap-2 text-emerald-900 font-semibold text-xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Bukti transfer berhasil diverifikasi ke sistem transaksi!</span>
                 </div>
-                {isProofUploaded && (
-                  <Badge variant="success" size="sm">
-                    <CheckCircle2 className="w-3 h-3 mr-1 inline" />
-                    Terunggah
-                  </Badge>
+                <div className="text-[11px] text-stone-600 flex justify-between">
+                  <span>No. Transaksi Setoran:</span>
+                  <strong className="font-mono text-stone-800">{uploadedTrxId || 'Tercatat'}</strong>
+                </div>
+                <div className="text-[11px] text-stone-600 flex justify-between">
+                  <span>Total Setoran Awal:</span>
+                  <strong className="font-bold text-emerald-900">{formatRupiah(totalSetoranAwal)}</strong>
+                </div>
+                {uploadedFileUrl && (
+                  <div className="mt-2 pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
+                    <span className="text-stone-500">Lampiran bukti:</span>
+                    <a
+                      href={uploadedFileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-700 hover:text-emerald-900 font-medium underline inline-flex items-center gap-1"
+                    >
+                      <FileCheck className="w-3.5 h-3.5" />
+                      Buka Berkas Bukti
+                    </a>
+                  </div>
                 )}
               </div>
+            ) : (
+              <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl text-left space-y-1.5 max-w-lg mx-auto text-xs text-stone-700">
+                <span className="font-bold text-amber-900 block flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                  Pendaftaran Disimpan Tanpa Bukti Transfer
+                </span>
+                <p className="text-[11px] text-stone-600 leading-relaxed">
+                  Anda dapat menyusulkan bukti transfer ke pengurus melalui WhatsApp Center KOPSIM dengan menyebutkan Nomor Registrasi: <strong>{registeredMemberId}</strong>.
+                </p>
+              </div>
+            )}
 
-              {isProofUploaded ? (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg space-y-2">
-                  <div className="flex items-center gap-2 text-emerald-900 font-semibold text-xs">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Bukti transfer berhasil tersimpan ke sistem transaksi!</span>
-                  </div>
-                  <div className="text-[11px] text-stone-600 flex justify-between">
-                    <span>No. Transaksi:</span>
-                    <strong className="font-mono text-stone-800">{uploadedTrxId}</strong>
-                  </div>
-                  {uploadedFileUrl && (
-                    <div className="mt-2 pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
-                      <span className="text-stone-500">Lampiran bukti:</span>
-                      <a
-                        href={uploadedFileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-emerald-700 hover:text-emerald-900 font-medium underline inline-flex items-center gap-1"
-                      >
-                        <FileCheck className="w-3.5 h-3.5" />
-                        Lihat Berkas Bukti
-                      </a>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  <div className="border-2 border-dashed border-stone-300 hover:border-amber-500 transition-colors rounded-xl p-3 text-center bg-white">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      id="upload-proof-input"
-                      accept="image/png,image/jpeg,image/webp,image/jpg,application/pdf"
-                      onChange={handleFileChange}
-                      className="hidden"
-                    />
-                    <label
-                      htmlFor="upload-proof-input"
-                      className="cursor-pointer flex flex-col items-center justify-center space-y-1.5"
-                    >
-                      {proofPreview ? (
-                        <div className="relative group max-w-[160px] max-h-[100px] overflow-hidden rounded-lg border border-stone-200 my-1">
-                          <img
-                            src={proofPreview}
-                            alt="Preview Bukti Transfer"
-                            className="object-cover w-full h-full"
-                          />
-                        </div>
-                      ) : (
-                        <UploadCloud className="w-8 h-8 text-stone-400 group-hover:text-amber-600 transition-colors" />
-                      )}
-                      <div>
-                        <span className="text-xs font-semibold text-amber-900 hover:underline">
-                          {proofFile ? proofFile.name : 'Klik untuk memilih bukti transfer (JPG / PNG / PDF)'}
-                        </span>
-                        <p className="text-[10px] text-stone-400">
-                          Maksimal ukuran berkas 10MB
-                        </p>
-                      </div>
-                    </label>
-                  </div>
-
-                  {proofFile && (
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-[11px] text-stone-600 truncate max-w-[220px]">
-                        {proofFile.name} ({(proofFile.size / 1024).toFixed(0)} KB)
-                      </span>
-                      <Button
-                        variant="gold"
-                        size="sm"
-                        onClick={handleUploadProof}
-                        isLoading={isUploadingProof}
-                        disabled={isUploadingProof}
-                      >
-                        <UploadCloud className="w-3.5 h-3.5 mr-1" />
-                        Kirim Bukti Transfer
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="pt-2 flex justify-center gap-2">
-              <Button variant={isProofUploaded ? 'gold' : 'outline'} size="md" onClick={onClose}>
-                {isProofUploaded ? 'Selesai & Tutup' : 'Tutup (Unggah Nanti)'}
+            <div className="pt-3 flex justify-center">
+              <Button variant="gold" size="md" onClick={onClose}>
+                Selesai & Tutup
               </Button>
             </div>
           </div>
         ) : (
-          /* Registration Form */
-          <form onSubmit={handleSubmit} className="space-y-3.5 text-xs overflow-y-auto flex-1 pr-1">
-            <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-xl text-stone-700 space-y-1">
-              <span className="font-bold text-amber-900 block">Ketentuan Pokok Anggota:</span>
-              <ul className="list-disc pl-4 text-[11px] space-y-0.5 text-stone-600">
-                <li>Simpanan Pokok: Rp 500.000 (Dibayar 1 kali saat bergabung)</li>
-                <li>Simpanan Wajib: Rp 360.000 (Paket 3 Tahun Pertama / Rp 120.000/tahun)</li>
-                <li>Berhak atas KTA Digital, akses laporan SHU tahunan, dan hak partisipasi unit usaha</li>
+          /* UNIFIED 1-PAGE FORM (Biodata + Simpanan + Bukti Transfer) */
+          <form onSubmit={handleSubmit} className="space-y-4 text-xs overflow-y-auto flex-1 pr-1">
+            {/* Seksi 1: Ketentuan Pokok */}
+            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-stone-700 space-y-1">
+              <span className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
+                <ShieldCheck className="w-4 h-4 text-amber-700" />
+                Ketentuan Keanggotaan KOPSIM Syariah:
+              </span>
+              <ul className="list-disc pl-5 text-[11px] space-y-0.5 text-stone-600">
+                <li>Simpanan Pokok: <strong>Rp 500.000</strong> (Dibayar 1 kali saat bergabung).</li>
+                <li>Simpanan Wajib: <strong>Rp 360.000</strong> (Paket 3 Tahun Pertama / Rp 120.000/tahun).</li>
+                <li>Hak penuh atas KTA Digital, partisipasi komoditas riil, dan pembagian SHU tahunan.</li>
               </ul>
             </div>
 
-            {/* Biodata */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Nama Lengkap (Sesuai KTP) *</label>
-                <input
-                  type="text"
-                  required
-                  value={nama}
-                  onChange={(e) => setNama(e.target.value)}
-                  placeholder="Contoh: H. Ahmad Subardjo"
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Nomor NIK KTP (16 Digit) *</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={16}
-                  value={nik}
-                  onChange={(e) => setNik(e.target.value.replace(/\D/g, '').slice(0, 16))}
-                  placeholder="16 digit NIK sesuai KTP"
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden font-mono text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Nomor WhatsApp / HP *</label>
-                <input
-                  type="tel"
-                  required
-                  value={noHp}
-                  onChange={(e) => setNoHp(e.target.value)}
-                  placeholder="081234567890"
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden font-mono text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Profesi / Pekerjaan</label>
-                <input
-                  type="text"
-                  value={pekerjaan}
-                  onChange={(e) => setPekerjaan(e.target.value)}
-                  placeholder="Wiraswasta / Petani / Karyawan"
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Provinsi *</label>
-                <select
-                  value={provinsi}
-                  onChange={(e) => handleProvinsiChange(e.target.value)}
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
-                >
-                  {INDONESIA_REGIONS.map((r) => (
-                    <option key={r.name} value={r.name}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Kota / Kabupaten *</label>
-                <select
-                  value={kota}
-                  onChange={(e) => setKota(e.target.value)}
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
-                >
-                  {availableCities.length > 0 ? (
-                    availableCities.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))
-                  ) : (
-                    <option value={kota || 'Lainnya'}>{kota || 'Pilih Kota'}</option>
-                  )}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">
-                  Cabang / Wilayah * {isLoadingAreas && <span className="text-[10px] text-stone-400 font-normal">(Memuat...)</span>}
-                </label>
-                <select
-                  value={plantation}
-                  onChange={(e) => setPlantation(e.target.value)}
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs font-medium text-stone-800"
-                >
-                  {areaOptions.map((areaName) => (
-                    <option key={areaName} value={areaName}>
-                      {areaName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-stone-700 font-semibold mb-1">Alamat Domisili Lengkap</label>
-              <textarea
-                rows={2}
-                value={alamat}
-                onChange={(e) => setAlamat(e.target.value)}
-                placeholder="Jl. ... No. ..., Kelurahan, Kecamatan"
-                className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs resize-none"
-              />
-            </div>
-
-            {/* Simpanan Ringkasan */}
-            <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2">
-              <span className="text-[11px] font-bold text-stone-800 uppercase block">
-                Rincian Setoran Awal
+            {/* Seksi 2: Identitas Diri */}
+            <div className="space-y-2.5 pt-1">
+              <span className="font-bold text-stone-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                <UserPlus className="w-3.5 h-3.5 text-amber-600" />
+                1. Data Identitas Pribadi
               </span>
-              <div className="grid grid-cols-3 gap-2 text-stone-700">
-                <div className="p-2 bg-white rounded border border-stone-200">
-                  <span className="text-[10px] text-stone-500 block">Simpanan Pokok</span>
-                  <span className="font-bold text-xs">{formatRupiah(simpananPokok)}</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-stone-200">
-                  <span className="text-[10px] text-stone-500 block">Simpanan Wajib (3 Thn)</span>
-                  <span className="font-bold text-xs">{formatRupiah(simpananWajibAwal)}</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-stone-200">
-                  <span className="text-[10px] text-stone-500 block">Simpanan Sukarela</span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">
+                    Nama Lengkap (Sesuai KTP) *
+                  </label>
                   <input
-                    type="number"
-                    min="0"
-                    step="50000"
-                    value={simpananSukarelaAwal}
-                    onChange={(e) => setSimpananSukarelaAwal(Number(e.target.value))}
-                    placeholder="Opsional (Rp)"
-                    className="w-full bg-stone-50 border border-stone-300 rounded px-1.5 py-0.5 text-xs font-mono"
+                    type="text"
+                    required
+                    value={nama}
+                    onChange={(e) => setNama(e.target.value)}
+                    placeholder="Contoh: H. Ahmad Subardjo"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">
+                    Nomor NIK KTP (16 Digit) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={16}
+                    value={nik}
+                    onChange={(e) => setNik(e.target.value.replace(/\D/g, '').slice(0, 16))}
+                    placeholder="16 digit NIK sesuai KTP"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden font-mono text-xs"
                   />
                 </div>
               </div>
 
-              <div className="pt-2 flex items-center justify-between border-t border-stone-200">
-                <span className="font-semibold text-emerald-950">Total Setoran Awal yang Disiapkan:</span>
-                <span className="text-sm font-bold text-emerald-950 font-serif">
-                  {formatRupiah(totalSetoranAwal)}
-                </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">
+                    Nomor WhatsApp / HP *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={noHp}
+                    onChange={(e) => setNoHp(e.target.value)}
+                    placeholder="081234567890"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden font-mono text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">
+                    Email Aktif (Opsional)
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nama@email.com"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">
+                    Profesi / Pekerjaan
+                  </label>
+                  <input
+                    type="text"
+                    value={pekerjaan}
+                    onChange={(e) => setPekerjaan(e.target.value)}
+                    placeholder="Wiraswasta / Petani / Karyawan"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Submit Buttons */}
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-100 shrink-0">
-              <Button variant="outline" size="sm" type="button" onClick={onClose}>
-                Batal
-              </Button>
-              <Button variant="gold" size="sm" type="submit" isLoading={isSubmitting}>
-                Kirim Formulir Pendaftaran
-              </Button>
+            {/* Seksi 3: Wilayah & Alamat */}
+            <div className="space-y-2.5 pt-1">
+              <span className="font-bold text-stone-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                <Building className="w-3.5 h-3.5 text-amber-600" />
+                2. Wilayah Domisili & Cabang Koperasi
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">Provinsi *</label>
+                  <select
+                    value={provinsi}
+                    onChange={(e) => handleProvinsiChange(e.target.value)}
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                  >
+                    {INDONESIA_REGIONS.map((r) => (
+                      <option key={r.name} value={r.name}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">Kota / Kabupaten *</label>
+                  <select
+                    value={kota}
+                    onChange={(e) => setKota(e.target.value)}
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                  >
+                    {availableCities.length > 0 ? (
+                      availableCities.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={kota || 'Lainnya'}>{kota || 'Pilih Kota'}</option>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-stone-700 font-semibold mb-1">
+                    Cabang / Wilayah * {isLoadingAreas && <span className="text-[10px] text-stone-400 font-normal">(Memuat...)</span>}
+                  </label>
+                  <select
+                    value={plantation}
+                    onChange={(e) => setPlantation(e.target.value)}
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs font-medium text-stone-800"
+                  >
+                    {areaOptions.map((areaName) => (
+                      <option key={areaName} value={areaName}>
+                        {areaName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-stone-700 font-semibold mb-1">Alamat Lengkap Domisili</label>
+                <textarea
+                  rows={2}
+                  value={alamat}
+                  onChange={(e) => setAlamat(e.target.value)}
+                  placeholder="Jl. ... No. ..., Kelurahan, Kecamatan"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Seksi 4: Rincian Setoran Awal & Rekening Tujuan BSI */}
+            <div className="space-y-2.5 pt-1">
+              <span className="font-bold text-stone-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                <CreditCard className="w-3.5 h-3.5 text-amber-600" />
+                3. Rincian Setoran Awal & Rekening Pembayaran
+              </span>
+
+              <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-stone-700">
+                  <div className="p-2 bg-white rounded-lg border border-stone-200">
+                    <span className="text-[10px] text-stone-500 block">Simpanan Pokok</span>
+                    <span className="font-bold text-xs text-stone-900">{formatRupiah(simpananPokok)}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-stone-200">
+                    <span className="text-[10px] text-stone-500 block">Simpanan Wajib (3 Thn)</span>
+                    <span className="font-bold text-xs text-stone-900">{formatRupiah(simpananWajibAwal)}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-stone-200">
+                    <span className="text-[10px] text-stone-500 block">Simpanan Sukarela</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="50000"
+                      value={simpananSukarelaAwal}
+                      onChange={(e) => setSimpananSukarelaAwal(Number(e.target.value))}
+                      placeholder="Opsional (Rp)"
+                      className="w-full bg-stone-50 border border-stone-300 rounded px-1.5 py-0.5 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-emerald-50/80 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[11px] text-stone-600 block">Rekening Resmi Tujuan Transfer:</span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <strong className="font-mono text-emerald-950 text-sm">BSI 7200112233</strong>
+                      <span className="text-[11px] text-stone-500 font-sans">a.n. Koperasi Syarikat Islam Mandiri</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyRekening}
+                      className="px-2.5 py-1 text-[11px] font-medium bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                    >
+                      {copiedRekening ? <Check className="w-3 h-3 text-emerald-700" /> : <Copy className="w-3 h-3" />}
+                      {copiedRekening ? 'Tersalin!' : 'Salin Rekening'}
+                    </button>
+                    <div className="text-right pl-2 border-l border-emerald-200">
+                      <span className="text-[10px] text-stone-500 block">Total Transfer:</span>
+                      <strong className="text-emerald-950 font-serif text-sm">
+                        {formatRupiah(totalSetoranAwal)}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Seksi 5: Unggah Bukti Transfer (Langsung di Halaman yang Sama) */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-stone-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                  <UploadCloud className="w-3.5 h-3.5 text-amber-600" />
+                  4. Unggah Bukti Transfer Setoran Awal
+                </span>
+                <span className="text-[10px] text-stone-400">JPG, PNG, PDF (Maks. 10MB)</span>
+              </div>
+
+              <div className="border-2 border-dashed border-stone-300 hover:border-amber-500 transition-colors rounded-xl p-3 bg-stone-50/50 text-center">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  id="unified-upload-proof-input"
+                  accept="image/png,image/jpeg,image/webp,image/jpg,application/pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                {proofFile ? (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-2 p-2 bg-white rounded-lg border border-emerald-200">
+                    <div className="flex items-center gap-2.5 overflow-hidden text-left">
+                      {proofPreview ? (
+                        <div className="w-12 h-12 rounded border border-stone-200 overflow-hidden shrink-0">
+                          <img src={proofPreview} alt="Preview" className="w-full h-full object-cover" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded bg-amber-50 text-amber-800 flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="truncate">
+                        <strong className="text-xs text-stone-900 block truncate">{proofFile.name}</strong>
+                        <span className="text-[10px] text-stone-500">
+                          {(proofFile.size / 1024).toFixed(0)} KB • Siap dikirim
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="success" size="sm">
+                        <CheckCircle2 className="w-3 h-3 mr-1 inline" />
+                        Berkas Dipilih
+                      </Badge>
+                      <button
+                        type="button"
+                        onClick={handleRemoveFile}
+                        className="p-1 text-stone-400 hover:text-rose-600 rounded transition-colors"
+                        title="Hapus berkas"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="unified-upload-proof-input"
+                    className="cursor-pointer flex flex-col items-center justify-center py-2 space-y-1"
+                  >
+                    <UploadCloud className="w-7 h-7 text-stone-400 hover:text-amber-600 transition-colors" />
+                    <span className="text-xs font-semibold text-amber-900 hover:underline">
+                      Klik untuk memilih berkas bukti transfer
+                    </span>
+                    <p className="text-[10px] text-stone-400">
+                      Foto struk ATM, bukti transfer m-banking BSI, atau slip setoran bank
+                    </p>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            {/* Submit & Cancel Buttons */}
+            <div className="flex items-center justify-between pt-3 border-t border-stone-100 shrink-0">
+              <span className="text-[11px] text-stone-500 italic hidden sm:inline">
+                * Data Anda terlindungi & diverifikasi oleh pengurus KOPSIM
+              </span>
+              <div className="flex items-center gap-2 ml-auto">
+                <Button variant="outline" size="sm" type="button" onClick={onClose} disabled={isSubmitting}>
+                  Batal
+                </Button>
+                <Button variant="gold" size="sm" type="submit" isLoading={isSubmitting}>
+                  <UserPlus className="w-3.5 h-3.5 mr-1" />
+                  Kirim Pendaftaran & Bukti Transfer
+                </Button>
+              </div>
             </div>
           </form>
         )}
@@ -648,3 +707,4 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
     </div>
   );
 };
+
