@@ -877,20 +877,37 @@ export async function uploadPublicRegistrationProof(
   // 1. Coba upload langsung ke Supabase Storage bucket 'bukti_transfer'
   if (client) {
     try {
-      const activeBucket = await resolveActiveBucket();
       const mimeType = file.type || (fileExt === 'pdf' ? 'application/pdf' : 'image/jpeg');
 
-      const { data, error } = await client.storage
-        .from(activeBucket)
+      // Prioritas 1: Unggah langsung ke bucket resmi 'bukti_transfer'
+      let uploadRes = await client.storage
+        .from(BUKTI_TRANSFER_BUCKET)
         .upload(storagePath, file, {
           contentType: mimeType,
           cacheControl: '3600',
           upsert: true,
         });
 
-      if (!error && data) {
+      let chosenBucket = BUKTI_TRANSFER_BUCKET;
+
+      // Jika error, cek resolveActiveBucket sebagai fallback
+      if (uploadRes.error) {
+        const activeBucket = await resolveActiveBucket();
+        if (activeBucket !== BUKTI_TRANSFER_BUCKET) {
+          uploadRes = await client.storage
+            .from(activeBucket)
+            .upload(storagePath, file, {
+              contentType: mimeType,
+              cacheControl: '3600',
+              upsert: true,
+            });
+          chosenBucket = activeBucket;
+        }
+      }
+
+      if (!uploadRes.error && uploadRes.data) {
         const { data: urlData } = client.storage
-          .from(activeBucket)
+          .from(chosenBucket)
           .getPublicUrl(storagePath);
 
         const publicUrl = urlData?.publicUrl || storagePath;
@@ -901,7 +918,7 @@ export async function uploadPublicRegistrationProof(
         };
       }
 
-      console.warn('[Storage] Public upload to bucket', activeBucket, 'returned error:', error);
+      console.warn('[Storage] Public upload to bucket', chosenBucket, 'returned error:', uploadRes.error);
     } catch (err: any) {
       console.warn('[Storage] Public upload exception, falling back to data URL:', err);
     }

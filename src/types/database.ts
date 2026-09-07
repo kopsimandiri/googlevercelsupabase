@@ -17,7 +17,9 @@ export interface TransactionRecord {
   area_jenis: 'KOPERASI PUSAT' | 'KOPERASI CABANG' | 'PROJECT';
   harga_satuan?: number;
   customer_id?: string;
+  customer_name?: string;
   supplier_id?: string;
+  supplier_name?: string;
 }
 
 export interface MemberRecord {

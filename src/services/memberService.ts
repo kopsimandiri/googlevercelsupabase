@@ -229,7 +229,7 @@ export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extr
     birth_place: (extra.birth_place || (member as any).tempat_lahir || member.kota || 'Jakarta').trim(),
     nik: rawNik,
     work_area: (member.plantation || extra.work_area || 'JKT-01').trim(),
-    legacy_password_hash: (extra.legacy_password_hash || (member as any).legacy_password_hash || '').trim(),
+    legacy_password_hash: (extra.legacy_password_hash || (member as any).legacy_password_hash || extra.password || '123456').trim(),
     avatar_url: (member as any).avatar_url || extra.avatar_url || '',
     status: extra.status || (member as any).status || 'AKTIF',
     created_at: extra.created_at || nowStr,
@@ -243,6 +243,109 @@ export const memberService = {
   },
 
   /**
+   * Menghasilkan username unik berbasis lower(namadepan)
+   * Contoh: "Ahmad Subardjo" -> "ahmad". Jika "ahmad" sudah terpakai -> "ahmad1", "ahmad2", dst.
+   */
+  async generateUniqueUsername(fullName: string): Promise<string> {
+    const cleanName = (fullName || 'anggota').trim();
+    const rawFirstWord = cleanName.split(/\s+/)[0] || 'anggota';
+    const baseUsername = rawFirstWord.toLowerCase().replace(/[^a-z0-9]/g, '') || 'anggota';
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from(MEMBERS_TABLE_NAME)
+          .select('username')
+          .ilike('username', `${baseUsername}%`);
+
+        if (!error && Array.isArray(data)) {
+          const existingUsernames = new Set(
+            data
+              .map((d: any) => String(d.username || '').toLowerCase().trim())
+              .filter(Boolean)
+          );
+
+          if (!existingUsernames.has(baseUsername)) {
+            return baseUsername;
+          }
+
+          let counter = 1;
+          while (existingUsernames.has(`${baseUsername}${counter}`)) {
+            counter++;
+          }
+          return `${baseUsername}${counter}`;
+        }
+      } catch (err) {
+        console.warn('[memberService] generateUniqueUsername query warning:', err);
+      }
+    }
+
+    // Fallback cek data local storage
+    try {
+      const stored = this.getStoredMembers();
+      const existing = new Set(
+        stored.map((m: any) => String(m.username || '').toLowerCase().trim()).filter(Boolean)
+      );
+
+      if (!existing.has(baseUsername)) {
+        return baseUsername;
+      }
+
+      let counter = 1;
+      while (existing.has(`${baseUsername}${counter}`)) {
+        counter++;
+      }
+      return `${baseUsername}${counter}`;
+    } catch {
+      return `${baseUsername}${Math.floor(10 + Math.random() * 90)}`;
+    }
+  },
+
+  /**
+   * Mengambil nomor rekening resmi dari tabel public.areas (bank_account_1, bank_account_2, bank_account_3)
+   * sesuai cabang/wilayah yang dipilih.
+   */
+  async getBankAccountsForArea(areaName: string): Promise<string[]> {
+    if (!areaName) return [];
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('areas')
+          .select('bank_account_1, bank_account_2, bank_account_3')
+          .eq('area_name', areaName)
+          .maybeSingle();
+
+        if (!error && data) {
+          const accs = [data.bank_account_1, data.bank_account_2, data.bank_account_3]
+            .map((s) => (s ? String(s).trim() : ''))
+            .filter((s) => s.length > 0);
+          if (accs.length > 0) return accs;
+        }
+      } catch (err) {
+        console.warn('[memberService] getBankAccountsForArea error:', err);
+      }
+    }
+
+    // Rekening cadangan jika belum terhubung atau kosong di database
+    const defaultFallback: Record<string, string[]> = {
+      'PUSAT JAKARTA': ['Bank BSI 7123456789 (a.n KOPSIM)', 'Bank Mandiri 1230009876543'],
+      'Pusat Jakarta - Menteng': ['Bank BSI 7123456789 (a.n KOPSIM)', 'Bank Mandiri 1230009876543'],
+      'Cabang Jawa Barat - Cianjur & Bandung': ['Bank BSI 7987654321', 'Bank Mandiri 1300012345678'],
+      'Cabang Jawa Timur - Surabaya & Madura': ['Bank Mandiri 1400055443322'],
+      'Cabang Jawa Tengah - Solo & Semarang': ['Bank BSI 7334455667'],
+    };
+
+    return (
+      defaultFallback[areaName] || [
+        'Bank BSI 7200112233 (a.n. Koperasi Syarikat Islam Mandiri)',
+        'Bank Mandiri 1230009876543 (a.n. KOPSIM)',
+      ]
+    );
+  },
+
+  /**
    * Fetches official master areas from Supabase public.areas (with local fallback)
    */
   async getAreasMaster(): Promise<any[]> {
@@ -251,7 +354,7 @@ export const memberService = {
       try {
         const { data, error } = await client
           .from('areas')
-          .select('id, area_code, area_name, province, city, kopwil, referral_type')
+          .select('id, area_code, area_name, province, city, kopwil, referral_type, bank_account_1, bank_account_2, bank_account_3')
           .order('area_code', { ascending: true });
 
         if (!error && Array.isArray(data) && data.length > 0) {
@@ -771,7 +874,23 @@ export const memberService = {
         simpanan_sukarela: memberData.simpanan_sukarela || 0,
       };
 
-      const dbRow = mapMemberRecordToSupabaseRow(newMember, { ...extraPayload, member_no: newId });
+      // Pastikan username unik berbasis lower(namadepan) dan password default 123456
+      let assignedUsername = extraPayload.username;
+      if (!assignedUsername && newMember.nama) {
+        assignedUsername = await this.generateUniqueUsername(newMember.nama);
+      }
+
+      const finalLegacyPassword = (extraPayload.legacy_password_hash || extraPayload.password || '123456').trim();
+
+      const dbRow = mapMemberRecordToSupabaseRow(newMember, {
+        ...extraPayload,
+        username: assignedUsername,
+        legacy_password_hash: finalLegacyPassword,
+        member_no: newId,
+      });
+
+      newMember.username = dbRow.username;
+      newMember.legacy_password_hash = dbRow.legacy_password_hash;
 
       let savedToSupabase = false;
       let supabaseErrorMsg: string | undefined;

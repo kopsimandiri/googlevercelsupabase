@@ -317,14 +317,14 @@ export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord
     payment_method: trx.metode_bayar || 'Bank BSI',
     amount: cleanNumeric(trx.jumlah),
     file_url: trx.filelink || '',
-    account_name_legacy: trx.akun || (trx.referal === 'PROJECT' ? 'DANA PROJECT' : 'Bank BSI'),
+    account_name_legacy: trx.akun || trx.customer_name || (trx.referal === 'PROJECT' ? 'DANA PROJECT' : 'Bank BSI'),
     description: trx.keterangan || '',
     category_name: trx.kategori || 'Kas',
     product_name: trx.sku_name || '',
     supplier_name: trx.supplier_id || '',
     customer_name: trx.customer_id || '',
     qty: cleanNumeric(trx.qty || 1),
-    price: cleanNumeric(trx.harga_satuan || 0),
+    price: cleanNumeric(trx.harga_satuan !== undefined && trx.harga_satuan !== null ? trx.harga_satuan : (trx.jumlah || 0)),
     updated_at: nowStr,
   };
 }

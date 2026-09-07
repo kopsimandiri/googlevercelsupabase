@@ -66,6 +66,18 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   ]);
   const [isLoadingAreas, setIsLoadingAreas] = useState(false);
 
+  // Rekening Bank Resmi Tujuan Transfer dari tabel 'areas'
+  const [bankAccounts, setBankAccounts] = useState<string[]>([
+    'Bank BSI 7123456789 (a.n KOPSIM)',
+    'Bank Mandiri 1230009876543',
+  ]);
+  const [selectedRekening, setSelectedRekening] = useState<string>('Bank BSI 7123456789 (a.n KOPSIM)');
+  const [isLoadingBanks, setIsLoadingBanks] = useState(false);
+
+  // Kredensial Login yang diterbitkan untuk anggota baru
+  const [issuedUsername, setIssuedUsername] = useState<string>('');
+  const [issuedPassword, setIssuedPassword] = useState<string>('123456');
+
   // State Bukti Transfer Upload
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
@@ -110,6 +122,33 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
     };
   }, [isOpen]);
 
+  // Ambil nomor rekening bank resmi dari tabel 'areas' sesuai wilayah/cabang yang dipilih
+  useEffect(() => {
+    let isMounted = true;
+    const fetchBanks = async () => {
+      if (!plantation) return;
+      setIsLoadingBanks(true);
+      try {
+        const banks = await memberService.getBankAccountsForArea(plantation);
+        if (isMounted && Array.isArray(banks) && banks.length > 0) {
+          setBankAccounts(banks);
+          setSelectedRekening((prev) => (banks.includes(prev) ? prev : banks[0]));
+        }
+      } catch (err) {
+        console.warn('[PublicRegisterModal] Gagal memuat rekening cabang:', err);
+      } finally {
+        if (isMounted) setIsLoadingBanks(false);
+      }
+    };
+
+    if (isOpen) {
+      fetchBanks();
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, plantation]);
+
   // Reset state saat modal ditutup / dibuka
   useEffect(() => {
     if (!isOpen) {
@@ -120,6 +159,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
       setUploadedTrxId(null);
       setUploadedFileUrl(null);
       setCopiedRekening(false);
+      setIssuedUsername('');
     }
   }, [isOpen]);
 
@@ -171,9 +211,11 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   };
 
   const handleCopyRekening = () => {
-    navigator.clipboard.writeText('7200112233');
+    const match = selectedRekening.match(/\d{5,}/);
+    const textToCopy = match ? match[0] : selectedRekening;
+    navigator.clipboard.writeText(textToCopy);
     setCopiedRekening(true);
-    showToast('Nomor rekening BSI (7200112233) berhasil disalin!', 'success');
+    showToast(`Nomor rekening (${textToCopy}) berhasil disalin!`, 'success');
     setTimeout(() => setCopiedRekening(false), 2500);
   };
 
@@ -201,7 +243,12 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      // 1. Simpan pendaftaran anggota baru ke Supabase
+      // 1. Generate username unik berbasis lower(namadepan) dan password default 123456
+      const generatedUsername = await memberService.generateUniqueUsername(nama.trim());
+      setIssuedUsername(generatedUsername);
+      setIssuedPassword('123456');
+
+      // 2. Simpan pendaftaran anggota baru ke Supabase
       const res = await memberService.saveMember(
         {
           nama: nama.trim(),
@@ -222,6 +269,9 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
           phone: noHp.trim(),
           email: email.trim(),
           work_area: plantation,
+          username: generatedUsername,
+          legacy_password_hash: '123456',
+          password: '123456',
         }
       );
 
@@ -234,7 +284,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
       const newMemberId = res.id;
       setRegisteredMemberId(newMemberId);
 
-      // 2. Jika ada berkas bukti transfer yang dilampirkan, proses upload & catat transaksi
+      // 3. Jika ada berkas bukti transfer yang dilampirkan, proses upload ke bucket bukti_transfer & catat transaksi
       let proofUploaded = false;
       let finalFileUrl: string | null = null;
       let finalTrxId: string | null = null;
@@ -258,13 +308,16 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
               plantation: plantation || 'PUSAT JAKARTA',
               jenis: 'MASUK',
               kategori: 'Simpanan Pokok & Wajib Anggota Baru',
-              metode_bayar: 'Transfer Bank BSI',
+              metode_bayar: selectedRekening || 'Bank BSI 7200112233',
               jumlah: totalSetoranAwal,
+              harga_satuan: totalSetoranAwal, // price = amount
+              qty: 1,
               filelink: finalFileUrl,
-              akun: 'Bank BSI',
-              keterangan: `Setoran awal pendaftaran anggota baru a.n. ${nama} (No. Registrasi: ${newMemberId})`,
+              akun: nama.trim(), // account_name_legacy sesuai nama lengkap anggota
+              keterangan: `Setoran awal pendaftaran anggota baru a.n. ${nama.trim()} (No. Registrasi: ${newMemberId})`,
               customer_id: newMemberId,
-              login_as: nama || 'CALON ANGGOTA',
+              customer_name: nama.trim(),
+              login_as: nama.trim() || 'CALON ANGGOTA',
             });
 
             if (trxRes.success) {
@@ -338,6 +391,28 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
               <div className="inline-block px-4 py-2 bg-emerald-50 border border-emerald-300 rounded-xl font-mono font-bold text-emerald-950 text-sm mt-2 shadow-xs">
                 Nomor Registrasi: {registeredMemberId}
               </div>
+
+              {/* Akun Login Portal Anggota */}
+              {issuedUsername && (
+                <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl text-left space-y-1.5 max-w-lg mx-auto text-xs mt-3">
+                  <span className="font-bold text-stone-800 block text-[11px] uppercase tracking-wide">
+                    Akun Login Portal Anggota:
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-stone-700">
+                    <div className="p-2 bg-white rounded-lg border border-stone-200">
+                      <span className="text-[10px] text-stone-500 block">Username:</span>
+                      <strong className="font-mono text-emerald-900 text-xs">{issuedUsername}</strong>
+                    </div>
+                    <div className="p-2 bg-white rounded-lg border border-stone-200">
+                      <span className="text-[10px] text-stone-500 block">Password Default:</span>
+                      <strong className="font-mono text-emerald-900 text-xs">{issuedPassword}</strong>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-stone-500">
+                    Simpan data akun di atas untuk login ke Portal Anggota KOPSIM.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Status Bukti Transfer */}
@@ -588,30 +663,46 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
                   </div>
                 </div>
 
-                <div className="p-2.5 bg-emerald-50/80 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <span className="text-[11px] text-stone-600 block">Rekening Resmi Tujuan Transfer:</span>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <strong className="font-mono text-emerald-950 text-sm">BSI 7200112233</strong>
-                      <span className="text-[11px] text-stone-500 font-sans">a.n. Koperasi Syarikat Islam Mandiri</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCopyRekening}
-                      className="px-2.5 py-1 text-[11px] font-medium bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
-                    >
-                      {copiedRekening ? <Check className="w-3 h-3 text-emerald-700" /> : <Copy className="w-3 h-3" />}
-                      {copiedRekening ? 'Tersalin!' : 'Salin Rekening'}
-                    </button>
-                    <div className="text-right pl-2 border-l border-emerald-200">
-                      <span className="text-[10px] text-stone-500 block">Total Transfer:</span>
+                <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-lg space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <label className="text-[11px] text-stone-700 font-semibold flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 text-emerald-700" />
+                      Rekening Resmi Tujuan Transfer ({plantation}):
+                      {isLoadingBanks && <span className="text-[10px] text-stone-400 font-normal">(Memuat...)</span>}
+                    </label>
+                    <div className="text-right">
+                      <span className="text-[10px] text-stone-500 mr-1.5">Total Transfer:</span>
                       <strong className="text-emerald-950 font-serif text-sm">
                         {formatRupiah(totalSetoranAwal)}
                       </strong>
                     </div>
                   </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <select
+                      value={selectedRekening}
+                      onChange={(e) => setSelectedRekening(e.target.value)}
+                      className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-hidden text-xs font-mono font-bold text-emerald-950 shadow-2xs"
+                    >
+                      {bankAccounts.map((acc) => (
+                        <option key={acc} value={acc}>
+                          {acc}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyRekening}
+                      className="px-3 py-2 text-xs font-medium bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-2xs shrink-0"
+                    >
+                      {copiedRekening ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedRekening ? 'Tersalin!' : 'Salin Rekening'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-stone-500">
+                    * Nomor rekening resmi otomatis disesuaikan dari data cabang/wilayah yang Anda pilih.
+                  </p>
                 </div>
               </div>
             </div>
