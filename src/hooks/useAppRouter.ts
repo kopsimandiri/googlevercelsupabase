@@ -15,10 +15,17 @@ export const ROUTE_DEFINITIONS: RouteMapping[] = [
   { path: '/', page: 'HOME', boundary: 'PUBLIC' },
   { path: '/tentang', page: 'TEAM', boundary: 'PUBLIC' },
   { path: '/sejarah', page: 'HISTORY', boundary: 'PUBLIC' },
+  { path: '/tatakelola', page: 'MANAJEMEN', boundary: 'PUBLIC' },
+  { path: '/manajemen', page: 'MANAJEMEN', boundary: 'PUBLIC' },
+  { path: '/visi-misi', page: 'MANAJEMEN', boundary: 'PUBLIC' },
+  { path: '/gcg', page: 'MANAJEMEN', boundary: 'PUBLIC' },
   { path: '/berita', page: 'NEWS_LIST', boundary: 'PUBLIC' },
   { path: '/berita/detail', page: 'NEWS_DETAIL', boundary: 'PUBLIC' },
   { path: '/proyek', page: 'PORTOFOLIO', boundary: 'PUBLIC' },
   { path: '/berkas', page: 'FILES', boundary: 'PUBLIC' },
+  { path: '/pembiayaan', page: 'LOANS', boundary: 'PUBLIC' },
+  { path: '/notifikasi', page: 'NOTIFICATIONS', boundary: 'PUBLIC' },
+  { path: '/pembayaran', page: 'PAYMENTS', boundary: 'PUBLIC' },
 
   // MEMBER PORTAL
   { path: '/portal/login', page: 'HOME', boundary: 'MEMBER_PORTAL' },
@@ -49,6 +56,8 @@ export function pageToPath(page: ActivePage, subTab?: string): string {
       return '/tentang';
     case 'HISTORY':
       return '/sejarah';
+    case 'MANAJEMEN':
+      return '/tatakelola';
     case 'NEWS_LIST':
       return '/berita';
     case 'NEWS_DETAIL':
@@ -57,6 +66,12 @@ export function pageToPath(page: ActivePage, subTab?: string): string {
       return '/proyek';
     case 'FILES':
       return '/berkas';
+    case 'LOANS':
+      return '/pembiayaan';
+    case 'NOTIFICATIONS':
+      return '/notifikasi';
+    case 'PAYMENTS':
+      return '/pembayaran';
     case 'MEMBER_PORTAL':
       return subTab ? `/portal/${subTab}` : '/portal/dashboard';
     case 'SIMPANAN':
@@ -105,6 +120,23 @@ export function pathToPage(currentPath: string): { page: ActivePage; tab?: strin
   if (normalized.startsWith('/berita/')) {
     const articleId = normalized.replace('/berita/', '');
     return { page: 'NEWS_DETAIL', tab: articleId, boundary: 'PUBLIC' };
+  }
+  if (
+    normalized.startsWith('/tatakelola') ||
+    normalized.startsWith('/manajemen') ||
+    normalized.startsWith('/visi-misi') ||
+    normalized.startsWith('/gcg')
+  ) {
+    return { page: 'MANAJEMEN', boundary: 'PUBLIC' };
+  }
+  if (normalized.startsWith('/pembiayaan') || normalized.startsWith('/simulasi-pembiayaan')) {
+    return { page: 'LOANS', boundary: 'PUBLIC' };
+  }
+  if (normalized.startsWith('/notifikasi')) {
+    return { page: 'NOTIFICATIONS', boundary: 'PUBLIC' };
+  }
+  if (normalized.startsWith('/pembayaran')) {
+    return { page: 'PAYMENTS', boundary: 'PUBLIC' };
   }
   if (normalized.startsWith('/admin')) {
     return { page: 'REPORTS_DASHBOARD', boundary: 'ADMIN' };

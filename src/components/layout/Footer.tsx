@@ -1,8 +1,13 @@
 import React from 'react';
-import { ShieldCheck, HeartHandshake, Phone, Mail, MapPin } from 'lucide-react';
+import { ShieldCheck, HeartHandshake, Phone, Mail, MapPin, ArrowRight } from 'lucide-react';
 import { KopsimLogo } from '../common/KopsimLogo';
+import { ActivePage } from '../../types/navigation';
 
-export const Footer: React.FC = () => {
+interface FooterProps {
+  onNavigate?: (page: ActivePage) => void;
+}
+
+export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   return (
     <footer id="kopsim-footer" className="bg-primary-900 text-stone-300 border-t border-primary-800 mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
@@ -33,8 +38,32 @@ export const Footer: React.FC = () => {
             <ul className="space-y-1.5 text-stone-300">
               <li>• Dewan Pengawas Syariah: Dr. Hamdan Zoelva, S.H., M.H.</li>
               <li>• Berlandaskan Fatwa DSN-MUI & Prinsip Bebas Riba</li>
-              <li>• Kepatuhan Good Corporate Governance (GCG)</li>
-              <li>• Badan Hukum Kemenkumham Terdaftar</li>
+              <li>
+                {onNavigate ? (
+                  <button
+                    onClick={() => onNavigate('MANAJEMEN')}
+                    className="text-left text-stone-300 hover:text-white hover:underline transition-colors cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <span>• Kepatuhan Good Corporate Governance (GCG)</span>
+                    <ArrowRight className="w-3 h-3 text-accent-gold" />
+                  </button>
+                ) : (
+                  <span>• Kepatuhan Good Corporate Governance (GCG)</span>
+                )}
+              </li>
+              <li>
+                {onNavigate ? (
+                  <button
+                    onClick={() => onNavigate('FILES')}
+                    className="text-left text-stone-300 hover:text-white hover:underline transition-colors cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <span>• Badan Hukum Kemenkumham Terdaftar</span>
+                    <ArrowRight className="w-3 h-3 text-accent-gold" />
+                  </button>
+                ) : (
+                  <span>• Badan Hukum Kemenkumham Terdaftar</span>
+                )}
+              </li>
             </ul>
           </div>
 

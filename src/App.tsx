@@ -78,6 +78,15 @@ import {
   Lock,
   Package,
   UserPlus,
+  ArrowRight,
+  Building2,
+  ShieldCheck,
+  CheckCircle2,
+  Scale,
+  FileText,
+  Award,
+  Users,
+  BookOpen,
 } from 'lucide-react';
 
 function AppContent() {
@@ -257,11 +266,21 @@ function AppContent() {
                 <Card
                   title="Kepatuhan Syariah & GCG"
                   subtitle="Dewan Pengawas Syariah Dr. Hamdan Zoelva"
-                  className="hover:border-emerald-700 transition-colors"
+                  className="hover:border-primary-700 transition-all cursor-pointer group hover:shadow-md"
+                  onClick={() => handleNavigate('MANAJEMEN')}
                 >
                   <p className="text-xs text-stone-600 leading-relaxed">
                     Setiap simpanan, investasi unit usaha, dan bagi hasil diawasi ketat agar bebas dari riba, gharar, maysir, dan sesuai prinsip Good Corporate Governance.
                   </p>
+                  <div className="pt-2.5 mt-2.5 border-t border-stone-100 flex items-center justify-between text-[11px] font-semibold text-primary-700">
+                    <span className="group-hover:underline flex items-center gap-1">
+                      Tata Kelola & Visi Misi
+                      <ArrowRight className="w-3 h-3" />
+                    </span>
+                    <span className="text-[10px] bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-sm font-medium">
+                      5 Pilar GCG
+                    </span>
+                  </div>
                 </Card>
 
                 <Card
@@ -350,30 +369,89 @@ function AppContent() {
         return (
           <PageContainer
             title="Tata Kelola & Manajemen (Good Corporate Governance)"
-            subtitle="Landasan strategis, visi-misi, dan prinsip kerja pengurus Koperasi Syarikat Islam Mandiri"
-            breadcrumbs={['Portal Publik', 'Tata Kelola']}
+            subtitle="Landasan strategis, visi-misi, 5 pilar GCG, dan prinsip pengawasan syariah Koperasi Syarikat Islam Mandiri"
+            breadcrumbs={['Portal Publik', 'Tata Kelola (GCG) & Visi Misi']}
             idPrefix="manajemen"
           >
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Highlight Banner / Komitmen GCG */}
+              <div className="p-5 rounded-2xl bg-gradient-to-r from-primary-900 via-primary-800 to-primary-950 text-white border border-primary-700 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1.5 max-w-2xl">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-accent-gold font-mono bg-accent-gold/20 px-2.5 py-0.5 rounded-full border border-accent-gold/30">
+                      Good Corporate Governance (GCG) Syariah
+                    </span>
+                    <span className="text-[10px] text-stone-300 font-mono">
+                      UU No. 25/1992 & Fatwa DSN-MUI
+                    </span>
+                  </div>
+                  <h3 className="text-lg sm:text-xl font-serif font-bold text-white">
+                    Komitmen Integritas, Transparansi, dan Kepatuhan Syariah
+                  </h3>
+                  <p className="text-xs text-stone-200 leading-relaxed">
+                    KOPSIM Mandiri menerapkan standar tata kelola korporasi modern yang akuntabel guna memastikan setiap aset anggota, perputaran modal sektor riil, dan pembagian hasil usaha terkelola secara adil, amanah, dan terhindar dari riba, gharar, dan maysir.
+                  </p>
+                </div>
+                <div className="flex flex-wrap md:flex-col gap-2 shrink-0">
+                  <Button
+                    variant="gold"
+                    size="sm"
+                    onClick={() => handleNavigate('FILES')}
+                    leftIcon={<FileText className="w-3.5 h-3.5" />}
+                    className="text-xs"
+                  >
+                    Berkas Legalitas
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleNavigate('TEAM')}
+                    leftIcon={<Users className="w-3.5 h-3.5" />}
+                    className="text-xs text-white border-white/30 hover:bg-white/10"
+                  >
+                    Susunan Pengurus
+                  </Button>
+                </div>
+              </div>
+
+              {/* Grid 1: Visi Misi & 5 Nilai Inti */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card
                   title="Visi & Misi Koperasi"
-                  subtitle="Landasan strategis organisasi"
+                  subtitle="Landasan strategis dan arah pembangunan jangka panjang"
                 >
                   <div className="space-y-4 text-xs text-stone-700">
                     <div>
-                      <h4 className="font-bold text-emerald-900 mb-1 text-sm">Visi</h4>
-                      <p className="leading-relaxed bg-emerald-50/60 p-3 rounded-lg border border-emerald-200/70 font-medium">
+                      <h4 className="font-bold text-primary-900 mb-1.5 text-sm flex items-center gap-2">
+                        <Award className="w-4 h-4 text-accent-gold" />
+                        Visi Organisasi
+                      </h4>
+                      <p className="leading-relaxed bg-emerald-50/80 p-3.5 rounded-xl border border-emerald-200/80 font-medium text-emerald-950 text-xs sm:text-[13px]">
                         "Menjadi koperasi syariah terkemuka yang membangun kemandirian ekonomi umat melalui ekosistem bisnis sektor riil yang terintegrasi dan berkelanjutan."
                       </p>
                     </div>
                     <div>
-                      <h4 className="font-bold text-emerald-900 mb-1 text-sm">Misi Utama</h4>
-                      <ul className="list-disc pl-5 space-y-1.5 text-stone-600">
-                        <li>Mengembangkan sektor riil berbasis syariah untuk kesejahteraan anggota secara berkelanjutan.</li>
-                        <li>Menciptakan nilai tambah melalui hilirisasi komoditas strategis nasional.</li>
-                        <li>Membangun jaringan logistik dan distribusi yang efisien serta berdaya saing global.</li>
-                        <li>Menerapkan tata kelola profesional, amanah, akuntabel, dan transparan.</li>
+                      <h4 className="font-bold text-primary-900 mb-2 text-sm flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-primary-700" />
+                        Misi Utama KOPSIM
+                      </h4>
+                      <ul className="space-y-2 text-stone-700">
+                        <li className="flex items-start gap-2">
+                          <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-800 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                          <span>Mengembangkan usaha sektor riil (agrikultur, perikanan maritim, garam, dan logistik) berbasis syariah untuk kesejahteraan anggota.</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-800 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                          <span>Menciptakan nilai tambah melalui hilirisasi komoditas strategis nasional dan penguatan rantai pasok pangan.</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-800 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
+                          <span>Membangun jaringan logistik, pergudangan modern, dan distribusi yang efisien serta berdaya saing pasar domestik maupun ekspor.</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-800 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">4</span>
+                          <span>Menerapkan tata kelola profesional, amanah, akuntabel, dan transparan didukung infrastruktur teknologi pencatatan modern.</span>
+                        </li>
                       </ul>
                     </div>
                   </div>
@@ -381,21 +459,201 @@ function AppContent() {
 
                 <Card
                   title="5 Nilai Inti (Core Values)"
-                  subtitle="Prinsip kerja seluruh insan KOPSIM Mandiri"
+                  subtitle="Prinsip kerja seluruh insan Koperasi Syarikat Islam Mandiri"
                 >
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-3">
                     {[
-                      { name: '1. Syariah', desc: 'Kepatuhan mutlak pada syariat Islam dan fatwa DSN-MUI.' },
-                      { name: '2. Profesional', desc: 'Kompetensi teruji, berintegritas, dan berorientasi hasil.' },
-                      { name: '3. Sinergi', desc: 'Kolaborasi produktif antar anggota, petani, dan mitra bisnis.' },
-                      { name: '4. Transparan', desc: 'Keterbukaan pelaporan keuangan real-time dan akuntabel.' },
-                      { name: '5. Berkelanjutan', desc: 'Memberikan manfaat ekonomi jangka panjang bagi generasi umat.' },
-                    ].map((v, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-stone-50 border border-stone-200">
-                        <span className="text-xs font-bold text-emerald-950 block">{v.name}</span>
-                        <span className="text-[11px] text-stone-600 mt-0.5 leading-tight block">{v.desc}</span>
+                      {
+                        num: '1',
+                        name: 'Syariah',
+                        color: 'bg-emerald-50 text-emerald-900 border-emerald-200',
+                        desc: 'Kepatuhan mutlak pada syariat Islam dan fatwa Dewan Syariah Nasional (DSN-MUI) dalam setiap akad dan muamalah.',
+                      },
+                      {
+                        num: '2',
+                        name: 'Profesional',
+                        color: 'bg-blue-50 text-blue-900 border-blue-200',
+                        desc: 'Kompetensi teruji, berintegritas tinggi, disiplin operasional, dan fokus pada pencapaian hasil terbaik.',
+                      },
+                      {
+                        num: '3',
+                        name: 'Sinergi',
+                        color: 'bg-amber-50 text-amber-900 border-amber-200',
+                        desc: 'Kolaborasi produktif yang saling menguatkan antar anggota, kelompok tani/nelayan, mitra usaha, dan pemerintah.',
+                      },
+                      {
+                        num: '4',
+                        name: 'Transparan',
+                        color: 'bg-purple-50 text-purple-900 border-purple-200',
+                        desc: 'Keterbukaan pelaporan keuangan real-time, akuntabilitas audit buku jurnal 20 kolom, dan keterbukaan operasional.',
+                      },
+                      {
+                        num: '5',
+                        name: 'Berkelanjutan',
+                        color: 'bg-stone-50 text-stone-900 border-stone-200',
+                        desc: 'Membangun ekosistem bisnis berjangka panjang yang ramah lingkungan dan mewariskan kemandirian ekonomi bagi generasi mendatang.',
+                      },
+                    ].map((v) => (
+                      <div key={v.num} className={`p-3 rounded-xl border flex items-start gap-3 ${v.color}`}>
+                        <span className="w-6 h-6 rounded-lg bg-white/80 font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                          {v.num}
+                        </span>
+                        <div>
+                          <span className="text-xs font-bold block">{v.name}</span>
+                          <span className="text-[11px] opacity-90 mt-0.5 leading-relaxed block">{v.desc}</span>
+                        </div>
                       </div>
                     ))}
+                  </div>
+                </Card>
+              </div>
+
+              {/* Grid 2: 5 Pilar Good Corporate Governance (GCG) */}
+              <Card
+                title="5 Pilar Utama Good Corporate Governance (GCG)"
+                subtitle="Pedoman baku kepatuhan tata kelola perkoperasian modern yang bersih dan berkeadilan"
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                  <div className="p-4 rounded-xl bg-stone-50 border border-stone-200/80 space-y-2 hover:border-primary-600 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                        <BookOpen className="w-4 h-4" />
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-sm">1. Transparansi (Transparency)</h4>
+                    </div>
+                    <p className="text-stone-600 leading-relaxed text-[11px]">
+                      Keterbukaan akses informasi relevan bagi seluruh anggota. Pencatatan transaksi buku jurnal kas terdistribusi, transparansi biaya/margin usaha, serta laporan perkembangan proyek komoditas yang dapat diverifikasi.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-stone-50 border border-stone-200/80 space-y-2 hover:border-primary-600 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-blue-100 text-blue-800">
+                        <Scale className="w-4 h-4" />
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-sm">2. Akuntabilitas (Accountability)</h4>
+                    </div>
+                    <p className="text-stone-600 leading-relaxed text-[11px]">
+                      Kejelasan fungsi, struktur, dan pertanggungjawaban organ koperasi (Pengurus, Pengawas, dan Dewan Pengawas Syariah). Seluruh kinerja dipertanggungjawabkan dalam forum resmi Rapat Anggota Tahunan (RAT).
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-stone-50 border border-stone-200/80 space-y-2 hover:border-primary-600 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-amber-100 text-amber-800">
+                        <ShieldCheck className="w-4 h-4" />
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-sm">3. Responsibilitas (Responsibility)</h4>
+                    </div>
+                    <p className="text-stone-600 leading-relaxed text-[11px]">
+                      Kesesuaian pengelolaan koperasi terhadap peraturan perundang-undangan perkoperasian yang berlaku, regulasi perizinan usaha Kemenkumham, serta tanggung jawab sosial pemberdayaan ekonomi masyarakat sekitar.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-stone-50 border border-stone-200/80 space-y-2 hover:border-primary-600 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-purple-100 text-purple-800">
+                        <Building2 className="w-4 h-4" />
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-sm">4. Independensi (Independency)</h4>
+                    </div>
+                    <p className="text-stone-600 leading-relaxed text-[11px]">
+                      Pengelolaan organisasi secara objektif dan profesional tanpa benturan kepentingan (*conflict of interest*) maupun intervensi pihak luar yang dapat merugikan kepentingan sah anggota koperasi.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-stone-50 border border-stone-200/80 space-y-2 hover:border-primary-600 transition-colors sm:col-span-2 lg:col-span-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                        <Award className="w-4 h-4" />
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-sm">5. Kewajaran & Kesetaraan (Fairness)</h4>
+                    </div>
+                    <p className="text-stone-600 leading-relaxed text-[11px]">
+                      Keadilan dan kesetaraan dalam memenuhi hak-hak anggota yang timbul berdasarkan perjanjian dan peraturan perundang-undangan. Setiap anggota—mulai dari petani, nelayan, hingga penyimpan dana—memperoleh porsi bagi hasil dan Sisa Hasil Usaha (SHU) secara proporsional dan adil.
+                    </p>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Grid 3: Dewan Pengawas Syariah & Struktur Pengawasan */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card
+                  title="Dewan Pengawas Syariah (DPS)"
+                  subtitle="Kepatuhan fatwa dan audit akad syariah"
+                >
+                  <div className="space-y-3.5 text-xs text-stone-700">
+                    <div className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-200">
+                      <div className="w-10 h-10 rounded-full bg-primary-800 text-white font-serif font-bold text-sm flex items-center justify-center shrink-0">
+                        HZ
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-stone-900 text-sm">Dr. Hamdan Zoelva, S.H., M.H.</h4>
+                        <span className="text-[11px] text-accent-gold-dark font-medium">Ketua Dewan Pengawas Syariah</span>
+                      </div>
+                    </div>
+
+                    <p className="text-stone-600 leading-relaxed">
+                      Dewan Pengawas Syariah bertugas memberikan opini, rekomendasi, serta pengawasan berkala atas seluruh produk simpanan, pembiayaan modal kerja, dan akad kerjasama komoditas sektor riil agar senantiasa selaras dengan tuntunan syariat Islam.
+                    </p>
+
+                    <div className="pt-2 border-t border-stone-100 space-y-1.5">
+                      <span className="text-[11px] font-bold text-stone-800 block">Akad Muamalah yang Digunakan:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {['Murabahah (Jual-Beli)', 'Mudharabah (Bagi Hasil)', 'Musyarakah (Kemitraan Modal)', 'Ijarah (Sewa/Jasa)', 'Salam / Istishna (Pesanan Komoditas)'].map((akad) => (
+                          <span key={akad} className="text-[10px] bg-stone-100 text-stone-800 px-2.5 py-1 rounded-md font-medium border border-stone-200">
+                            {akad}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card
+                  title="Legalitas & Badan Hukum Resmi"
+                  subtitle="Status terdaftar dan pengawasan perizinan"
+                >
+                  <div className="space-y-3 text-xs text-stone-700">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between p-2.5 bg-stone-50 rounded-lg border border-stone-200">
+                        <span className="font-semibold text-stone-800">Status Badan Hukum:</span>
+                        <span className="font-mono font-bold text-primary-800">Terdaftar Kemenkumham RI</span>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 bg-stone-50 rounded-lg border border-stone-200">
+                        <span className="font-semibold text-stone-800">Afiliasi Gerakan:</span>
+                        <span className="font-mono font-bold text-stone-800">Syarikat Islam (Est. 1905)</span>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 bg-stone-50 rounded-lg border border-stone-200">
+                        <span className="font-semibold text-stone-800">Prinsip Akuntansi:</span>
+                        <span className="font-mono font-bold text-stone-800">Buku Jurnal 20 Kolom & SAK ETAP</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-stone-500 leading-relaxed">
+                      Dokumen Anggaran Dasar (AD), Anggaran Rumah Tangga (ART), Nomor Induk Berusaha (NIB), dan perizinan komoditas tersedia pada repositori Berkas Publik untuk diunduh dan dipelajari oleh anggota dan calon mitra.
+                    </p>
+
+                    <div className="pt-2 flex items-center justify-between">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleNavigate('FILES')}
+                        leftIcon={<FileText className="w-3.5 h-3.5" />}
+                        className="text-xs"
+                      >
+                        Buka Repositori Berkas
+                      </Button>
+                      <Button
+                        variant="gold"
+                        size="sm"
+                        onClick={() => setShowRegisterModal(true)}
+                        leftIcon={<UserPlus className="w-3.5 h-3.5" />}
+                        className="text-xs"
+                      >
+                        Daftar Anggota
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               </div>
@@ -758,7 +1016,7 @@ function AppContent() {
         {/* Dynamic Main View */}
         <main className="flex-1 overflow-y-auto flex flex-col min-w-0" id="kopsim-main-view">
           <div className="flex-1">{renderContent()}</div>
-          <Footer />
+          <Footer onNavigate={handleNavigate} />
         </main>
       </div>
 
