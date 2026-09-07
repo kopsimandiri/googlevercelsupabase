@@ -398,7 +398,7 @@ function AppContent() {
                     size="sm"
                     onClick={() => handleNavigate('FILES')}
                     leftIcon={<FileText className="w-3.5 h-3.5" />}
-                    className="text-xs"
+                    className="text-xs font-bold"
                   >
                     Berkas Legalitas
                   </Button>
@@ -406,8 +406,8 @@ function AppContent() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleNavigate('TEAM')}
-                    leftIcon={<Users className="w-3.5 h-3.5" />}
-                    className="text-xs text-white border-white/30 hover:bg-white/10"
+                    leftIcon={<Users className="w-3.5 h-3.5 text-primary-800" />}
+                    className="text-xs bg-white text-primary-950 font-bold hover:bg-emerald-50 hover:text-primary-900 border border-white shadow-xs"
                   >
                     Susunan Pengurus
                   </Button>
@@ -583,13 +583,30 @@ function AppContent() {
                   subtitle="Kepatuhan fatwa dan audit akad syariah"
                 >
                   <div className="space-y-3.5 text-xs text-stone-700">
-                    <div className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-200">
-                      <div className="w-10 h-10 rounded-full bg-primary-800 text-white font-serif font-bold text-sm flex items-center justify-center shrink-0">
-                        HZ
+                    <div className="flex items-center gap-3.5 p-3.5 bg-stone-50 rounded-xl border border-stone-200">
+                      <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full overflow-hidden border-2 border-accent-gold shadow-md shrink-0 bg-stone-100 ring-2 ring-amber-400/20 relative">
+                        <img
+                          src="/assets/hamdan.jpg"
+                          alt="Dr. Hamdan Zoelva, S.H., M.H."
+                          width={64}
+                          height={64}
+                          loading="lazy"
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          style={{ objectPosition: '50% 12%' }}
+                          className="w-full h-full object-cover scale-105"
+                          onError={(e) => {
+                            // Fallback jika terjadi error muat gambar
+                            const target = e.currentTarget as HTMLImageElement;
+                            target.onerror = null;
+                            target.src = '/assets/logo-kopsim.png';
+                          }}
+                        />
                       </div>
                       <div>
-                        <h4 className="font-bold text-stone-900 text-sm">Dr. Hamdan Zoelva, S.H., M.H.</h4>
-                        <span className="text-[11px] text-accent-gold-dark font-medium">Ketua Dewan Pengawas Syariah</span>
+                        <h4 className="font-bold text-stone-900 text-sm sm:text-[15px]">Dr. Hamdan Zoelva, S.H., M.H.</h4>
+                        <span className="text-[11px] text-accent-gold-dark font-semibold block">Ketua Dewan Pengawas Syariah</span>
+                        <span className="text-[10px] text-stone-500 mt-0.5 block">Mantan Ketua Mahkamah Konstitusi RI & Pakar Hukum Tata Negara</span>
                       </div>
                     </div>
 

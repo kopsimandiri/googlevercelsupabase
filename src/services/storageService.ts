@@ -856,3 +856,80 @@ export async function getSignedProofUrl(storagePath: string): Promise<string | n
   const url = getPublicProofUrl(storagePath);
   return url || null;
 }
+
+/**
+ * Upload bukti transfer pendaftaran anggota baru ke bucket bukti_transfer
+ * Berjalan secara publik (tanpa memerlukan sesi Supabase Auth admin)
+ * dan memiliki fallback otomatis agar data dan berkas slip tidak pernah hilang.
+ */
+export async function uploadPublicRegistrationProof(
+  file: File | Blob,
+  memberId: string,
+  originalFileName?: string
+): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string }> {
+  const client = getSupabaseClient();
+  const rawName = originalFileName || (file instanceof File ? file.name : 'bukti_transfer.jpg');
+  const fileExt = rawName.split('.').pop()?.toLowerCase() || 'jpg';
+  const cleanMemberId = (memberId || 'REG').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const fileName = `${cleanMemberId}_${Date.now()}.${fileExt}`;
+  const storagePath = `pendaftaran/${fileName}`;
+
+  // 1. Coba upload langsung ke Supabase Storage bucket 'bukti_transfer'
+  if (client) {
+    try {
+      const activeBucket = await resolveActiveBucket();
+      const mimeType = file.type || (fileExt === 'pdf' ? 'application/pdf' : 'image/jpeg');
+
+      const { data, error } = await client.storage
+        .from(activeBucket)
+        .upload(storagePath, file, {
+          contentType: mimeType,
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (!error && data) {
+        const { data: urlData } = client.storage
+          .from(activeBucket)
+          .getPublicUrl(storagePath);
+
+        const publicUrl = urlData?.publicUrl || storagePath;
+        return {
+          success: true,
+          fileUrl: publicUrl,
+          storagePath,
+        };
+      }
+
+      console.warn('[Storage] Public upload to bucket', activeBucket, 'returned error:', error);
+    } catch (err: any) {
+      console.warn('[Storage] Public upload exception, falling back to data URL:', err);
+    }
+  }
+
+  // 2. Robust fallback jika storage Supabase offline / RLS strict:
+  // Mengonversi berkas ke Data URL agar berkas bukti transfer tetap tersimpan & dapat dilihat admin
+  try {
+    if (typeof FileReader !== 'undefined') {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      return {
+        success: true,
+        fileUrl: dataUrl,
+        storagePath,
+      };
+    }
+  } catch (readerErr: any) {
+    console.warn('[Storage] FileReader fallback error:', readerErr);
+  }
+
+  return {
+    success: false,
+    error: 'Gagal mengunggah berkas bukti transfer. Silakan periksa koneksi Anda atau coba lagi.',
+  };
+}

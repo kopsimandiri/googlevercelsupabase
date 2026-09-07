@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { memberService } from '../../services/memberService';
+import { transactionService } from '../../services/transactionService';
+import { uploadPublicRegistrationProof } from '../../services/storageService';
+import { INDONESIA_REGIONS } from '../../data/indonesiaRegions';
 import { useNotification } from '../../context/NotificationContext';
 import { formatRupiah, isValidNik, normalizeNik } from '../../utils/formatters';
 import { Button } from '../common/Button';
@@ -15,6 +18,9 @@ import {
   ShieldCheck,
   Building,
   CreditCard,
+  FileText,
+  AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 
 interface PublicRegisterModalProps {
@@ -29,22 +35,193 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   onSuccess,
 }) => {
   const { showToast } = useNotification();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [nama, setNama] = useState('');
   const [nik, setNik] = useState('');
   const [noHp, setNoHp] = useState('');
   const [email, setEmail] = useState('');
   const [alamat, setAlamat] = useState('');
-  const [kota, setKota] = useState('');
   const [provinsi, setProvinsi] = useState('DKI Jakarta');
+  const [kota, setKota] = useState('Jakarta Pusat');
   const [pekerjaan, setPekerjaan] = useState('Wiraswasta');
-  const [plantation, setPlantation] = useState('PUSAT JAKARTA');
+  const [plantation, setPlantation] = useState('Pusat Jakarta - Menteng');
   const [simpananPokok, setSimpananPokok] = useState(500000);
   const [simpananWajibAwal, setSimpananWajibAwal] = useState(360000);
   const [simpananSukarelaAwal, setSimpananSukarelaAwal] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRegistered, setIsRegistered] = useState(false);
   const [registeredMemberId, setRegisteredMemberId] = useState('');
+
+  // Master Cabang / Wilayah dari Supabase tabel 'areas'
+  const [areaOptions, setAreaOptions] = useState<string[]>([
+    'Pusat Jakarta - Menteng',
+    'Cabang Jawa Barat - Bandung',
+    'Cabang Jawa Timur - Surabaya',
+    'Cabang Jawa Tengah - Semarang',
+    'Cabang Banten - Serang',
+    'Cabang Sumatera Utara - Medan',
+  ]);
+  const [isLoadingAreas, setIsLoadingAreas] = useState(false);
+
+  // State Bukti Transfer Upload
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [isUploadingProof, setIsUploadingProof] = useState(false);
+  const [isProofUploaded, setIsProofUploaded] = useState(false);
+  const [uploadedTrxId, setUploadedTrxId] = useState<string | null>(null);
+  const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null);
+
+  // Ambil data cabang/wilayah dari Supabase tabel 'areas' (kolom area_name)
+  useEffect(() => {
+    let isMounted = true;
+    const loadAreas = async () => {
+      setIsLoadingAreas(true);
+      try {
+        const areas = await memberService.getAreasMaster();
+        if (isMounted && Array.isArray(areas) && areas.length > 0) {
+          const names = Array.from(
+            new Set(
+              areas
+                .map((a: any) => (typeof a === 'string' ? a : a.area_name))
+                .filter((n: any) => Boolean(n && String(n).trim().length > 0))
+            )
+          ) as string[];
+
+          if (names.length > 0) {
+            setAreaOptions(names);
+            setPlantation((prev) => (names.includes(prev) ? prev : names[0]));
+          }
+        }
+      } catch (err) {
+        console.warn('[PublicRegisterModal] Gagal memuat master areas:', err);
+      } finally {
+        if (isMounted) setIsLoadingAreas(false);
+      }
+    };
+
+    if (isOpen) {
+      loadAreas();
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
+
+  // Reset state saat modal ditutup / dibuka
+  useEffect(() => {
+    if (!isOpen) {
+      setIsRegistered(false);
+      setProofFile(null);
+      setProofPreview(null);
+      setIsProofUploaded(false);
+      setUploadedTrxId(null);
+      setUploadedFileUrl(null);
+    }
+  }, [isOpen]);
+
+  // Daftar kota dinamis sesuai provinsi yang dipilih dari INDONESIA_REGIONS
+  const availableCities = useMemo(() => {
+    const found = INDONESIA_REGIONS.find(
+      (p) => p.name.toLowerCase() === provinsi.toLowerCase()
+    );
+    return found ? found.cities : [];
+  }, [provinsi]);
+
+  const handleProvinsiChange = (newProv: string) => {
+    setProvinsi(newProv);
+    const found = INDONESIA_REGIONS.find(
+      (p) => p.name.toLowerCase() === newProv.toLowerCase()
+    );
+    if (found && found.cities.length > 0) {
+      setKota(found.cities[0]);
+    } else {
+      setKota('');
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('Ukuran berkas maksimal 10MB', 'error');
+      return;
+    }
+
+    setProofFile(file);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => setProofPreview(reader.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setProofPreview(null);
+    }
+  };
+
+  // Upload bukti transfer ke bucket 'bukti_transfer' dan catat ke tabel 'transactions'
+  const handleUploadProof = async () => {
+    if (!proofFile) {
+      showToast('Silakan pilih berkas bukti transfer terlebih dahulu.', 'error');
+      return;
+    }
+    if (!registeredMemberId) {
+      showToast('Nomor anggota belum terdaftar.', 'error');
+      return;
+    }
+
+    setIsUploadingProof(true);
+    try {
+      // 1. Simpan berkas bukti transfer ke Supabase Storage bucket 'bukti_transfer'
+      const uploadRes = await uploadPublicRegistrationProof(
+        proofFile,
+        registeredMemberId,
+        proofFile.name
+      );
+
+      if (!uploadRes.success || !uploadRes.fileUrl) {
+        showToast(uploadRes.error || 'Gagal mengunggah bukti transfer.', 'error');
+        setIsUploadingProof(false);
+        return;
+      }
+
+      // 2. Catat transaksi setoran awal ke tabel Supabase 'transactions' dengan kolom 'file_url'
+      const nowStr = new Date().toISOString().split('T')[0];
+      const trxRes = await transactionService.saveTransaction({
+        tanggal: nowStr,
+        referal: 'KOPERASI',
+        plantation: plantation || 'PUSAT JAKARTA',
+        jenis: 'MASUK',
+        kategori: 'Simpanan Pokok & Wajib Anggota Baru',
+        metode_bayar: 'Transfer Bank BSI',
+        jumlah: totalSetoranAwal,
+        filelink: uploadRes.fileUrl,
+        akun: 'Bank BSI',
+        keterangan: `Setoran awal pendaftaran anggota baru a.n. ${nama} (No. Registrasi: ${registeredMemberId})`,
+        customer_id: registeredMemberId,
+        login_as: nama || 'CALON ANGGOTA',
+      });
+
+      if (trxRes.success) {
+        setIsProofUploaded(true);
+        setUploadedTrxId(trxRes.id);
+        setUploadedFileUrl(uploadRes.fileUrl);
+        showToast(
+          'Bukti transfer berhasil diunggah dan diverifikasi ke sistem transaksi KOPSIM!',
+          'success',
+          'Upload Berhasil'
+        );
+        if (onSuccess) onSuccess();
+      } else {
+        showToast(trxRes.error || 'Gagal mencatat transaksi setoran awal.', 'error');
+      }
+    } catch (err: any) {
+      console.error('[PublicRegisterModal] Upload proof error:', err);
+      showToast(err.message || 'Terjadi kesalahan saat mengunggah bukti transfer.', 'error');
+    } finally {
+      setIsUploadingProof(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -78,7 +255,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
           provinsi,
           pekerjaan,
           plantation,
-          area_jenis: plantation.includes('PUSAT') ? 'KOPERASI PUSAT' : 'KOPERASI CABANG',
+          area_jenis: plantation.toUpperCase().includes('PUSAT') ? 'KOPERASI PUSAT' : 'KOPERASI CABANG',
           simpanan_pokok: simpananPokok,
           simpanan_wajib: simpananWajibAwal,
           simpanan_sukarela: Number(simpananSukarelaAwal) || 0,
@@ -140,7 +317,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
 
         {/* Success Confirmation View */}
         {isRegistered ? (
-          <div className="space-y-4 py-4 text-center">
+          <div className="space-y-4 py-3 text-center overflow-y-auto flex-1 pr-1">
             <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto shadow-inner">
               <CheckCircle2 className="w-8 h-8" />
             </div>
@@ -178,9 +355,116 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
               </p>
             </div>
 
-            <div className="pt-2 flex justify-center">
-              <Button variant="gold" size="md" onClick={onClose}>
-                Selesai & Tutup
+            {/* Upload Bukti Transfer Section */}
+            <div className="p-4 bg-stone-50 border border-stone-200 rounded-xl text-left space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xs">
+                    <UploadCloud className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-stone-900 text-xs">
+                      Unggah Bukti Transfer Setoran Awal
+                    </h5>
+                    <p className="text-[11px] text-stone-500">
+                      Tersimpan di sistem KOPSIM & otomatis diverifikasi pengurus
+                    </p>
+                  </div>
+                </div>
+                {isProofUploaded && (
+                  <Badge variant="success" size="sm">
+                    <CheckCircle2 className="w-3 h-3 mr-1 inline" />
+                    Terunggah
+                  </Badge>
+                )}
+              </div>
+
+              {isProofUploaded ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-900 font-semibold text-xs">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Bukti transfer berhasil tersimpan ke sistem transaksi!</span>
+                  </div>
+                  <div className="text-[11px] text-stone-600 flex justify-between">
+                    <span>No. Transaksi:</span>
+                    <strong className="font-mono text-stone-800">{uploadedTrxId}</strong>
+                  </div>
+                  {uploadedFileUrl && (
+                    <div className="mt-2 pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
+                      <span className="text-stone-500">Lampiran bukti:</span>
+                      <a
+                        href={uploadedFileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-emerald-700 hover:text-emerald-900 font-medium underline inline-flex items-center gap-1"
+                      >
+                        <FileCheck className="w-3.5 h-3.5" />
+                        Lihat Berkas Bukti
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <div className="border-2 border-dashed border-stone-300 hover:border-amber-500 transition-colors rounded-xl p-3 text-center bg-white">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      id="upload-proof-input"
+                      accept="image/png,image/jpeg,image/webp,image/jpg,application/pdf"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="upload-proof-input"
+                      className="cursor-pointer flex flex-col items-center justify-center space-y-1.5"
+                    >
+                      {proofPreview ? (
+                        <div className="relative group max-w-[160px] max-h-[100px] overflow-hidden rounded-lg border border-stone-200 my-1">
+                          <img
+                            src={proofPreview}
+                            alt="Preview Bukti Transfer"
+                            className="object-cover w-full h-full"
+                          />
+                        </div>
+                      ) : (
+                        <UploadCloud className="w-8 h-8 text-stone-400 group-hover:text-amber-600 transition-colors" />
+                      )}
+                      <div>
+                        <span className="text-xs font-semibold text-amber-900 hover:underline">
+                          {proofFile ? proofFile.name : 'Klik untuk memilih bukti transfer (JPG / PNG / PDF)'}
+                        </span>
+                        <p className="text-[10px] text-stone-400">
+                          Maksimal ukuran berkas 10MB
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  {proofFile && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-stone-600 truncate max-w-[220px]">
+                        {proofFile.name} ({(proofFile.size / 1024).toFixed(0)} KB)
+                      </span>
+                      <Button
+                        variant="gold"
+                        size="sm"
+                        onClick={handleUploadProof}
+                        isLoading={isUploadingProof}
+                        disabled={isUploadingProof}
+                      >
+                        <UploadCloud className="w-3.5 h-3.5 mr-1" />
+                        Kirim Bukti Transfer
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex justify-center gap-2">
+              <Button variant={isProofUploaded ? 'gold' : 'outline'} size="md" onClick={onClose}>
+                {isProofUploaded ? 'Selesai & Tutup' : 'Tutup (Unggah Nanti)'}
               </Button>
             </div>
           </div>
@@ -251,46 +535,53 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-stone-700 font-semibold mb-1">Kota / Kabupaten *</label>
-                <input
-                  type="text"
-                  required
-                  value={kota}
-                  onChange={(e) => setKota(e.target.value)}
-                  placeholder="Jakarta Selatan"
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-stone-700 font-semibold mb-1">Provinsi</label>
+                <label className="block text-stone-700 font-semibold mb-1">Provinsi *</label>
                 <select
                   value={provinsi}
-                  onChange={(e) => setProvinsi(e.target.value)}
+                  onChange={(e) => handleProvinsiChange(e.target.value)}
                   className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
                 >
-                  <option value="DKI Jakarta">DKI Jakarta</option>
-                  <option value="Jawa Barat">Jawa Barat</option>
-                  <option value="Jawa Tengah">Jawa Tengah</option>
-                  <option value="Jawa Timur">Jawa Timur</option>
-                  <option value="Banten">Banten</option>
-                  <option value="Sumatera Utara">Sumatera Utara</option>
-                  <option value="Lainnya">Lainnya</option>
+                  {INDONESIA_REGIONS.map((r) => (
+                    <option key={r.name} value={r.name}>
+                      {r.name}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-stone-700 font-semibold mb-1">Cabang / Wilayah *</label>
+                <label className="block text-stone-700 font-semibold mb-1">Kota / Kabupaten *</label>
+                <select
+                  value={kota}
+                  onChange={(e) => setKota(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                >
+                  {availableCities.length > 0 ? (
+                    availableCities.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))
+                  ) : (
+                    <option value={kota || 'Lainnya'}>{kota || 'Pilih Kota'}</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-stone-700 font-semibold mb-1">
+                  Cabang / Wilayah * {isLoadingAreas && <span className="text-[10px] text-stone-400 font-normal">(Memuat...)</span>}
+                </label>
                 <select
                   value={plantation}
                   onChange={(e) => setPlantation(e.target.value)}
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden text-xs font-medium text-stone-800"
                 >
-                  <option value="PUSAT JAKARTA">PUSAT JAKARTA</option>
-                  <option value="CABANG JAWA BARAT">CABANG JAWA BARAT</option>
-                  <option value="CABANG JAWA TIMUR">CABANG JAWA TIMUR</option>
-                  <option value="CABANG JAWA TENGAH">CABANG JAWA TENGAH</option>
-                  <option value="CABANG SUMATERA">CABANG SUMATERA</option>
+                  {areaOptions.map((areaName) => (
+                    <option key={areaName} value={areaName}>
+                      {areaName}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
