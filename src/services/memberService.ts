@@ -1169,13 +1169,12 @@ export const memberService = {
     const nowStr = new Date().toISOString();
     let savedToSupabase = false;
     let dbReturnedRow: any = null;
+    let targetRow: any = null;
 
     // 1. Update / Upsert ke database Supabase public.members
     if (client) {
       try {
         // Step A: Cari data baris anggota yang cocok di Supabase
-        let targetRow: any = null;
-
         // Cari berdasarkan member_no terlebih dahulu (business identifier unik)
         const { data: rowByNo } = await client
           .from(MEMBERS_TABLE_NAME)
@@ -1185,12 +1184,12 @@ export const memberService = {
 
         if (rowByNo) {
           targetRow = rowByNo;
-        } else if (/^\d+$/.test(cleanId)) {
-          // Cari berdasarkan id jika numerik
+        } else {
+          // Cari berdasarkan id (kolom id di Supabase adalah TEXT misal '0824-03001' atau '0926-03019')
           const { data: rowById } = await client
             .from(MEMBERS_TABLE_NAME)
             .select('*')
-            .eq('id', Number(cleanId))
+            .eq('id', cleanId)
             .maybeSingle();
 
           if (rowById) {
@@ -1264,6 +1263,16 @@ export const memberService = {
               .update(updatePayload)
               .eq('member_no', targetRow.member_no)
               .select();
+
+            if (updateRes.error && updatePayload.avatar_url) {
+              const safePayload = { ...updatePayload };
+              delete safePayload.avatar_url;
+              updateRes = await client
+                .from(MEMBERS_TABLE_NAME)
+                .update(safePayload)
+                .eq('member_no', targetRow.member_no)
+                .select();
+            }
           }
 
           if (!updateRes.error && updateRes.data && updateRes.data.length > 0) {
@@ -1375,6 +1384,9 @@ export const memberService = {
 
       if (payload.avatar_url) {
         localStorage.setItem(`KOPSIM_AVATAR_${cleanId.toUpperCase()}`, payload.avatar_url);
+        if (targetRow?.member_no) {
+          localStorage.setItem(`KOPSIM_AVATAR_${targetRow.member_no.toUpperCase()}`, payload.avatar_url);
+        }
       }
     } catch (localErr) {
       console.warn('Local member cache update error:', localErr);

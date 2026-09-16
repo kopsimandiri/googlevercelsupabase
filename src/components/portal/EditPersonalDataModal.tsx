@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { MemberRecord } from '../../types/database';
 import { memberService } from '../../services/memberService';
 import { useNotification } from '../../context/NotificationContext';
@@ -66,6 +66,41 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Sync state whenever activeMember or modal open state changes
+  useEffect(() => {
+    if (activeMember) {
+      setFormData({
+        nama: activeMember.nama || '',
+        gender: (activeMember.gender === 'P' ? 'P' : 'L') as 'L' | 'P',
+        tempat_lahir: activeMember.tempat_lahir || activeMember.kota || 'Jakarta',
+        tgl_lahir: activeMember.tgl_lahir || '1990-01-01',
+        pekerjaan: activeMember.pekerjaan || 'Anggota Koperasi',
+        alamat: activeMember.alamat || '',
+        kota: activeMember.kota || 'Jakarta Pusat',
+        provinsi: activeMember.provinsi || 'DKI Jakarta',
+      });
+      setAvatarPreview(
+        activeMember.avatar_url ||
+        memberService.getMemberAvatar(activeMember.id) ||
+        memberService.getMemberAvatar((activeMember as any)?.member_no) ||
+        ''
+      );
+      setErrorMsg(null);
+    }
+  }, [
+    activeMember?.id,
+    activeMember?.nama,
+    activeMember?.gender,
+    activeMember?.tempat_lahir,
+    activeMember?.tgl_lahir,
+    activeMember?.alamat,
+    activeMember?.kota,
+    activeMember?.provinsi,
+    activeMember?.pekerjaan,
+    activeMember?.avatar_url,
+    isOpen,
+  ]);
 
   // Handle Photo File Upload & Compression
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -173,6 +208,8 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -287,7 +324,9 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
                 Nomor Anggota (NRA)
               </span>
               <div className="flex items-center justify-between mt-1">
-                <span className="text-xs font-mono font-bold text-emerald-950">{member.id}</span>
+                <span className="text-xs font-mono font-bold text-emerald-950">
+                  {activeMember?.id || (activeMember as any)?.member_no || '-'}
+                </span>
                 <span className="text-[10px] text-stone-400 font-medium flex items-center gap-1">
                   <Lock className="w-3 h-3" /> Terkunci
                 </span>
@@ -300,7 +339,7 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
               </span>
               <div className="flex items-center justify-between mt-1">
                 <span className="text-xs font-mono font-bold text-stone-800">
-                  {member.nik ? member.nik.slice(0, 4) + '************' : '3171************'}
+                  {activeMember?.nik ? activeMember.nik.slice(0, 4) + '************' : '3171************'}
                 </span>
                 <span className="text-[10px] text-stone-400 font-medium flex items-center gap-1">
                   <Lock className="w-3 h-3" /> Terkunci

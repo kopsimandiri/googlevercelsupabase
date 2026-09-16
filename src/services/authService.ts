@@ -432,6 +432,7 @@ export const authService = {
     occupation?: string;
     birthDate?: string;
     birthPlace?: string;
+    avatarUrl?: string;
   }): UserSession | null {
     try {
       const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
@@ -447,6 +448,7 @@ export const authService = {
           ...(updated.occupation !== undefined ? { occupation: updated.occupation } : {}),
           ...(updated.birthDate !== undefined ? { birthDate: updated.birthDate } : {}),
           ...(updated.birthPlace !== undefined ? { birthPlace: updated.birthPlace } : {}),
+          ...(updated.avatarUrl !== undefined ? { avatarUrl: updated.avatarUrl } : {}),
         };
         safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(newSession));
         return newSession;

@@ -1206,6 +1206,7 @@ export const MemberPortalView: React.FC = () => {
         <EditPersonalDataModal
           isOpen={showEditProfileModal}
           onClose={() => setShowEditProfileModal(false)}
+          member={memberData}
           memberData={memberData}
           onSuccess={(updated) => {
             setMemberData(updated);
@@ -1218,6 +1219,7 @@ export const MemberPortalView: React.FC = () => {
                 address: updated.alamat,
                 occupation: updated.pekerjaan,
                 workArea: updated.plantation,
+                avatarUrl: updated.avatar_url,
               });
             }
           }}
