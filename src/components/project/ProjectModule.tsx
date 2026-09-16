@@ -33,7 +33,9 @@ import {
   Image as ImageIcon,
   CheckCircle2,
   FileEdit,
+  Coins,
 } from 'lucide-react';
+import { AdminInvestmentManager } from '../investment/AdminInvestmentManager';
 
 export const ProjectModule: React.FC = () => {
   const { user, role } = useAuth();
@@ -46,6 +48,7 @@ export const ProjectModule: React.FC = () => {
   const [projectProducts, setProjectProducts] = useState<ProductItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isLoadingProducts, setIsLoadingProducts] = useState<boolean>(false);
+  const [projectSubTab, setProjectSubTab] = useState<'OVERVIEW' | 'INVESTASI'>('OVERVIEW');
 
   // Admin Project Updates State
   const exposures = projectExposureService.getExposures();
@@ -196,15 +199,54 @@ export const ProjectModule: React.FC = () => {
       {/* Selected Project Overview Card */}
       {selectedProject && (
         <div className="space-y-6">
-          <Card
-            title={`Proyek ${selectedProject.code} — ${selectedProject.name}`}
-            subtitle={selectedProject.category}
-            action={
-              <Badge variant={selectedProject.saldo >= 0 ? 'success' : 'danger'} size="sm">
-                Status: {selectedProject.status}
-              </Badge>
-            }
-          >
+          {/* Sub Tab Navigation between Project Overview and Investment Manager */}
+          <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setProjectSubTab('OVERVIEW')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  projectSubTab === 'OVERVIEW'
+                    ? 'bg-emerald-900 text-white shadow-xs'
+                    : 'bg-stone-100 text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                Ikhtisar & Keuangan Proyek
+              </button>
+              <button
+                type="button"
+                onClick={() => setProjectSubTab('INVESTASI')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  projectSubTab === 'INVESTASI'
+                    ? 'bg-emerald-900 text-white shadow-xs'
+                    : 'bg-amber-50 text-amber-900 border border-amber-200/80 hover:bg-amber-100'
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5 text-accent-gold" />
+                <span>Kampanye Investasi Syariah (SUKS/Sukuk)</span>
+              </button>
+            </div>
+            <span className="text-[11px] font-mono text-stone-500 hidden sm:inline">
+              Unit: {selectedProject.code}
+            </span>
+          </div>
+
+          {projectSubTab === 'INVESTASI' ? (
+            <AdminInvestmentManager
+              projectId={selectedProject.code}
+              projectName={selectedProject.name}
+            />
+          ) : (
+            <>
+              <Card
+                title={`Proyek ${selectedProject.code} — ${selectedProject.name}`}
+                subtitle={selectedProject.category}
+                action={
+                  <Badge variant={selectedProject.saldo >= 0 ? 'success' : 'danger'} size="sm">
+                    Status: {selectedProject.status}
+                  </Badge>
+                }
+              >
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
               <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 space-y-2">
                 <div className="flex items-center gap-1.5 text-xs text-stone-600">
@@ -355,8 +397,10 @@ export const ProjectModule: React.FC = () => {
               </div>
             )}
           </Card>
-        </div>
+        </>
       )}
+    </div>
+  )}
 
       {/* SECTION ADMIN: KANAL UPDATE PROYEK STRATEGIS */}
       <div className="space-y-6 pt-4 border-t border-stone-200/80" id="admin-project-updates-section">

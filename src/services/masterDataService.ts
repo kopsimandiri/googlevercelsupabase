@@ -10,11 +10,11 @@ import {
   SupplierDbRecord,
   TransactionCategoryRecord,
   UserRoleRecord,
-  SupabaseTableName,
+  MasterDataTableName,
 } from '../types/database';
 
 export interface TableAuditInfo {
-  tableName: SupabaseTableName;
+  tableName: MasterDataTableName;
   label: string;
   columnCount: number;
   columnsList: string[];
@@ -27,7 +27,7 @@ export interface TableAuditInfo {
 }
 
 export const SUPABASE_TABLES_METADATA: Record<
-  SupabaseTableName,
+  MasterDataTableName,
   { label: string; columnCount: number; columns: string[]; primaryKey: string; ddlSql: string }
 > = {
   areas: {
@@ -474,7 +474,7 @@ CREATE INDEX IF NOT EXISTS idx_products_sku_name ON public.products (sku_name);`
 };
 
 // Initial local seeds
-const SEED_DATA: Record<SupabaseTableName, any[]> = {
+const SEED_DATA: Record<MasterDataTableName, any[]> = {
   areas: [
     {
       id: 'AREA-01',
@@ -1318,11 +1318,11 @@ const SEED_DATA: Record<SupabaseTableName, any[]> = {
 };
 
 export const masterDataService = {
-  getLocalStorageKey(table: SupabaseTableName): string {
+  getLocalStorageKey(table: MasterDataTableName): string {
     return `KOPSIM_TABLE_${table.toUpperCase()}`;
   },
 
-  getStoredData<T = any>(table: SupabaseTableName): T[] {
+  getStoredData<T = any>(table: MasterDataTableName): T[] {
     try {
       const stored = localStorage.getItem(this.getLocalStorageKey(table));
       if (stored) return JSON.parse(stored);
@@ -1334,7 +1334,7 @@ export const masterDataService = {
     return seed as T[];
   },
 
-  saveStoredData<T = any>(table: SupabaseTableName, data: T[]): void {
+  saveStoredData<T = any>(table: MasterDataTableName, data: T[]): void {
     localStorage.setItem(this.getLocalStorageKey(table), JSON.stringify(data));
   },
 
@@ -1342,7 +1342,7 @@ export const masterDataService = {
    * Audit all tables in Supabase with exact live checks
    */
   async auditAllTables(): Promise<TableAuditInfo[]> {
-    const tableKeys: SupabaseTableName[] = [
+    const tableKeys: MasterDataTableName[] = [
       'areas',
       'transaction_categories',
       'chart_of_accounts',
@@ -1454,7 +1454,7 @@ export const masterDataService = {
   /**
    * Fetch records for any of the master tables
    */
-  async getTableRecords<T = any>(table: SupabaseTableName): Promise<{ data: T[]; source: 'SUPABASE' | 'LOCAL' }> {
+  async getTableRecords<T = any>(table: MasterDataTableName): Promise<{ data: T[]; source: 'SUPABASE' | 'LOCAL' }> {
     const client = getSupabaseClient();
     if (client) {
       try {
@@ -1475,7 +1475,7 @@ export const masterDataService = {
    * Create or Update a record in any of the master tables
    */
   async saveRecord<T extends { id?: any; area_code?: string; category_code?: string }>(
-    table: SupabaseTableName,
+    table: MasterDataTableName,
     record: T
   ): Promise<{ success: boolean; id: string; error?: string; source: 'SUPABASE' | 'LOCAL' }> {
     const records = this.getStoredData(table) as any[];
@@ -1540,7 +1540,7 @@ export const masterDataService = {
   /**
    * Delete a record from any of the master tables
    */
-  async deleteRecord(table: SupabaseTableName, id: string): Promise<{ success: boolean; error?: string }> {
+  async deleteRecord(table: MasterDataTableName, id: string): Promise<{ success: boolean; error?: string }> {
     let records = this.getStoredData(table);
     records = records.filter((r) => String(r.id) !== String(id) && (r.area_code !== id) && (r.category_code !== id));
     this.saveStoredData(table, records);
@@ -1568,7 +1568,7 @@ export const masterDataService = {
   /**
    * Push Seed Data into Supabase
    */
-  async seedTableToSupabase(table: SupabaseTableName): Promise<{ success: boolean; count: number; error?: string }> {
+  async seedTableToSupabase(table: MasterDataTableName): Promise<{ success: boolean; count: number; error?: string }> {
     const client = getSupabaseClient();
     if (!client) {
       return { success: false, count: 0, error: 'Supabase client belum terhubung' };

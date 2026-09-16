@@ -42,7 +42,9 @@ import {
   FolderGit2,
   Newspaper,
   Compass,
+  Coins,
 } from 'lucide-react';
+import { InvestmentHomeSection } from '../investment/InvestmentHomeSection';
 
 const MARKETPLACE_PRODUCTS: ProductItem[] = [
   { sku: 'IKAN-TUNA-01', name: 'Ikan Tuna Segar Grade A (Sashimi Quality)', category: 'Perikanan & Maritim', grade: 'Grade A Export', packaging: 'Vacuum Pack & Cold Chain Box', availability: 'Tersedia', moq: 50, supplyCapacity: '15 Ton / Bulan', price: 65000 },
@@ -63,6 +65,7 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
   const [inquiryPhone, setInquiryPhone] = useState('');
   const [inquiryQty, setInquiryQty] = useState(100);
   const [inquiryNotes, setInquiryNotes] = useState('');
+  const [activePortalTab, setActivePortalTab] = useState<'INVESTASI' | 'RANTAI_PASOK'>('INVESTASI');
 
   const exposures = projectExposureService.getExposures();
   const [projectUpdates, setProjectUpdates] = useState<ProjectUpdate[]>([]);
@@ -126,8 +129,60 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
 
   return (
     <div className="space-y-8" id="portfolio-marketplace-root">
-      {/* Hero Banner */}
-      <div className="p-6 sm:p-8 bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 rounded-2xl text-white shadow-md border border-emerald-800">
+      {/* Top Mode Switcher: Investasi SCF vs Rantai Pasok */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-2 bg-stone-100/80 rounded-2xl border border-stone-200">
+        <div className="flex items-center gap-1.5 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={() => setActivePortalTab('INVESTASI')}
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+              activePortalTab === 'INVESTASI'
+                ? 'bg-emerald-900 text-white shadow-md'
+                : 'text-stone-700 hover:text-stone-900 hover:bg-stone-200/60'
+            }`}
+          >
+            <Coins className="w-4 h-4 text-accent-gold" />
+            <span>Peluang Investasi Efek (SUKS/Sukuk)</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-accent-gold/20 text-accent-gold text-[10px] font-mono">
+              SCF Syariah
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActivePortalTab('RANTAI_PASOK')}
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+              activePortalTab === 'RANTAI_PASOK'
+                ? 'bg-emerald-900 text-white shadow-md'
+                : 'text-stone-700 hover:text-stone-900 hover:bg-stone-200/60'
+            }`}
+          >
+            <Package className="w-4 h-4 text-emerald-400" />
+            <span>Katalog Komoditas & Sektor Riil</span>
+          </button>
+        </div>
+        <div className="text-[11px] text-stone-500 font-mono px-2 hidden lg:block">
+          KOPSIM Mandiri • Ekosistem Ekonomi Berkeadilan
+        </div>
+      </div>
+
+      {activePortalTab === 'INVESTASI' ? (
+        <InvestmentHomeSection
+          onSelectProjectDetail={(projId) => {
+            const exp = exposures.find(
+              (e) =>
+                e.id === projId ||
+                e.judul.toLowerCase().includes(projId.toLowerCase()) ||
+                e.id.toLowerCase().includes(projId.toLowerCase())
+            );
+            if (exp) {
+              setSelectedExposure(exp);
+            }
+          }}
+        />
+      ) : (
+        <>
+          {/* Hero Banner */}
+          <div className="p-6 sm:p-8 bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-800 rounded-2xl text-white shadow-md border border-emerald-800">
         <div className="max-w-2xl space-y-2">
           <Badge variant="gold" size="sm">
             KATALOG SEKTOR RIIL KOPSIM
@@ -383,6 +438,8 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
           ))}
         </div>
       </div>
+    </>
+  )}
 
       {/* Project Exposure Detail Modal */}
       {selectedExposure && (

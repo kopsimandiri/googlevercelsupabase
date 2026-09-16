@@ -4,7 +4,7 @@ import {
   SUPABASE_TABLES_METADATA,
   TableAuditInfo,
 } from '../../services/masterDataService';
-import { SupabaseTableName } from '../../types/database';
+import { MasterDataTableName } from '../../types/database';
 import { isSupabaseConfigured, getSupabaseClient } from '../../lib/supabase';
 import { Card } from '../common/Card';
 import { Button } from '../common/Button';
@@ -43,14 +43,14 @@ export const SupabaseAuditModule: React.FC = () => {
 
   const [auditResults, setAuditResults] = useState<TableAuditInfo[]>([]);
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
-  const [activeTable, setActiveTable] = useState<SupabaseTableName>('areas');
+  const [activeTable, setActiveTable] = useState<MasterDataTableName>('areas');
   const [tableData, setTableData] = useState<any[]>([]);
   const [isLoadingTable, setIsLoadingTable] = useState<boolean>(false);
   const [dataSource, setDataSource] = useState<'SUPABASE' | 'LOCAL'>('LOCAL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedDdl, setCopiedDdl] = useState<boolean>(false);
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
-  const [selectedDdlTable, setSelectedDdlTable] = useState<SupabaseTableName | 'ALL'>('ALL');
+  const [selectedDdlTable, setSelectedDdlTable] = useState<MasterDataTableName | 'ALL'>('ALL');
   
   // CRUD Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
@@ -81,7 +81,7 @@ export const SupabaseAuditModule: React.FC = () => {
     }
   };
 
-  const loadTableData = async (tableName: SupabaseTableName) => {
+  const loadTableData = async (tableName: MasterDataTableName) => {
     setIsLoadingTable(true);
     try {
       const res = await masterDataService.getTableRecords(tableName);
@@ -94,7 +94,7 @@ export const SupabaseAuditModule: React.FC = () => {
     }
   };
 
-  const handleCopyDdl = (tableKey: SupabaseTableName | 'ALL') => {
+  const handleCopyDdl = (tableKey: MasterDataTableName | 'ALL') => {
     const text =
       tableKey === 'ALL'
         ? masterDataService.getAllTablesDdlSql()
@@ -104,7 +104,7 @@ export const SupabaseAuditModule: React.FC = () => {
     setTimeout(() => setCopiedDdl(false), 2500);
   };
 
-  const handleSeedToSupabase = async (tableName: SupabaseTableName) => {
+  const handleSeedToSupabase = async (tableName: MasterDataTableName) => {
     setIsLoadingTable(true);
     try {
       const res = await masterDataService.seedTableToSupabase(tableName);
@@ -352,7 +352,7 @@ export const SupabaseAuditModule: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
           {Object.entries(SUPABASE_TABLES_METADATA).map(([key, meta]) => {
-            const tblKey = key as SupabaseTableName;
+            const tblKey = key as MasterDataTableName;
             const audit = auditResults.find((r) => r.tableName === tblKey);
             const isSelected = activeTable === tblKey;
 

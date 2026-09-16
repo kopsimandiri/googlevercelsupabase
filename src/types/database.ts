@@ -600,7 +600,7 @@ export interface LoanApplicationRecord {
   updated_at: string;
 }
 
-export type SupabaseTableName =
+export type MasterDataTableName =
   | 'areas'
   | 'chart_of_accounts'
   | 'customers'
@@ -621,6 +621,14 @@ export type SupabaseTableName =
   | 'user_notifications'
   | 'payment_requests'
   | 'loan_applications';
+
+export type InvestmentTableName =
+  | 'project_investment_campaigns'
+  | 'investment_transactions'
+  | 'digital_agreements'
+  | 'investment_dividend_distributions';
+
+export type SupabaseTableName = MasterDataTableName | InvestmentTableName;
 
 
 

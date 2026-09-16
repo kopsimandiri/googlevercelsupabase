@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ProjectExposure } from '../../services/projectExposureService';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
+import { investmentService } from '../../services/investmentService';
+import { ProjectInvestmentCampaign } from '../../types/investment';
+import { InvestmentCheckoutModal } from '../investment/InvestmentCheckoutModal';
+import { formatRupiah } from '../../utils/formatters';
 import {
   X,
   ChevronLeft,
@@ -13,6 +17,7 @@ import {
   Image as ImageIcon,
   Quote,
   Layers,
+  Coins,
 } from 'lucide-react';
 
 interface ProjectExposureDetailProps {
@@ -25,6 +30,26 @@ export const ProjectExposureDetail: React.FC<ProjectExposureDetailProps> = ({
   onClose,
 }) => {
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+  const [campaign, setCampaign] = useState<ProjectInvestmentCampaign | null>(null);
+  const [showInvestModal, setShowInvestModal] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadCampaign() {
+      try {
+        const camp = await investmentService.getCampaignByProjectId(project.id);
+        if (isMounted) {
+          setCampaign(camp);
+        }
+      } catch (err) {
+        console.warn('Could not load campaign for project exposure:', err);
+      }
+    }
+    loadCampaign();
+    return () => {
+      isMounted = false;
+    };
+  }, [project.id]);
 
   const prevPhoto = () => {
     setActivePhotoIndex((prev) =>
@@ -215,6 +240,64 @@ export const ProjectExposureDetail: React.FC<ProjectExposureDetailProps> = ({
             </div>
           </div>
 
+          {/* Investment Campaign Callout if Active */}
+          {campaign && campaign.is_investment_enabled && (
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-950 via-emerald-900 to-stone-900 text-white border border-emerald-700/80 shadow-lg space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-800/80 pb-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-accent-gold/20 text-accent-gold text-[10px] font-mono font-bold uppercase tracking-wider">
+                      Penawaran Efek Terbuka
+                    </span>
+                    <span className="text-xs font-mono text-emerald-300">
+                      {campaign.instrument_type} • Akad {campaign.sharia_contract}
+                    </span>
+                  </div>
+                  <h4 className="text-lg font-bold font-serif text-white">
+                    {campaign.campaign_title}
+                  </h4>
+                </div>
+
+                <Button
+                  variant="gold"
+                  size="sm"
+                  onClick={() => setShowInvestModal(true)}
+                  leftIcon={<Coins className="w-4 h-4" />}
+                  className="font-bold shadow-md self-start sm:self-auto"
+                >
+                  Mulai Investasi Proyek
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-2.5 rounded-xl bg-emerald-900/60 border border-emerald-800">
+                  <span className="text-[10px] text-emerald-300 block">Target Pendanaan</span>
+                  <span className="font-bold font-serif text-sm text-accent-gold mt-0.5 block">
+                    {formatRupiah(campaign.target_amount)}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-emerald-900/60 border border-emerald-800">
+                  <span className="text-[10px] text-emerald-300 block">Terkumpul</span>
+                  <span className="font-bold font-serif text-sm text-white mt-0.5 block">
+                    {formatRupiah(campaign.collected_amount)}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-emerald-900/60 border border-emerald-800">
+                  <span className="text-[10px] text-emerald-300 block">Proyeksi ROI</span>
+                  <span className="font-bold font-serif text-sm text-emerald-300 mt-0.5 block">
+                    {campaign.roi_projection_annual}% p.a.
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-emerald-900/60 border border-emerald-800">
+                  <span className="text-[10px] text-emerald-300 block">Min. Investasi</span>
+                  <span className="font-bold font-serif text-sm text-white mt-0.5 block">
+                    {formatRupiah(campaign.min_investment_amount)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Closing Emotional Statement */}
           <div className="p-4 sm:p-5 rounded-r-xl bg-emerald-50/40 border-l-4 border-accent-gold space-y-2">
             <div className="flex items-center gap-1.5 text-accent-gold-dark text-xs font-semibold">
@@ -237,6 +320,16 @@ export const ProjectExposureDetail: React.FC<ProjectExposureDetailProps> = ({
           </Button>
         </div>
       </div>
+
+      {showInvestModal && campaign && (
+        <InvestmentCheckoutModal
+          campaign={campaign}
+          onClose={() => setShowInvestModal(false)}
+          onSuccess={() => {
+            setShowInvestModal(false);
+          }}
+        />
+      )}
     </div>
   );
 };

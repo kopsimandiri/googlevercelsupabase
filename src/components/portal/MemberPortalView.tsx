@@ -20,6 +20,7 @@ import { EditPersonalDataModal } from './EditPersonalDataModal';
 import { KTACard } from '../kta/KTACard';
 import { LoanSimulatorModule } from '../loans/LoanSimulatorModule';
 import { PaymentGatewayModule } from '../payments/PaymentGatewayModule';
+import { MemberInvestmentsTab } from '../investment/MemberInvestmentsTab';
 import {
   CreditCard,
   User,
@@ -63,7 +64,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 
-type MemberTabType = 'SIMPANAN' | 'TRANSAKSI' | 'SHU' | 'KTA' | 'PROFIL' | 'DOKUMEN' | 'NOTIFIKASI';
+type MemberTabType = 'SIMPANAN' | 'INVESTASIKU' | 'TRANSAKSI' | 'SHU' | 'KTA' | 'PROFIL' | 'DOKUMEN' | 'NOTIFIKASI';
 
 export const MemberPortalView: React.FC = () => {
   const { user, logout, updateUser } = useAuth();
@@ -261,6 +262,7 @@ export const MemberPortalView: React.FC = () => {
 
   const memberTabs: TabItem<MemberTabType>[] = [
     { id: 'SIMPANAN', label: 'Buku Simpanan', icon: <Coins className="w-4 h-4" /> },
+    { id: 'INVESTASIKU', label: 'Investasiku (Sukuk/SUKS)', icon: <TrendingUp className="w-4 h-4" /> },
     { id: 'TRANSAKSI', label: 'Riwayat Transaksi', icon: <Clock className="w-4 h-4" />, badge: memberTransactions.length || undefined },
     { id: 'SHU', label: 'Hak & Estimasi SHU', icon: <PieChart className="w-4 h-4" /> },
     { id: 'KTA', label: 'KTA Digital', icon: <CreditCard className="w-4 h-4" /> },
@@ -582,6 +584,15 @@ export const MemberPortalView: React.FC = () => {
               </div>
             </Card>
           )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: INVESTASIKU (CROWDFUNDING SYARIAH & SUKUK) */}
+      {/* ========================================================================= */}
+      {activeTab === 'INVESTASIKU' && (
+        <div className="space-y-6 animate-in fade-in duration-200" id="member-investasiku-section">
+          <MemberInvestmentsTab memberNo={memberNo} />
         </div>
       )}
 
