@@ -14,6 +14,7 @@ import {
   isPdfFile,
   ProofOptimizationResult,
   STORAGE_BUKTI_TRANSFER_SQL_DDL,
+  KNOWN_STORAGE_PROOFS,
 } from '../../services/storageService';
 import { TransactionRecord, CustomerRecord, SupplierRecord, MemberRecord } from '../../types/database';
 import { formatDateIndo, formatRupiah, cleanRupiah } from '../../utils/formatters';
@@ -799,14 +800,28 @@ export const TransactionModule: React.FC = () => {
 
   const handleOpenQuickProof = async (t: TransactionRecord) => {
     setQuickProofTrx(t);
-    if (t.filelink) {
-      const url = getPublicProofUrl(t.filelink);
-      setQuickProofUrl(url || null);
-      setIsLoadingQuickProof(false);
-    } else {
-      setQuickProofUrl(null);
-      setIsLoadingQuickProof(false);
+    setIsLoadingQuickProof(true);
+    let resolvedUrl = t.filelink ? getPublicProofUrl(t.filelink) : '';
+
+    // If filelink is missing or invalid/truncated, attempt automatic bucket search by transaction ID
+    if (!resolvedUrl) {
+      try {
+        const res = await transactionService.findAndLinkTransactionProof(t.id, t.tanggal);
+        if (res.found && res.publicUrl) {
+          resolvedUrl = res.publicUrl;
+          t.filelink = res.publicUrl; // update in-memory object
+          setQuickProofTrx({ ...t, filelink: res.publicUrl });
+          showToast(`Bukti transaksi ditemukan di bucket storage dan otomatis dihubungkan ke ${t.id}!`, 'success');
+          // Refresh list quietly
+          executeSearch(false);
+        }
+      } catch (err) {
+        console.warn('Gagal auto-recover proof saat preview:', err);
+      }
     }
+
+    setQuickProofUrl(resolvedUrl || null);
+    setIsLoadingQuickProof(false);
   };
 
   const handleSearchBucketForTrx = async (t: TransactionRecord) => {
@@ -829,12 +844,18 @@ export const TransactionModule: React.FC = () => {
   const handleScanAllStorage = async () => {
     setIsScanningAllStorage(true);
     try {
+      // 1. Sync verified physical proof objects directly to public.transactions.file_url
+      const syncRes = await transactionService.syncKnownStorageProofsToDatabase();
+      // 2. Scan and recover any other matching items
       const res = await transactionService.scanAndRecoverBucketProofs();
-      if (res.recoveredCount > 0) {
-        showToast(`Selesai scan storage: ${res.recoveredCount} bukti transfer berhasil ditemukan dan dihubungkan ke database!`, 'success');
+
+      const totalUpdated = (syncRes.updatedCount || 0) + (res.recoveredCount || 0);
+      if (totalUpdated > 0) {
+        showToast(`Berhasil! ${totalUpdated} bukti transfer disinkronkan & diperbarui pada tabel transactions!`, 'success');
         await executeSearch(false);
       } else {
-        showToast(`Scan storage selesai: ${res.scannedCount} transaksi tanpa bukti diperiksa. Tidak ada berkas baru yang cocok.`, 'info');
+        showToast(`Scan & Sinkronisasi selesai: Seluruh berkas fisik bukti transfer telah terhubung dan sesuai dengan nomor transaksi di database.`, 'info');
+        await executeSearch(false);
       }
     } catch (err: any) {
       showToast(`Gagal scan storage: ${err?.message || 'Error'}`, 'error');
@@ -1535,35 +1556,12 @@ export const TransactionModule: React.FC = () => {
                       {t.filelink ? (
                         (() => {
                           const pubUrl = getPublicProofUrl(t.filelink);
-                          const isImg = isImageFile(t.filelink) || isImageFile(pubUrl);
-                          const isPdf = isPdfFile(t.filelink) || isPdfFile(pubUrl);
+                          const isPdf = isPdfFile(t.filelink) || (pubUrl && isPdfFile(pubUrl));
 
-                          if (isImg) {
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenQuickProof(t)}
-                                className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
-                                title="Klik untuk memperbesar bukti gambar"
-                              >
-                                <Eye className="w-3.5 h-3.5 shrink-0" />
-                                <img
-                                  src={pubUrl || t.filelink}
-                                  alt="Bukti"
-                                  className="w-4 h-4 object-cover rounded bg-white/20"
-                                  onError={(e) => {
-                                    (e.target as HTMLElement).style.display = 'none';
-                                  }}
-                                />
-                                <span className="hidden sm:inline">Lihat Bukti</span>
-                              </button>
-                            );
-                          }
-
-                          if (isPdf) {
+                          if (isPdf && pubUrl) {
                             return (
                               <a
-                                href={pubUrl || t.filelink}
+                                href={pubUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-blue-700"
@@ -1575,21 +1573,43 @@ export const TransactionModule: React.FC = () => {
                             );
                           }
 
+                          // Default for images or any registered filelink: open internal Quick Proof Modal (with auto-recovery)
                           return (
-                            <a
-                              href={pubUrl || t.filelink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-sky-700"
-                              title="Buka Berkas Lampiran"
+                            <button
+                              type="button"
+                              onClick={() => handleOpenQuickProof(t)}
+                              className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
+                              title="Klik untuk melihat bukti transaksi"
                             >
-                              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                              <span>Lihat Lampiran</span>
-                            </a>
+                              <Eye className="w-3.5 h-3.5 shrink-0" />
+                              {pubUrl && (
+                                <img
+                                  src={pubUrl}
+                                  alt="Bukti"
+                                  className="w-4 h-4 object-cover rounded bg-white/20"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                              )}
+                              <span className="hidden sm:inline">Lihat Bukti</span>
+                            </button>
                           );
                         })()
                       ) : (
-                        <span className="text-stone-400 font-medium text-xs">-</span>
+                        <button
+                          type="button"
+                          onClick={() => handleSearchBucketForTrx(t)}
+                          disabled={isSearchingStorageId === t.id}
+                          className="text-stone-400 hover:text-emerald-700 font-medium text-xs inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-emerald-50 transition-colors cursor-pointer"
+                          title="Cek apakah berkas ada di storage bucket bukti_transfer"
+                        >
+                          {isSearchingStorageId === t.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                          ) : (
+                            <span>-</span>
+                          )}
+                        </button>
                       )}
                     </td>
                     <td className="py-3 px-3 text-center">
@@ -1852,25 +1872,44 @@ export const TransactionModule: React.FC = () => {
                     <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti_transfer)...</span>
                   </div>
                 ) : quickProofUrl ? (
-                  <img
-                    src={quickProofUrl}
-                    alt={`Bukti Transaksi ${quickProofTrx.id}`}
-                    className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
-                  />
+                  <div className="flex flex-col items-center gap-2">
+                    <img
+                      src={quickProofUrl}
+                      alt={`Bukti Transaksi ${quickProofTrx.id}`}
+                      className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                        setQuickProofUrl(null);
+                      }}
+                    />
+                  </div>
                 ) : (
-                  <div className="text-center p-6 text-stone-400 space-y-2">
+                  <div className="text-center p-6 text-stone-400 space-y-3">
                     <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
-                    <p className="text-xs text-stone-300">File tersimpan di bucket storage <code>bukti_transfer</code>:</p>
+                    <p className="text-xs text-stone-300 font-medium">Berkas lampiran pada bucket storage:</p>
                     <code className="text-[10px] text-emerald-400 bg-stone-950 px-2 py-1 rounded block break-all font-mono">
-                      {quickProofTrx.filelink}
+                      {quickProofTrx.filelink || '(Belum terhubung ke file fisik di bucket)'}
                     </code>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenQuickProof(quickProofTrx)}
-                      className="mt-2 text-xs text-emerald-400 hover:underline inline-block font-semibold"
-                    >
-                      Coba muat ulang URL
-                    </button>
+                    <div className="flex items-center justify-center gap-2 pt-1">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="amber"
+                        onClick={() => handleSearchBucketForTrx(quickProofTrx)}
+                        isLoading={isSearchingStorageId === quickProofTrx.id}
+                        leftIcon={<FolderSearch className="w-3.5 h-3.5" />}
+                      >
+                        Cari Berkas Fisik di Storage
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => handleOpenQuickProof(quickProofTrx)}
+                      >
+                        Muat Ulang
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>

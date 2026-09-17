@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { memberService } from '../../services/memberService';
 import { transactionService } from '../../services/transactionService';
-import { getPublicProofUrl, isImageFile, isPdfFile } from '../../services/storageService';
+import { getPublicProofUrl, isImageFile, isPdfFile, KNOWN_STORAGE_PROOFS } from '../../services/storageService';
 import { MemberRecord, TransactionRecord } from '../../types/database';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../../utils/formatters';
 import { Card } from '../common/Card';
@@ -293,13 +293,20 @@ export const MemberPortalView: React.FC = () => {
 
   // Handler to open and resolve proof image from Supabase Storage
   const handleViewProof = (trx: TransactionRecord) => {
-    if (!trx.filelink) return;
+    let resolvedUrl = trx.filelink ? getPublicProofUrl(trx.filelink) : '';
+    const trxId = (trx.id || '').trim();
+    const baseId = trxId.replace(/[-_.]\d+$/, '');
+    const knownPath = KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseId];
+
+    if (!resolvedUrl && knownPath) {
+      resolvedUrl = getPublicProofUrl(knownPath);
+    }
+
     const title = `Bukti Transaksi - ${trx.kategori || 'Setoran'}`;
-    const resolvedUrl = getPublicProofUrl(trx.filelink);
 
     setSelectedProof({
       url: resolvedUrl || null,
-      originalPath: trx.filelink,
+      originalPath: trx.filelink || knownPath || '',
       title,
       trx,
       isLoading: false,
@@ -662,7 +669,7 @@ export const MemberPortalView: React.FC = () => {
                           </td>
                           <td className="py-3 px-4 text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              {trx.filelink && (
+                              {(trx.filelink || KNOWN_STORAGE_PROOFS[trx.id] || KNOWN_STORAGE_PROOFS[trx.id?.replace(/[-_.]\d+$/, '')]) && (
                                 <button
                                   type="button"
                                   onClick={() => handleViewProof(trx)}

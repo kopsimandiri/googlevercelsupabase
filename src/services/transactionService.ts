@@ -3,7 +3,7 @@ import { CustomerRecord, SupplierRecord, TransactionRecord } from '../types/data
 import { cleanRupiah } from '../utils/formatters';
 import { authService } from './authService';
 import { auditService } from './auditService';
-import { extractStoragePath, getPublicProofUrl, findProofInBucketByTransactionNo } from './storageService';
+import { extractStoragePath, getPublicProofUrl, findProofInBucketByTransactionNo, KNOWN_STORAGE_PROOFS } from './storageService';
 
 const STORAGE_TRX_KEY = 'KOPSIM_TRANSACTIONS_DATA';
 export const TRANSACTIONS_TABLE_NAME = 'transactions';
@@ -276,8 +276,24 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
     areaJenis = 'KOPERASI CABANG';
   }
 
+  const trxId = String(row.transaction_no || row.id || '').trim();
+  let filelink = row.file_url || row.filelink || '';
+
+  // If filelink is empty or malformed/truncated bucket root, or has verified physical file in registry
+  const extracted = extractStoragePath(filelink);
+  if (!extracted || filelink.endsWith('/bukti_transfer/') || filelink.endsWith('/bukti_transfer')) {
+    if (KNOWN_STORAGE_PROOFS[trxId]) {
+      filelink = getPublicProofUrl(KNOWN_STORAGE_PROOFS[trxId]);
+    } else {
+      filelink = '';
+    }
+  } else if (KNOWN_STORAGE_PROOFS[trxId]) {
+    // Prefer verified physical file in bucket
+    filelink = getPublicProofUrl(KNOWN_STORAGE_PROOFS[trxId]);
+  }
+
   return {
-    id: String(row.transaction_no || row.id || ''),
+    id: trxId,
     tanggal,
     referal,
     plantation: areaName,
@@ -288,7 +304,7 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
     qty: qty || 1,
     harga_satuan: hargaSatuan,
     jumlah,
-    filelink: row.file_url || row.filelink || '',
+    filelink,
     akun: row.account_name_legacy || row.akun || (referal === 'PROJECT' ? 'DANA PROJECT' : 'Bank BSI'),
     keterangan: row.description || row.keterangan || '',
     login_as: row.login_as || 'ADMIN',
@@ -1489,7 +1505,7 @@ export const transactionService = {
   },
 
   /**
-   * Preview migration of legacy file_url values to complete Public URLs
+   * Preview migration of legacy or truncated file_url values to complete Public URLs
    */
   async previewLegacyFileUrlMigration(): Promise<{
     totalWithFile: number;
@@ -1509,7 +1525,7 @@ export const transactionService = {
 
     const { data, error } = await client
       .from(TRANSACTIONS_TABLE_NAME)
-      .select('id, transaction_no, file_url')
+      .select('id, transaction_no, file_url, date')
       .not('file_url', 'is', null)
       .neq('file_url', '');
 
@@ -1529,15 +1545,25 @@ export const transactionService = {
     for (const row of data) {
       const oldUrl = row.file_url || '';
       const path = extractStoragePath(oldUrl);
-      const newUrl = getPublicProofUrl(oldUrl);
+      let newUrl = getPublicProofUrl(oldUrl);
 
-      // Check if it's already in pure public URL format
-      const isAlreadyPublic =
+      // If URL is truncated (e.g. points to .../storage/v1/object/public/bukti_transfer/ without object name)
+      // Attempt bucket discovery by transaction number
+      if (!newUrl && oldUrl.includes('bukti_transfer')) {
+        const found = await findProofInBucketByTransactionNo(row.transaction_no, row.date);
+        if (found.found && found.publicUrl) {
+          newUrl = found.publicUrl;
+        }
+      }
+
+      // Check if it's already a clean and complete public URL
+      const isAlreadyPublicValid =
         oldUrl.startsWith('https://') &&
         oldUrl.includes('/storage/v1/object/public/') &&
-        !oldUrl.includes('?token=');
+        !oldUrl.includes('?token=') &&
+        Boolean(path);
 
-      if (!isAlreadyPublic && newUrl && newUrl !== oldUrl) {
+      if (!isAlreadyPublicValid && newUrl && newUrl !== oldUrl) {
         items.push({
           id: String(row.id || row.transaction_no),
           transaction_no: row.transaction_no,
@@ -1647,19 +1673,87 @@ export const transactionService = {
   },
 
   /**
-   * Scans all transactions that are missing file_url or have invalid links,
-   * searches the storage bucket for matching files by transaction_no, and links them.
+   * Synchronizes all verified physical proof objects from the storage registry
+   * directly into public.transactions.file_url in Supabase.
+   */
+  async syncKnownStorageProofsToDatabase(): Promise<{
+    total: number;
+    updatedCount: number;
+    errors: string[];
+    updatedItems: Array<{ transaction_no: string; file_url: string }>;
+  }> {
+    const client = getSupabaseClient();
+    const errors: string[] = [];
+    let updatedCount = 0;
+    const updatedItems: Array<{ transaction_no: string; file_url: string }> = [];
+
+    const entries = Object.entries(KNOWN_STORAGE_PROOFS);
+
+    if (!client) {
+      return {
+        total: entries.length,
+        updatedCount: 0,
+        errors: ['Supabase client tidak tersedia.'],
+        updatedItems: [],
+      };
+    }
+
+    for (const [trxNo, relPath] of entries) {
+      const publicUrl = getPublicProofUrl(relPath);
+      const targetUrl = publicUrl || relPath;
+
+      try {
+        const { error } = await client
+          .from(TRANSACTIONS_TABLE_NAME)
+          .update({
+            file_url: targetUrl,
+            updated_at: new Date().toISOString(),
+          })
+          .or(`transaction_no.eq.${trxNo},id.eq.${trxNo}`);
+
+        if (error) {
+          errors.push(`Gagal update TRX ${trxNo}: ${error.message}`);
+        } else {
+          updatedCount++;
+          updatedItems.push({ transaction_no: trxNo, file_url: targetUrl });
+        }
+      } catch (err: any) {
+        errors.push(`Exception TRX ${trxNo}: ${err?.message || String(err)}`);
+      }
+    }
+
+    return {
+      total: entries.length,
+      updatedCount,
+      errors,
+      updatedItems,
+    };
+  },
+
+  /**
+   * Scans all transactions that are missing file_url, have empty links, or have truncated bucket URLs,
+   * searches the storage bucket for matching files by transaction_no, and updates the database row.
    */
   async scanAndRecoverBucketProofs(): Promise<{
     scannedCount: number;
     recoveredCount: number;
     recoveredItems: Array<{ transaction_no: string; publicUrl: string }>;
   }> {
+    // 1. Sync all known verified storage objects to database first
+    await this.syncKnownStorageProofsToDatabase();
+
     const trxs = await this.getTransactions();
-    const missingTrxs = trxs.filter((t) => !t.filelink || t.filelink.trim() === '' || t.filelink === '-');
+    // Match transactions with missing filelink, or broken truncated bucket root URLs (e.g. ends with /bukti_transfer/ or has no extracted path)
+    const candidates = trxs.filter((t) => {
+      if (!t.filelink || t.filelink.trim() === '' || t.filelink === '-') return true;
+      const path = extractStoragePath(t.filelink);
+      if (!path) return true; // Truncated or malformed bucket URL
+      return false;
+    });
+
     const recoveredItems: Array<{ transaction_no: string; publicUrl: string }> = [];
 
-    for (const trx of missingTrxs) {
+    for (const trx of candidates) {
       const res = await this.findAndLinkTransactionProof(trx.id, trx.tanggal);
       if (res.found && res.publicUrl) {
         recoveredItems.push({
@@ -1670,7 +1764,7 @@ export const transactionService = {
     }
 
     return {
-      scannedCount: missingTrxs.length,
+      scannedCount: candidates.length,
       recoveredCount: recoveredItems.length,
       recoveredItems,
     };

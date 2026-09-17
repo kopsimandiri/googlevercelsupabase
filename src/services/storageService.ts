@@ -564,8 +564,38 @@ export async function uploadTransactionProof(
 }
 
 /**
+ * Verified Storage Registry:
+ * Daftar berkas fisik bukti transfer yang terverifikasi berada di bucket `bukti_transfer`,
+ * dipetakan langsung dengan nomor transaksi (transaction_no).
+ */
+export const KNOWN_STORAGE_PROOFS: Record<string, string> = {
+  'T251229001': '2025/12/T251229001-jnpf6q.webp',
+  'T251229002': '2025/12/T251229002-1cpdp8.webp',
+  'T251229003': '2025/12/T251229003-7nucag.webp',
+  'T251229004': '2025/12/T251229004-9j1797.webp',
+  'T260202001': '2026/02/T260202001-80nnro.webp',
+  'T260220001': '2026/02/T260220001-b97crn.webp',
+  'T260318001': '2026/03/T260318001-z6lluv.jpg',
+  'T260320001': '2026/03/T260320001-ou4pzo.webp',
+  'T260330005': '2026/03/T260330005-vumfjf.webp',
+  'T260330015': '2026/03/T260330015-tgragl.webp',
+  'T260330016': '2026/03/T260330016-1o9y4o.webp',
+  'T260330017': '2026/03/T260330017-mt0mvt.webp',
+  'T260402001': '2026/04/T260402001-lpf5ns.webp',
+  'T260410001': '2026/04/T260410001-at9nrs.webp',
+  'T260413001': '2026/04/T260413001-51ezrd.webp',
+  'T260413002': '2026/04/T260413002-7n8q5r.webp',
+  'T260413003': '2026/04/T260413003-dvrho5.webp',
+  'T260413004': '2026/04/T260413004-hekedv.webp',
+  'T260413005': '2026/04/T260413005-bqu8c7.webp',
+  'T260417001': '2026/04/T260417001-8t4df6.webp',
+  'T260417002': '2026/04/T260417002-7yw8js.webp',
+  'T260421001': '2026/04/T260421001-hvubbk.webp',
+};
+
+/**
  * Searches for a proof file in the storage bucket based on transaction_no (e.g. T260421001).
- * Looks in root, year/month subdirectories, parsed YYMMDD subfolders, and all storage buckets.
+ * Looks in verified storage registry first, then root and date subdirectories in bucket.
  */
 export async function findProofInBucketByTransactionNo(
   transactionNo: string,
@@ -579,12 +609,26 @@ export async function findProofInBucketByTransactionNo(
 }> {
   if (!transactionNo) return { found: false };
 
-  const client = getSupabaseClient();
-  if (!client) return { found: false };
-
   const cleanTrxNo = transactionNo.trim();
   // Support split transaction IDs (e.g. T251229001-1 or T251229001_3 -> base T251229001)
   const baseTrxNo = cleanTrxNo.replace(/[-_.]\d+$/, '');
+
+  // 0. Fast-path: Check verified physical storage registry first
+  const knownPath = KNOWN_STORAGE_PROOFS[cleanTrxNo] || KNOWN_STORAGE_PROOFS[baseTrxNo];
+  if (knownPath) {
+    const publicUrl = getPublicProofUrl(knownPath);
+    return {
+      found: true,
+      path: knownPath,
+      publicUrl,
+      bucketName: BUKTI_TRANSFER_BUCKET,
+      fileName: knownPath.split('/').pop() || knownPath,
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) return { found: false };
+
   const searchPattern = cleanTrxNo.replace(/[^a-zA-Z0-9_-]/g, '_');
   const baseSearchPattern = baseTrxNo.replace(/[^a-zA-Z0-9_-]/g, '_');
   const lowerTrxNo = cleanTrxNo.toLowerCase();
@@ -757,13 +801,20 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
       // Match pattern /storage/v1/object/(public|sign|authenticated)/bukti_transfer/(.*)
       const storageMatch = pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\/(.*)/);
       if (storageMatch && storageMatch[2]) {
-        return decodeURIComponent(storageMatch[2]);
+        const extracted = decodeURIComponent(storageMatch[2]).replace(/^\/+|\/+$/g, '');
+        return extracted.length > 0 ? extracted : null;
       }
 
       // If generic path ending with bucket
       const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
       if (bucketIdx !== -1) {
-        return decodeURIComponent(pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2));
+        const extracted = decodeURIComponent(pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2)).replace(/^\/+|\/+$/g, '');
+        return extracted.length > 0 ? extracted : null;
+      }
+
+      // URL points to bucket root with no filename (e.g. .../storage/v1/object/public/bukti_transfer or .../bukti_transfer/)
+      if (pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) || pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`)) {
+        return null;
       }
 
       return trimmed;
@@ -777,11 +828,16 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
   if (clean.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
     clean = clean.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
   }
+  clean = clean.replace(/^\/+|\/+$/g, '');
+  if (!clean || clean === BUKTI_TRANSFER_BUCKET) {
+    return null;
+  }
   return clean;
 }
 
 /**
  * Resolves consistent Public URL from any storage reference (path, legacy signed URL, or public URL).
+ * If the provided reference is just a bucket root without an object name, returns empty string.
  */
 export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   if (!storagePathOrUrl) return '';
@@ -793,20 +849,24 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
     return trimmed;
   }
 
-  // If already a valid public Supabase URL without sign/token
+  // Extract pure storage path first to ensure it's not a truncated bucket root
+  const path = extractStoragePath(trimmed);
+  if (!path) return '';
+
+  const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
+
+  // If already a valid public Supabase URL pointing to a concrete file
   if (
     trimmed.startsWith('https://') &&
     trimmed.includes('/storage/v1/object/public/') &&
-    !trimmed.includes('?token=')
+    !trimmed.includes('?token=') &&
+    !trimmed.endsWith('/') &&
+    !trimmed.endsWith(`/${bucketName}`)
   ) {
     return trimmed;
   }
 
   const client = getSupabaseClient();
-  const path = extractStoragePath(trimmed);
-  if (!path) return '';
-  const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
-
   if (client) {
     const { data } = client.storage.from(bucketName).getPublicUrl(path);
     if (data?.publicUrl) {
@@ -814,8 +874,8 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
     }
   }
 
-  // Fallback direct URL builder if client is loading
-  const baseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+  // Fallback direct URL builder
+  const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || '';
   if (baseUrl) {
     return `${baseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${bucketName}/${path}`;
   }
@@ -828,7 +888,8 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
  */
 export function isImageFile(urlOrPath?: string | null): boolean {
   if (!urlOrPath) return false;
-  const clean = urlOrPath.split('?')[0].toLowerCase();
+  const clean = urlOrPath.split('?')[0].toLowerCase().trim();
+  if (clean.startsWith('data:image/')) return true;
   return (
     clean.endsWith('.jpg') ||
     clean.endsWith('.jpeg') ||
@@ -836,7 +897,8 @@ export function isImageFile(urlOrPath?: string | null): boolean {
     clean.endsWith('.webp') ||
     clean.endsWith('.gif') ||
     clean.endsWith('.svg') ||
-    clean.startsWith('data:image/')
+    clean.endsWith('.bmp') ||
+    clean.endsWith('.avif')
   );
 }
 
@@ -845,7 +907,7 @@ export function isImageFile(urlOrPath?: string | null): boolean {
  */
 export function isPdfFile(urlOrPath?: string | null): boolean {
   if (!urlOrPath) return false;
-  const clean = urlOrPath.split('?')[0].toLowerCase();
+  const clean = urlOrPath.split('?')[0].toLowerCase().trim();
   return clean.endsWith('.pdf') || clean.startsWith('data:application/pdf');
 }
 
