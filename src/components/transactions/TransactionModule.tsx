@@ -223,10 +223,19 @@ export const TransactionModule: React.FC = () => {
 
   // Bank accounts map by entity / project (Step 6 query logic)
   const entityBankMap: Record<string, string[]> = {
+    'KOPERASI PUSAT': [
+      'MANDIRI 1230050002809 - KOPSIM',
+      'BSI 3331239991 - KOPSIM',
+      'Kas Tunai Kantor Pusat',
+    ],
     'PUSAT JAKARTA': [
-      'Bank BSI 7123456789 (a.n KOPSIM)',
-      'Bank Mandiri 1230009876543',
-      'BCA Syariah 0019283746',
+      'MANDIRI 1230050002809 - KOPSIM',
+      'BSI 3331239991 - KOPSIM',
+      'Kas Tunai Kantor Pusat',
+    ],
+    'Pusat Jakarta - Menteng': [
+      'MANDIRI 1230050002809 - KOPSIM',
+      'BSI 3331239991 - KOPSIM',
       'Kas Tunai Kantor Pusat',
     ],
     'CABANG JAWA BARAT': [
@@ -523,33 +532,55 @@ export const TransactionModule: React.FC = () => {
     setIsLoadingBanks(true);
     setBankError(null);
     try {
+      const isPusat = areaName.toUpperCase().includes('PUSAT') || areaName === 'KOPERASI PUSAT';
       const client = getSupabaseClient();
       if (client && isSupabaseConfigured) {
-        const { data, error } = await client
+        let query = client
           .from('areas')
-          .select('bank_account_1, bank_account_2, bank_account_3')
-          .eq('area_name', areaName)
-          .maybeSingle();
+          .select('bank_account_1, bank_account_2, bank_account_3');
+
+        if (isPusat) {
+          query = query.or(`area_name.eq.${areaName},area_name.ilike.%KOPERASI PUSAT%,area_name.ilike.%PUSAT%,id.eq.AREA-01,area_code.eq.JKT-01`);
+        } else {
+          query = query.eq('area_name', areaName);
+        }
+
+        const { data, error } = await query.limit(1).maybeSingle();
 
         if (error) throw error;
         if (data) {
-          const accs = [data.bank_account_1, data.bank_account_2, data.bank_account_3]
-            .map((s) => (s ? String(s).trim() : ''))
-            .filter((s) => s.length > 0);
+          const accs: string[] = [];
+          if (data.bank_account_1) accs.push(String(data.bank_account_1).trim());
+          if (data.bank_account_2) accs.push(String(data.bank_account_2).trim());
+          if (data.bank_account_3) accs.push(String(data.bank_account_3).trim());
           
-          if (accs.length > 0) {
-            setBankOptions(accs);
+          if (isPusat) {
+            // Sesuai aturan sistem: bank_account_1 (MANDIRI) & bank_account_2 (BSI)
+            if (!accs.some((a) => a.includes('1230050002809'))) {
+              accs.unshift('MANDIRI 1230050002809 - KOPSIM');
+            }
+            if (!accs.some((a) => a.includes('3331239991'))) {
+              accs.splice(1, 0, 'BSI 3331239991 - KOPSIM');
+            }
+            if (!accs.some((a) => a.toLowerCase().includes('kas tunai'))) {
+              accs.push('Kas Tunai Kantor Pusat');
+            }
+          }
+          
+          const filtered = Array.from(new Set(accs.filter(Boolean)));
+          if (filtered.length > 0) {
+            setBankOptions(filtered);
             return;
           }
         }
       }
       // Offline / entityBankMap fallback
-      const fallbackAccs = (entityBankMap[areaName] || []).filter(Boolean);
+      const fallbackAccs = (entityBankMap[areaName] || entityBankMap['KOPERASI PUSAT'] || []).filter(Boolean);
       setBankOptions(fallbackAccs);
     } catch (err: any) {
       console.warn('[TransactionModule] Gagal query rekening di public.areas:', err);
       setBankError('Gagal memuat rekening entitas.');
-      const fallbackAccs = (entityBankMap[areaName] || []).filter(Boolean);
+      const fallbackAccs = (entityBankMap[areaName] || entityBankMap['KOPERASI PUSAT'] || []).filter(Boolean);
       setBankOptions(fallbackAccs);
     } finally {
       setIsLoadingBanks(false);
@@ -716,6 +747,30 @@ export const TransactionModule: React.FC = () => {
     setFormJenis(newJenis);
     // WAJIB: Reset Field 5 saat Field 4 berubah
     setFormKategori('');
+  };
+
+  const handleCategoryChange = (cat: string) => {
+    setFormKategori(cat);
+    // Aturan rekening Koperasi Pusat:
+    // 1. Simpanan Anggota: BSI 3331239991 - KOPSIM (bank_account_2)
+    // 2. Project, Investasi, Operasional: MANDIRI 1230050002809 - KOPSIM (bank_account_1)
+    const upperCat = cat.toUpperCase();
+    const isPusat = !formPlantation || formPlantation.toUpperCase().includes('PUSAT') || formPlantation === 'KOPERASI PUSAT';
+    if (isPusat) {
+      if (upperCat.includes('SIMPANAN')) {
+        setFormMetodeBayar('BSI 3331239991 - KOPSIM');
+      } else if (
+        upperCat.includes('PROYEK') ||
+        upperCat.includes('PROJECT') ||
+        upperCat.includes('INVESTASI') ||
+        upperCat.includes('OPERASIONAL') ||
+        upperCat.includes('BIAYA') ||
+        upperCat.includes('TRADING') ||
+        upperCat.includes('MODAL')
+      ) {
+        setFormMetodeBayar('MANDIRI 1230050002809 - KOPSIM');
+      }
+    }
   };
 
   const handleSkuNameChange = (newSkuName: string) => {
@@ -2218,7 +2273,7 @@ export const TransactionModule: React.FC = () => {
                     </div>
                     <select
                       value={formKategori}
-                      onChange={(e) => setFormKategori(e.target.value)}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
                       disabled={isLoadingCategories}
                       className={`w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden focus:border-emerald-700 focus:bg-white transition-colors ${
                         isLoadingCategories ? 'opacity-70 cursor-not-allowed' : ''

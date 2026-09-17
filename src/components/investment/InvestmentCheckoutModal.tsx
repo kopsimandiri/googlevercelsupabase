@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ProjectInvestmentCampaign, InvestmentTransaction } from '../../types/investment';
 import { investmentService } from '../../services/investmentService';
 import { akadTemplateService } from '../../services/akadTemplateService';
+import { memberService } from '../../services/memberService';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { formatRupiah, formatDateIndo } from '../../utils/formatters';
@@ -55,6 +56,45 @@ export const InvestmentCheckoutModal: React.FC<InvestmentCheckoutModalProps> = (
   const [agreedMusyarakah, setAgreedMusyarakah] = useState<boolean>(false);
   const [agreedWakalah, setAgreedWakalah] = useState<boolean>(false);
   const [activeAkadTab, setActiveAkadTab] = useState<'MUSYARAKAH' | 'WAKALAH'>('MUSYARAKAH');
+
+  // Rekening Bank Resmi Proyek & Investasi dari public.areas (KOPERASI PUSAT: bank_account_1)
+  const [projectBankInfo, setProjectBankInfo] = useState<{
+    bankName: string;
+    accountNo: string;
+    accountHolder: string;
+    fullString: string;
+  }>({
+    bankName: 'Bank Mandiri',
+    accountNo: '1230050002809',
+    accountHolder: 'KOPSIM',
+    fullString: 'MANDIRI 1230050002809 - KOPSIM',
+  });
+
+  React.useEffect(() => {
+    let isMounted = true;
+    memberService
+      .getKoperasiPusatAccounts()
+      .then((acc) => {
+        if (!isMounted) return;
+        const raw = acc.projectInvestasiOperasional || 'MANDIRI 1230050002809 - KOPSIM';
+        const parts = raw.split(' ');
+        const bank = parts[0] || 'Mandiri';
+        const no = parts[1] || '1230050002809';
+        const holder = raw.includes('-') ? raw.split('-')[1]?.trim() : 'KOPSIM';
+        setProjectBankInfo({
+          bankName: bank.toUpperCase() === 'MANDIRI' ? 'Bank Mandiri' : bank,
+          accountNo: no,
+          accountHolder: holder || 'KOPSIM',
+          fullString: raw,
+        });
+      })
+      .catch((err) => {
+        console.warn('Gagal memuat rekening proyek dari Koperasi Pusat:', err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Success Result State
   const [completedTrx, setCompletedTrx] = useState<InvestmentTransaction | null>(null);
@@ -510,21 +550,30 @@ export const InvestmentCheckoutModal: React.FC<InvestmentCheckoutModalProps> = (
               {/* Rekening Tujuan Transfer */}
               {paymentMethod === 'TRANSFER_BANK' && (
                 <div className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-2 text-xs">
-                  <span className="font-bold text-stone-800 block">
-                    Rekening Penampungan Amanah Investasi Proyek:
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-stone-800 block">
+                      Rekening Penampungan Amanah Investasi & Proyek (Koperasi Pusat):
+                    </span>
+                    <span className="text-[10px] text-amber-800 font-semibold bg-amber-100/80 px-2 py-0.5 rounded">
+                      Rekening Resmi Proyek
+                    </span>
+                  </div>
                   <div className="p-2.5 bg-white rounded-lg border border-stone-200 space-y-1 font-mono">
                     <div className="flex justify-between">
                       <span className="text-stone-500">Bank:</span>
-                      <span className="font-bold text-stone-900">Bank Syariah Indonesia (BSI)</span>
+                      <span className="font-bold text-stone-900">{projectBankInfo.bankName}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">No. Rekening:</span>
-                      <span className="font-bold text-emerald-900 text-sm">719-283-0012</span>
+                      <span className="font-bold text-emerald-900 text-sm">{projectBankInfo.accountNo}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">Atas Nama:</span>
-                      <span className="font-bold text-stone-900">KOPSIM MANDIRI - INVESTASI</span>
+                      <span className="font-bold text-stone-900">{projectBankInfo.accountHolder}</span>
+                    </div>
+                    <div className="pt-1.5 mt-1 border-t border-stone-100 flex items-center justify-between text-[11px] font-sans">
+                      <span className="text-stone-500">Keterangan Transfer:</span>
+                      <span className="font-bold font-mono text-stone-800">{projectBankInfo.fullString}</span>
                     </div>
                   </div>
                 </div>

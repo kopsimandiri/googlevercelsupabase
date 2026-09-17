@@ -66,12 +66,11 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
   ]);
   const [isLoadingAreas, setIsLoadingAreas] = useState(false);
 
-  // Rekening Bank Resmi Tujuan Transfer dari tabel 'areas'
+  // Rekening Bank Resmi Tujuan Transfer Simpanan Anggota dari tabel 'areas' (Koperasi Pusat: bank_account_2)
   const [bankAccounts, setBankAccounts] = useState<string[]>([
-    'Bank BSI 7123456789 (a.n KOPSIM)',
-    'Bank Mandiri 1230009876543',
+    'BSI 3331239991 - KOPSIM',
   ]);
-  const [selectedRekening, setSelectedRekening] = useState<string>('Bank BSI 7123456789 (a.n KOPSIM)');
+  const [selectedRekening, setSelectedRekening] = useState<string>('BSI 3331239991 - KOPSIM');
   const [isLoadingBanks, setIsLoadingBanks] = useState(false);
 
   // Kredensial Login yang diterbitkan untuk anggota baru
@@ -122,20 +121,24 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
     };
   }, [isOpen]);
 
-  // Ambil nomor rekening bank resmi dari tabel 'areas' sesuai wilayah/cabang yang dipilih
+  // Ambil nomor rekening bank resmi dari tabel 'areas' (Koperasi Pusat: bank_account_2 untuk Simpanan Anggota)
   useEffect(() => {
     let isMounted = true;
     const fetchBanks = async () => {
-      if (!plantation) return;
       setIsLoadingBanks(true);
       try {
-        const banks = await memberService.getBankAccountsForArea(plantation);
-        if (isMounted && Array.isArray(banks) && banks.length > 0) {
-          setBankAccounts(banks);
-          setSelectedRekening((prev) => (banks.includes(prev) ? prev : banks[0]));
+        const pusat = await memberService.getKoperasiPusatAccounts();
+        const officialSimpanan = pusat.simpananAnggota || 'BSI 3331239991 - KOPSIM';
+        if (isMounted) {
+          setBankAccounts([officialSimpanan]);
+          setSelectedRekening(officialSimpanan);
         }
       } catch (err) {
-        console.warn('[PublicRegisterModal] Gagal memuat rekening cabang:', err);
+        console.warn('[PublicRegisterModal] Gagal memuat rekening Koperasi Pusat:', err);
+        if (isMounted) {
+          setBankAccounts(['BSI 3331239991 - KOPSIM']);
+          setSelectedRekening('BSI 3331239991 - KOPSIM');
+        }
       } finally {
         if (isMounted) setIsLoadingBanks(false);
       }
@@ -147,7 +150,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, plantation]);
+  }, [isOpen]);
 
   // Reset state saat modal ditutup / dibuka
   useEffect(() => {
@@ -308,7 +311,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
               plantation: plantation || 'PUSAT JAKARTA',
               jenis: 'MASUK',
               kategori: 'Simpanan Pokok & Wajib Anggota Baru',
-              metode_bayar: selectedRekening || 'Bank BSI 7200112233',
+              metode_bayar: selectedRekening || 'BSI 3331239991 - KOPSIM',
               jumlah: totalSetoranAwal,
               harga_satuan: totalSetoranAwal, // price = amount
               qty: 1,
@@ -667,7 +670,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                     <label className="text-[11px] text-stone-700 font-semibold flex items-center gap-1.5">
                       <CreditCard className="w-3.5 h-3.5 text-emerald-700" />
-                      Rekening Resmi Tujuan Transfer ({plantation}):
+                      Rekening Resmi Simpanan Anggota (Koperasi Pusat):
                       {isLoadingBanks && <span className="text-[10px] text-stone-400 font-normal">(Memuat...)</span>}
                     </label>
                     <div className="text-right">
@@ -701,7 +704,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
                     </button>
                   </div>
                   <p className="text-[10px] text-stone-500">
-                    * Nomor rekening resmi otomatis disesuaikan dari data cabang/wilayah yang Anda pilih.
+                    * Rekening resmi khusus Simpanan Anggota (Bank Syariah Indonesia - KOPERASI PUSAT).
                   </p>
                 </div>
               </div>

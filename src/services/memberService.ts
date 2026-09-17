@@ -237,6 +237,22 @@ export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extr
   };
 }
 
+export interface KoperasiPusatBankAccounts {
+  bank_account_1: string; // MANDIRI 1230050002809 - KOPSIM
+  bank_account_2: string; // BSI 3331239991 - KOPSIM
+  bank_account_3: string | null;
+  simpananAnggota: string; // BSI 3331239991 - KOPSIM
+  projectInvestasiOperasional: string; // MANDIRI 1230050002809 - KOPSIM
+}
+
+export const DEFAULT_KOPERASI_PUSAT_ACCOUNTS: KoperasiPusatBankAccounts = {
+  bank_account_1: 'MANDIRI 1230050002809 - KOPSIM',
+  bank_account_2: 'BSI 3331239991 - KOPSIM',
+  bank_account_3: null,
+  simpananAnggota: 'BSI 3331239991 - KOPSIM',
+  projectInvestasiOperasional: 'MANDIRI 1230050002809 - KOPSIM',
+};
+
 export const memberService = {
   async getStoredMembersAsync(): Promise<MemberRecord[]> {
     return this.getStoredMembers();
@@ -303,6 +319,72 @@ export const memberService = {
   },
 
   /**
+   * Mengambil rekening resmi Koperasi Pusat dari tabel public.areas
+   * bank_account_1: MANDIRI 1230050002809 - KOPSIM (Untuk Project, Investasi, Operasional)
+   * bank_account_2: BSI 3331239991 - KOPSIM (Untuk Simpanan Anggota)
+   * bank_account_3: (NULL)
+   */
+  async getKoperasiPusatAccounts(): Promise<KoperasiPusatBankAccounts> {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('areas')
+          .select('id, area_code, area_name, bank_account_1, bank_account_2, bank_account_3')
+          .or('area_name.ilike.%KOPERASI PUSAT%,area_name.ilike.%PUSAT%,area_code.eq.JKT-01,id.eq.AREA-01')
+          .order('area_code', { ascending: true })
+          .limit(1);
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const row = data[0];
+          const acc1 = row.bank_account_1 ? String(row.bank_account_1).trim() : DEFAULT_KOPERASI_PUSAT_ACCOUNTS.bank_account_1;
+          const acc2 = row.bank_account_2 ? String(row.bank_account_2).trim() : DEFAULT_KOPERASI_PUSAT_ACCOUNTS.bank_account_2;
+          const acc3 = row.bank_account_3 ? String(row.bank_account_3).trim() : null;
+          return {
+            bank_account_1: acc1,
+            bank_account_2: acc2,
+            bank_account_3: acc3,
+            simpananAnggota: acc2, // BSI 3331239991 - KOPSIM
+            projectInvestasiOperasional: acc1, // MANDIRI 1230050002809 - KOPSIM
+          };
+        }
+      } catch (err) {
+        console.warn('[memberService] Error querying Koperasi Pusat accounts from Supabase:', err);
+      }
+    }
+
+    // LocalStorage fallback jika offline
+    try {
+      const stored = localStorage.getItem('KOPSIM_TABLE_AREAS');
+      if (stored) {
+        const areas = JSON.parse(stored);
+        const pusat = areas.find(
+          (a: any) =>
+            a.area_name?.toUpperCase().includes('PUSAT') ||
+            a.id === 'AREA-01' ||
+            a.area_code === 'JKT-01'
+        );
+        if (pusat) {
+          const acc1 = pusat.bank_account_1 ? String(pusat.bank_account_1).trim() : DEFAULT_KOPERASI_PUSAT_ACCOUNTS.bank_account_1;
+          const acc2 = pusat.bank_account_2 ? String(pusat.bank_account_2).trim() : DEFAULT_KOPERASI_PUSAT_ACCOUNTS.bank_account_2;
+          const acc3 = pusat.bank_account_3 ? String(pusat.bank_account_3).trim() : null;
+          return {
+            bank_account_1: acc1,
+            bank_account_2: acc2,
+            bank_account_3: acc3,
+            simpananAnggota: acc2,
+            projectInvestasiOperasional: acc1,
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return DEFAULT_KOPERASI_PUSAT_ACCOUNTS;
+  },
+
+  /**
    * Mengambil nomor rekening resmi dari tabel public.areas (bank_account_1, bank_account_2, bank_account_3)
    * sesuai cabang/wilayah yang dipilih.
    */
@@ -330,8 +412,9 @@ export const memberService = {
 
     // Rekening cadangan jika belum terhubung atau kosong di database
     const defaultFallback: Record<string, string[]> = {
-      'PUSAT JAKARTA': ['Bank BSI 7123456789 (a.n KOPSIM)', 'Bank Mandiri 1230009876543'],
-      'Pusat Jakarta - Menteng': ['Bank BSI 7123456789 (a.n KOPSIM)', 'Bank Mandiri 1230009876543'],
+      'KOPERASI PUSAT': ['BSI 3331239991 - KOPSIM', 'MANDIRI 1230050002809 - KOPSIM'],
+      'PUSAT JAKARTA': ['BSI 3331239991 - KOPSIM', 'MANDIRI 1230050002809 - KOPSIM'],
+      'Pusat Jakarta - Menteng': ['BSI 3331239991 - KOPSIM', 'MANDIRI 1230050002809 - KOPSIM'],
       'Cabang Jawa Barat - Cianjur & Bandung': ['Bank BSI 7987654321', 'Bank Mandiri 1300012345678'],
       'Cabang Jawa Timur - Surabaya & Madura': ['Bank Mandiri 1400055443322'],
       'Cabang Jawa Tengah - Solo & Semarang': ['Bank BSI 7334455667'],
@@ -339,8 +422,8 @@ export const memberService = {
 
     return (
       defaultFallback[areaName] || [
-        'Bank BSI 7200112233 (a.n. Koperasi Syarikat Islam Mandiri)',
-        'Bank Mandiri 1230009876543 (a.n. KOPSIM)',
+        'BSI 3331239991 - KOPSIM',
+        'MANDIRI 1230050002809 - KOPSIM',
       ]
     );
   },

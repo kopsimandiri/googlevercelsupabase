@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dashboardService } from '../../services/dashboardService';
 import { transactionService } from '../../services/transactionService';
+import { memberService, KoperasiPusatBankAccounts, DEFAULT_KOPERASI_PUSAT_ACCOUNTS } from '../../services/memberService';
 import { DashboardMetrics, TransactionRecord } from '../../types/database';
 import { formatDateIndo, formatRupiah } from '../../utils/formatters';
 import { Card } from '../common/Card';
@@ -25,12 +26,19 @@ export const FinanceModule: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedEntity, setSelectedEntity] = useState<'ALL' | 'PUSAT' | 'CABANG' | 'PROJECT'>('ALL');
+  const [pusatAccounts, setPusatAccounts] = useState<KoperasiPusatBankAccounts>(DEFAULT_KOPERASI_PUSAT_ACCOUNTS);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const data = await dashboardService.getDashboardMetrics('ALL');
+      const [data, accounts] = await Promise.all([
+        dashboardService.getDashboardMetrics('ALL'),
+        memberService.getKoperasiPusatAccounts(),
+      ]);
       setMetrics(data);
+      if (accounts) {
+        setPusatAccounts(accounts);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -153,35 +161,54 @@ export const FinanceModule: React.FC = () => {
         </Card>
       </div>
 
-      {/* Rekening Kas & Bank */}
-      <Card title="Rekening Operasional & Penampung Dana">
+      {/* Rekening Kas & Bank Resmi Entitas KOPERASI PUSAT */}
+      <Card
+        title="Rekening Resmi Entitas: KOPERASI PUSAT (Tabel public.areas)"
+        action={
+          <span className="text-[11px] font-mono text-stone-500">
+            Sumber Data: Supabase public.areas
+          </span>
+        }
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Rekening Simpanan Anggota: BSI 3331239991 - KOPSIM */}
           <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 flex items-start justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 font-mono">
+            <div className="space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 font-mono flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
                 BANK SYARIAH INDONESIA (BSI)
               </span>
-              <h4 className="text-sm font-bold text-stone-900 mt-1">No. Rek: 7200112233</h4>
-              <p className="text-xs text-stone-600">a.n. Koperasi Syarikat Islam Mandiri</p>
-              <span className="inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-200/80 text-emerald-900">
-                Rekening Induk Simpanan & Operasional
-              </span>
+              <h4 className="text-sm font-bold text-stone-900 mt-1 font-mono">
+                {pusatAccounts.simpananAnggota || 'BSI 3331239991 - KOPSIM'}
+              </h4>
+              <p className="text-xs text-stone-600">Atas Nama: KOPSIM (Koperasi Syarikat Islam Mandiri)</p>
+              <div className="pt-2">
+                <span className="inline-block px-2.5 py-1 rounded-md text-[10px] font-bold bg-emerald-200/90 text-emerald-950 border border-emerald-300">
+                  Peruntukan: Khusus Simpanan Anggota (Pokok, Wajib & Sukarela)
+                </span>
+              </div>
             </div>
             <ShieldCheck className="w-6 h-6 text-emerald-800 shrink-0" />
           </div>
 
-          <div className="p-4 rounded-xl border border-stone-200 bg-stone-50 flex items-start justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-600 font-mono">
+          {/* Rekening Proyek, Investasi & Operasional: MANDIRI 1230050002809 - KOPSIM */}
+          <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/60 flex items-start justify-between">
+            <div className="space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 font-mono flex items-center gap-1.5">
+                <Landmark className="w-3.5 h-3.5 text-amber-700" />
                 BANK MANDIRI
               </span>
-              <h4 className="text-sm font-bold text-stone-900 mt-1">No. Rek: 1240099887766</h4>
-              <p className="text-xs text-stone-600">a.n. Koperasi Syarikat Islam Mandiri (Project)</p>
-              <span className="inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-bold bg-stone-200 text-stone-800">
-                Rekening Khusus Trading Komoditas Riil
-              </span>
+              <h4 className="text-sm font-bold text-stone-900 mt-1 font-mono">
+                {pusatAccounts.projectInvestasiOperasional || 'MANDIRI 1230050002809 - KOPSIM'}
+              </h4>
+              <p className="text-xs text-stone-600">Atas Nama: KOPSIM (Koperasi Syarikat Islam Mandiri)</p>
+              <div className="pt-2">
+                <span className="inline-block px-2.5 py-1 rounded-md text-[10px] font-bold bg-amber-200/90 text-amber-950 border border-amber-300">
+                  Peruntukan: Khusus Proyek, Investasi & Biaya Operasional
+                </span>
+              </div>
             </div>
-            <Landmark className="w-6 h-6 text-stone-700 shrink-0" />
+            <Landmark className="w-6 h-6 text-amber-800 shrink-0" />
           </div>
         </div>
       </Card>
