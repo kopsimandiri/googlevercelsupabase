@@ -112,6 +112,7 @@ export const TransactionModule: React.FC = () => {
   const [quickProofTrx, setQuickProofTrx] = useState<TransactionRecord | null>(null);
   const [quickProofUrl, setQuickProofUrl] = useState<string | null>(null);
   const [isLoadingQuickProof, setIsLoadingQuickProof] = useState<boolean>(false);
+  const [proofLoadError, setProofLoadError] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
   const [activeSqlTab, setActiveSqlTab] = useState<'transactions' | 'storage'>('transactions');
@@ -801,9 +802,23 @@ export const TransactionModule: React.FC = () => {
   const handleOpenQuickProof = async (t: TransactionRecord) => {
     setQuickProofTrx(t);
     setIsLoadingQuickProof(true);
-    let resolvedUrl = t.filelink ? getPublicProofUrl(t.filelink) : '';
+    setProofLoadError(false);
+    
+    let resolvedUrl = (t.filelink || '').trim();
 
-    // If filelink is missing or invalid/truncated, attempt automatic bucket search by transaction ID
+    // 1. Jika sudah berupa Full URL (misal dari kolom file_url di Supabase), gunakan langsung
+    if (resolvedUrl && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))) {
+      setQuickProofUrl(resolvedUrl);
+      setIsLoadingQuickProof(false);
+      return;
+    }
+
+    // 2. Jika path relatif
+    if (resolvedUrl) {
+      resolvedUrl = getPublicProofUrl(resolvedUrl);
+    }
+
+    // 3. Fallback pencarian berkas fisik hanya jika filelink belum ada
     if (!resolvedUrl) {
       try {
         const res = await transactionService.findAndLinkTransactionProof(t.id, t.tanggal);
@@ -812,7 +827,6 @@ export const TransactionModule: React.FC = () => {
           t.filelink = res.publicUrl; // update in-memory object
           setQuickProofTrx({ ...t, filelink: res.publicUrl });
           showToast(`Bukti transaksi ditemukan di bucket storage dan otomatis dihubungkan ke ${t.id}!`, 'success');
-          // Refresh list quietly
           executeSearch(false);
         }
       } catch (err) {
@@ -1872,16 +1886,48 @@ export const TransactionModule: React.FC = () => {
                     <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti_transfer)...</span>
                   </div>
                 ) : quickProofUrl ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <img
-                      src={quickProofUrl}
-                      alt={`Bukti Transaksi ${quickProofTrx.id}`}
-                      className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                        setQuickProofUrl(null);
-                      }}
-                    />
+                  <div className="flex flex-col items-center gap-3 py-2 w-full">
+                    {!proofLoadError ? (
+                      <img
+                        src={quickProofUrl}
+                        alt={`Bukti Transaksi ${quickProofTrx.id}`}
+                        className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg border border-stone-800"
+                        referrerPolicy="no-referrer"
+                        crossOrigin="anonymous"
+                        onError={() => {
+                          setProofLoadError(true);
+                        }}
+                      />
+                    ) : (
+                      <div className="text-center p-6 text-stone-400 space-y-3 max-w-md">
+                        <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+                        <p className="text-xs text-stone-300 font-medium">
+                          Tautan bukti tersedia dari kolom database, klik tombol di bawah untuk membuka gambar:
+                        </p>
+                        <code className="text-[10px] text-emerald-400 bg-stone-950 px-2 py-1.5 rounded block break-all font-mono border border-stone-800">
+                          {quickProofUrl}
+                        </code>
+                        <div className="pt-2 flex justify-center gap-2">
+                          <a
+                            href={quickProofUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Buka Gambar di Tab Baru</span>
+                          </a>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() => setProofLoadError(false)}
+                          >
+                            Coba Lagi
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center p-6 text-stone-400 space-y-3">

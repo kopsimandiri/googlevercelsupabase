@@ -837,50 +837,42 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
 
 /**
  * Resolves consistent Public URL from any storage reference (path, legacy signed URL, or public URL).
- * If the provided reference is just a bucket root without an object name, returns empty string.
+ * Prioritizes direct full URLs from public.transactions.file_url without rewriting or stripping.
  */
 export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   if (!storagePathOrUrl) return '';
   const trimmed = storagePathOrUrl.trim();
   if (!trimmed) return '';
 
-  // Return immediately if data URI or local asset
+  // 1. Return immediately if data URI or local asset
   if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
     return trimmed;
   }
 
-  // Extract pure storage path first to ensure it's not a truncated bucket root
+  // 2. If it is already a full HTTP/HTTPS URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    // If it's a truncated bucket root URL with no file, treat as empty
+    if (
+      trimmed.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) ||
+      trimmed.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`) ||
+      trimmed.endsWith('/object/public/') ||
+      trimmed.endsWith('/object/sign/')
+    ) {
+      return '';
+    }
+    // Return full URL directly as stored in database
+    return trimmed;
+  }
+
+  // 3. If it is a relative storage path (e.g. "2026/04/T260421001-hvubbk.webp")
   const path = extractStoragePath(trimmed);
   if (!path) return '';
 
   const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
 
-  // If already a valid public Supabase URL pointing to a concrete file
-  if (
-    trimmed.startsWith('https://') &&
-    trimmed.includes('/storage/v1/object/public/') &&
-    !trimmed.includes('?token=') &&
-    !trimmed.endsWith('/') &&
-    !trimmed.endsWith(`/${bucketName}`)
-  ) {
-    return trimmed;
-  }
-
-  const client = getSupabaseClient();
-  if (client) {
-    const { data } = client.storage.from(bucketName).getPublicUrl(path);
-    if (data?.publicUrl) {
-      return data.publicUrl;
-    }
-  }
-
-  // Fallback direct URL builder
-  const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || '';
-  if (baseUrl) {
-    return `${baseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${bucketName}/${path}`;
-  }
-
-  return trimmed;
+  // Active production Supabase project for storage
+  const activeBaseUrl = 'https://iqamratpkvnyyayjpnsu.supabase.co';
+  return `${activeBaseUrl}/storage/v1/object/public/${bucketName}/${path}`;
 }
 
 /**

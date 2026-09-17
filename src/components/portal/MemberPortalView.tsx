@@ -293,26 +293,32 @@ export const MemberPortalView: React.FC = () => {
 
   // Handler to open and resolve proof image from Supabase Storage
   const handleViewProof = (trx: TransactionRecord) => {
-    let resolvedUrl = trx.filelink ? getPublicProofUrl(trx.filelink) : '';
-    const trxId = (trx.id || '').trim();
-    const baseId = trxId.replace(/[-_.]\d+$/, '');
-    const knownPath = KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseId];
+    let resolvedUrl = (trx.filelink || '').trim();
 
-    if (!resolvedUrl && knownPath) {
-      resolvedUrl = getPublicProofUrl(knownPath);
+    if (resolvedUrl && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))) {
+      // Direct pass-through dari kolom file_url di database
+    } else if (resolvedUrl) {
+      resolvedUrl = getPublicProofUrl(resolvedUrl);
+    } else {
+      const trxId = (trx.id || '').trim();
+      const baseId = trxId.replace(/[-_.]\d+$/, '');
+      const knownPath = KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseId];
+      if (knownPath) {
+        resolvedUrl = getPublicProofUrl(knownPath);
+      }
     }
 
     const title = `Bukti Transaksi - ${trx.kategori || 'Setoran'}`;
 
     setSelectedProof({
       url: resolvedUrl || null,
-      originalPath: trx.filelink || knownPath || '',
+      originalPath: trx.filelink || '',
       title,
       trx,
       isLoading: false,
       imageLoaded: false,
       imageError: !resolvedUrl,
-      errorMessage: !resolvedUrl ? 'File bukti tidak ditemukan pada bucket storage.' : null,
+      errorMessage: !resolvedUrl ? 'File bukti tidak ditemukan pada kolom database.' : null,
     });
   };
 
@@ -1336,6 +1342,8 @@ export const MemberPortalView: React.FC = () => {
                     src={selectedProof.url}
                     alt="Bukti Transaksi"
                     className="max-h-[55vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
+                    referrerPolicy="no-referrer"
+                    crossOrigin="anonymous"
                     onLoad={() =>
                       setSelectedProof((p) => (p ? { ...p, imageLoaded: true } : null))
                     }

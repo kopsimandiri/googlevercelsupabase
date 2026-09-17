@@ -277,19 +277,24 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
   }
 
   const trxId = String(row.transaction_no || row.id || '').trim();
-  let filelink = row.file_url || row.filelink || '';
+  const rawFileUrl = String(row.file_url ?? row.filelink ?? '').trim();
+  let filelink = '';
 
-  // If filelink is empty or malformed/truncated bucket root, or has verified physical file in registry
-  const extracted = extractStoragePath(filelink);
-  if (!extracted || filelink.endsWith('/bukti_transfer/') || filelink.endsWith('/bukti_transfer')) {
-    if (KNOWN_STORAGE_PROOFS[trxId]) {
-      filelink = getPublicProofUrl(KNOWN_STORAGE_PROOFS[trxId]);
+  if (rawFileUrl && rawFileUrl !== '-' && rawFileUrl !== 'null' && rawFileUrl !== 'undefined') {
+    if (rawFileUrl.startsWith('http://') || rawFileUrl.startsWith('https://')) {
+      // Direct pass-through: baca file_url murni dari database tabel transactions
+      filelink = rawFileUrl;
     } else {
-      filelink = '';
+      // Relative path disimpan di database
+      filelink = getPublicProofUrl(rawFileUrl);
     }
-  } else if (KNOWN_STORAGE_PROOFS[trxId]) {
-    // Prefer verified physical file in bucket
-    filelink = getPublicProofUrl(KNOWN_STORAGE_PROOFS[trxId]);
+  } else {
+    const baseTrxId = trxId.replace(/[-_.]\d+$/, '');
+    const known = KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseTrxId];
+    if (known) {
+      // Fallback registry hanya jika kolom database benar-benar kosong
+      filelink = getPublicProofUrl(known);
+    }
   }
 
   return {
@@ -491,15 +496,18 @@ export const transactionService = {
       if (typeof localStorage !== 'undefined') {
         const stored = localStorage.getItem(STORAGE_TRX_KEY);
         if (stored) {
-          inMemoryTransactions = JSON.parse(stored);
-          return inMemoryTransactions!;
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            inMemoryTransactions = parsed.map(mapAndCleanTransactionRow);
+            return inMemoryTransactions;
+          }
         }
         localStorage.setItem(STORAGE_TRX_KEY, JSON.stringify(INITIAL_TRANSACTIONS));
       }
     } catch {
       // fallback
     }
-    inMemoryTransactions = [...INITIAL_TRANSACTIONS];
+    inMemoryTransactions = INITIAL_TRANSACTIONS.map(mapAndCleanTransactionRow);
     return inMemoryTransactions;
   },
 
