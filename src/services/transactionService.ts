@@ -67,6 +67,66 @@ CREATE POLICY "Allow admin delete on transactions"
 
 const INITIAL_TRANSACTIONS: TransactionRecord[] = [
   {
+    id: 'T251229001',
+    tanggal: '2025-12-29',
+    referal: 'KOPERASI',
+    plantation: 'PUSAT JAKARTA',
+    jenis: 'MASUK',
+    kategori: 'Simpanan Pokok',
+    metode_bayar: 'Bank BSI',
+    qty: 1,
+    jumlah: 500000,
+    area_jenis: 'KOPERASI PUSAT',
+    keterangan: 'Setoran Simpanan Pokok Pendaftaran Anggota Ferry Joko Yuliantono',
+    akun: 'Bank BSI',
+    member_id: '1121-00001',
+    customer_id: '1121-00001',
+    customer_name: 'Ferry Joko Yuliantono',
+    filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229001-jnpf6q.webp',
+    login_as: 'ADMIN',
+    logtime: '2025-12-29 08:30:00',
+  },
+  {
+    id: 'T260320001',
+    tanggal: '2026-03-20',
+    referal: 'KOPERASI',
+    plantation: 'PUSAT JAKARTA',
+    jenis: 'MASUK',
+    kategori: 'Simpanan Wajib',
+    metode_bayar: 'Bank BSI',
+    qty: 1,
+    jumlah: 360000,
+    area_jenis: 'KOPERASI PUSAT',
+    keterangan: 'Setoran Simpanan Wajib Paket 3 Tahun Ferry Joko Yuliantono',
+    akun: 'Bank BSI',
+    member_id: '1121-00001',
+    customer_id: '1121-00001',
+    customer_name: 'Ferry Joko Yuliantono',
+    filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/03/T260320001-ou4pzo.webp',
+    login_as: 'ADMIN',
+    logtime: '2026-03-20 09:15:00',
+  },
+  {
+    id: 'T260330005',
+    tanggal: '2026-03-30',
+    referal: 'KOPERASI',
+    plantation: 'PUSAT JAKARTA',
+    jenis: 'MASUK',
+    kategori: 'Simpanan Manasuka',
+    metode_bayar: 'Bank BSI',
+    qty: 1,
+    jumlah: 10000000,
+    area_jenis: 'KOPERASI PUSAT',
+    keterangan: 'Setoran Modal Sukarela Manasuka Produktif Ferry Joko Yuliantono',
+    akun: 'Bank BSI',
+    member_id: '1121-00001',
+    customer_id: '1121-00001',
+    customer_name: 'Ferry Joko Yuliantono',
+    filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/03/T260330005-vumfjf.webp',
+    login_as: 'ADMIN',
+    logtime: '2026-03-30 11:00:00',
+  },
+  {
     id: 'T260815001',
     tanggal: '2026-08-15',
     referal: 'KOPERASI',
@@ -297,6 +357,9 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
     }
   }
 
+  const rawMemberId = row.member_id ? String(row.member_id).trim() : undefined;
+  const rawCustomerName = row.customer_name ? String(row.customer_name).trim() : (row.customer_id ? String(row.customer_id).trim() : undefined);
+
   return {
     id: trxId,
     tanggal,
@@ -315,7 +378,9 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
     login_as: row.login_as || 'ADMIN',
     logtime: row.created_at || row.logtime || row.updated_at || new Date().toISOString(),
     area_jenis: areaJenis,
-    customer_id: row.customer_name || row.customer_id ? String(row.customer_name || row.customer_id) : undefined,
+    member_id: rawMemberId || (rawCustomerName && /^\d{4}-\d{5}$/.test(rawCustomerName) ? rawCustomerName : undefined),
+    customer_id: rawCustomerName || rawMemberId,
+    customer_name: rawCustomerName,
     supplier_id: row.supplier_name || row.supplier_id ? String(row.supplier_name || row.supplier_id) : undefined,
   };
 }
@@ -343,7 +408,8 @@ export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord
     category_name: trx.kategori || 'Kas',
     product_name: trx.sku_name || '',
     supplier_name: trx.supplier_id || '',
-    customer_name: trx.customer_id || '',
+    customer_name: trx.customer_name || trx.customer_id || '',
+    member_id: trx.member_id || (trx.customer_id && /^\d{4}-\d{5}$/.test(trx.customer_id) ? trx.customer_id : null),
     qty: cleanNumeric(trx.qty || 1),
     price: cleanNumeric(trx.harga_satuan !== undefined && trx.harga_satuan !== null ? trx.harga_satuan : (trx.jumlah || 0)),
     updated_at: nowStr,
@@ -1371,15 +1437,24 @@ export const transactionService = {
       try {
         const orClauses: string[] = [];
         if (cleanName.length >= 3) {
-          orClauses.push(`account_name_legacy.ilike.%${cleanName}%`, `description.ilike.%${cleanName}%`);
+          orClauses.push(
+            `account_name_legacy.ilike.%${cleanName}%`,
+            `description.ilike.%${cleanName}%`,
+            `customer_name.ilike.%${cleanName}%`
+          );
         }
         if (cleanNo.length >= 3) {
-          orClauses.push(`account_name_legacy.ilike.%${cleanNo}%`, `description.ilike.%${cleanNo}%`, `customer_id.ilike.%${cleanNo}%`);
+          orClauses.push(
+            `member_id.eq.${cleanNo}`,
+            `customer_name.ilike.%${cleanNo}%`,
+            `account_name_legacy.ilike.%${cleanNo}%`,
+            `description.ilike.%${cleanNo}%`
+          );
         }
 
         const { data, error } = await client
           .from(TRANSACTIONS_TABLE_NAME)
-          .select('account_name_legacy, category_name, transaction_type, amount, description, customer_id')
+          .select('account_name_legacy, category_name, transaction_type, amount, description, customer_name, member_id')
           .or(orClauses.join(','));
 
         if (!error && data && data.length > 0) {
@@ -1396,12 +1471,25 @@ export const transactionService = {
       transactionsList = localTrx.filter((t) => {
         const desc = (t.keterangan || '').toLowerCase();
         const cust = (t.customer_id || '').toLowerCase();
+        const custName = (t.customer_name || '').toLowerCase();
+        const memberId = (t.member_id || '').toLowerCase();
         const acc = (t.akun || '').toLowerCase();
         const targetName = cleanName.toLowerCase();
         const targetNo = cleanNo.toLowerCase();
 
-        const matchNo = targetNo.length >= 3 && (cust.includes(targetNo) || desc.includes(targetNo) || acc.includes(targetNo));
-        const matchName = targetName.length >= 3 && (desc.includes(targetName) || acc.includes(targetName));
+        const matchNo =
+          targetNo.length >= 3 &&
+          (memberId.includes(targetNo) ||
+            cust.includes(targetNo) ||
+            custName.includes(targetNo) ||
+            desc.includes(targetNo) ||
+            acc.includes(targetNo));
+        const matchName =
+          targetName.length >= 3 &&
+          (custName.includes(targetName) ||
+            cust.includes(targetName) ||
+            desc.includes(targetName) ||
+            acc.includes(targetName));
 
         return matchNo || matchName;
       });
@@ -1468,10 +1556,19 @@ export const transactionService = {
       try {
         const orClauses: string[] = [];
         if (cleanName.length >= 3) {
-          orClauses.push(`account_name_legacy.ilike.%${cleanName}%`, `description.ilike.%${cleanName}%`);
+          orClauses.push(
+            `account_name_legacy.ilike.%${cleanName}%`,
+            `description.ilike.%${cleanName}%`,
+            `customer_name.ilike.%${cleanName}%`
+          );
         }
         if (cleanNo.length >= 3) {
-          orClauses.push(`account_name_legacy.ilike.%${cleanNo}%`, `description.ilike.%${cleanNo}%`, `customer_id.ilike.%${cleanNo}%`);
+          orClauses.push(
+            `member_id.eq.${cleanNo}`,
+            `customer_name.ilike.%${cleanNo}%`,
+            `account_name_legacy.ilike.%${cleanNo}%`,
+            `description.ilike.%${cleanNo}%`
+          );
         }
 
         const { data, error } = await client
@@ -1482,6 +1579,8 @@ export const transactionService = {
 
         if (!error && data && data.length > 0) {
           return data.map(mapAndCleanTransactionRow);
+        } else if (error) {
+          console.warn('getMemberTransactions Supabase query warning:', error.message);
         }
       } catch (err) {
         console.warn('getMemberTransactions Supabase error:', err);
@@ -1493,12 +1592,28 @@ export const transactionService = {
     return all.filter((t) => {
       const desc = (t.keterangan || '').toLowerCase();
       const cust = (t.customer_id || '').toLowerCase();
+      const custName = (t.customer_name || '').toLowerCase();
+      const memberId = (t.member_id || '').toLowerCase();
       const acc = (t.akun || '').toLowerCase();
+      const id = (t.id || '').toLowerCase();
       const targetName = cleanName.toLowerCase();
       const targetNo = cleanNo.toLowerCase();
 
-      const matchNo = targetNo.length >= 3 && (cust.includes(targetNo) || desc.includes(targetNo) || acc.includes(targetNo));
-      const matchName = targetName.length >= 3 && (desc.includes(targetName) || acc.includes(targetName));
+      const matchNo =
+        targetNo.length >= 3 &&
+        (memberId.includes(targetNo) ||
+          cust.includes(targetNo) ||
+          custName.includes(targetNo) ||
+          desc.includes(targetNo) ||
+          acc.includes(targetNo) ||
+          id.includes(targetNo));
+
+      const matchName =
+        targetName.length >= 3 &&
+        (custName.includes(targetName) ||
+          cust.includes(targetName) ||
+          desc.includes(targetName) ||
+          acc.includes(targetName));
 
       return matchNo || matchName;
     });

@@ -18,6 +18,7 @@ export interface TransactionRecord {
   harga_satuan?: number;
   customer_id?: string;
   customer_name?: string;
+  member_id?: string;
   supplier_id?: string;
   supplier_name?: string;
 }
@@ -42,6 +43,7 @@ export interface MemberRecord {
   tempat_lahir?: string;
   username?: string;
   avatar_url?: string;
+  transfer_proof_url?: string;
   legacy_password_hash?: string;
   status?: string;
 }
