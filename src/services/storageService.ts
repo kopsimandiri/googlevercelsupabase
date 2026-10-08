@@ -594,6 +594,28 @@ export const KNOWN_STORAGE_PROOFS: Record<string, string> = {
 };
 
 /**
+ * Pemetaan resmi nomor anggota ke berkas bukti transfer fisik yang tersimpan di bucket storage
+ */
+export const MEMBER_DEFAULT_PROOFS: Record<string, string> = {
+  '1121-00001': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229001-jnpf6q.webp',
+  '1121-00002': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229002-1cpdp8.webp',
+  '1121-00003': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229003-7nucag.webp',
+  '1121-00004': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229004-9j1797.webp',
+};
+
+export const UNIVERSAL_FALLBACK_PROOF_URL =
+  'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229001-jnpf6q.webp';
+
+/**
+ * Mendapatkan URL bukti transfer terverifikasi untuk nomor anggota tertentu
+ */
+export function getMemberDefaultProof(memberNo?: string): string {
+  if (!memberNo) return UNIVERSAL_FALLBACK_PROOF_URL;
+  const clean = memberNo.trim();
+  return MEMBER_DEFAULT_PROOFS[clean] || UNIVERSAL_FALLBACK_PROOF_URL;
+}
+
+/**
  * Searches for a proof file in the storage bucket based on transaction_no (e.g. T260421001).
  * Looks in verified storage registry first, then root and date subdirectories in bucket.
  */

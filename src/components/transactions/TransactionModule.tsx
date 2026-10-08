@@ -1893,7 +1893,6 @@ export const TransactionModule: React.FC = () => {
                         alt={`Bukti Transaksi ${quickProofTrx.id}`}
                         className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg border border-stone-800"
                         referrerPolicy="no-referrer"
-                        crossOrigin="anonymous"
                         onError={() => {
                           setProofLoadError(true);
                         }}

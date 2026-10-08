@@ -87,6 +87,66 @@ const INITIAL_TRANSACTIONS: TransactionRecord[] = [
     logtime: '2025-12-29 08:30:00',
   },
   {
+    id: 'T251229002',
+    tanggal: '2025-12-29',
+    referal: 'KOPERASI',
+    plantation: 'PUSAT JAKARTA',
+    jenis: 'MASUK',
+    kategori: 'Simpanan Pokok',
+    metode_bayar: 'Bank BSI',
+    qty: 1,
+    jumlah: 500000,
+    area_jenis: 'KOPERASI PUSAT',
+    keterangan: 'Setoran Simpanan Pokok Pendaftaran Anggota Nunung Suhudiah',
+    akun: 'Bank BSI',
+    member_id: '1121-00002',
+    customer_id: '1121-00002',
+    customer_name: 'Nunung Suhudiah',
+    filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229002-1cpdp8.webp',
+    login_as: 'ADMIN',
+    logtime: '2025-12-29 08:45:00',
+  },
+  {
+    id: 'T251229003',
+    tanggal: '2025-12-29',
+    referal: 'KOPERASI',
+    plantation: 'PUSAT JAKARTA',
+    jenis: 'MASUK',
+    kategori: 'Simpanan Pokok',
+    metode_bayar: 'Bank BSI',
+    qty: 1,
+    jumlah: 500000,
+    area_jenis: 'KOPERASI PUSAT',
+    keterangan: 'Setoran Simpanan Pokok Pendaftaran Anggota Habloel Mawadi',
+    akun: 'Bank BSI',
+    member_id: '1121-00003',
+    customer_id: '1121-00003',
+    customer_name: 'Habloel Mawadi',
+    filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229003-7nucag.webp',
+    login_as: 'ADMIN',
+    logtime: '2025-12-29 09:00:00',
+  },
+  {
+    id: 'T251229004',
+    tanggal: '2025-12-29',
+    referal: 'KOPERASI',
+    plantation: 'PUSAT JAKARTA',
+    jenis: 'MASUK',
+    kategori: 'Simpanan Pokok',
+    metode_bayar: 'Bank BSI',
+    qty: 1,
+    jumlah: 500000,
+    area_jenis: 'KOPERASI PUSAT',
+    keterangan: 'Setoran Simpanan Pokok Pendaftaran Anggota Yudhi Irsyahdi',
+    akun: 'Bank BSI',
+    member_id: '1121-00004',
+    customer_id: '1121-00004',
+    customer_name: 'Yudhi Irsyahdi',
+    filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229004-9j1797.webp',
+    login_as: 'ADMIN',
+    logtime: '2025-12-29 09:15:00',
+  },
+  {
     id: 'T260320001',
     tanggal: '2026-03-20',
     referal: 'KOPERASI',
@@ -564,7 +624,11 @@ export const transactionService = {
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
-            inMemoryTransactions = parsed.map(mapAndCleanTransactionRow);
+            // Pastikan transaksi registrasi & simpanan awal dari INITIAL_TRANSACTIONS selalu terhubung
+            const existingIds = new Set(parsed.map((p: any) => p.id || p.transaction_no));
+            const missing = INITIAL_TRANSACTIONS.filter((init) => !existingIds.has(init.id));
+            const merged = missing.length > 0 ? [...parsed, ...missing] : parsed;
+            inMemoryTransactions = merged.map(mapAndCleanTransactionRow);
             return inMemoryTransactions;
           }
         }
