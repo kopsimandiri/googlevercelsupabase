@@ -616,6 +616,21 @@ export function getMemberDefaultProof(memberNo?: string): string {
 }
 
 /**
+ * Memeriksa apakah transaksi memiliki berkas bukti transfer / lampiran yang valid
+ */
+export function hasTransactionProof(trx?: { id?: string; filelink?: string } | null): boolean {
+  if (!trx) return false;
+  const link = (trx.filelink || '').trim();
+  if (link && link !== '-' && link !== 'null' && link !== 'undefined') {
+    return true;
+  }
+  const trxId = (trx.id || '').trim();
+  if (!trxId) return false;
+  const baseId = trxId.replace(/[-_.]\d+$/, '');
+  return Boolean(KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseId]);
+}
+
+/**
  * Searches for a proof file in the storage bucket based on transaction_no (e.g. T260421001).
  * Looks in verified storage registry first, then root and date subdirectories in bucket.
  */

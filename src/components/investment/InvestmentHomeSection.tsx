@@ -22,21 +22,36 @@ import {
   Filter,
   Sparkles,
   Info,
+  Lock,
+  LogIn,
+  UserPlus,
+  X,
+  ArrowRight,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 interface InvestmentHomeSectionProps {
   onSelectProjectDetail?: (projectId: string) => void;
+  onOpenLogin?: () => void;
+  onOpenRegister?: () => void;
 }
 
 export const InvestmentHomeSection: React.FC<InvestmentHomeSectionProps> = ({
   onSelectProjectDetail,
+  onOpenLogin,
+  onOpenRegister,
 }) => {
+  const { user, isAuthenticated } = useAuth();
+  const isMember = Boolean(isAuthenticated && (user?.memberNo || user?.role === 'ANGGOTA'));
+
   const [campaigns, setCampaigns] = useState<ProjectInvestmentCampaign[]>([]);
   const [stats, setStats] = useState<SCFPublicStats | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedCampaignForInvest, setSelectedCampaignForInvest] =
     useState<ProjectInvestmentCampaign | null>(null);
   const [showComplianceModal, setShowComplianceModal] = useState<boolean>(false);
+  const [showGatekeeperModal, setShowGatekeeperModal] = useState<boolean>(false);
+  const [gatedCampaign, setGatedCampaign] = useState<ProjectInvestmentCampaign | null>(null);
 
   // Filter state
   const [filterInstrument, setFilterInstrument] = useState<string>('ALL');
@@ -245,7 +260,14 @@ export const InvestmentHomeSection: React.FC<InvestmentHomeSectionProps> = ({
               <InvestmentCampaignCard
                 key={camp.id}
                 campaign={camp}
-                onInvest={(c) => setSelectedCampaignForInvest(c)}
+                onInvest={(c) => {
+                  if (!isMember) {
+                    setGatedCampaign(c);
+                    setShowGatekeeperModal(true);
+                    return;
+                  }
+                  setSelectedCampaignForInvest(c);
+                }}
                 onViewDetail={() => {
                   if (onSelectProjectDetail) {
                     onSelectProjectDetail(camp.project_id);
@@ -257,7 +279,7 @@ export const InvestmentHomeSection: React.FC<InvestmentHomeSectionProps> = ({
         )}
       </div>
 
-      {/* MODAL CHECKOUT INVESTASI & AKAD */}
+      {/* MODAL CHECKOUT INVESTASI & AKAD (HANYA UNTUK ANGGOTA RESMI) */}
       {selectedCampaignForInvest && (
         <InvestmentCheckoutModal
           campaign={selectedCampaignForInvest}
@@ -266,6 +288,148 @@ export const InvestmentHomeSection: React.FC<InvestmentHomeSectionProps> = ({
             loadPublicData();
           }}
         />
+      )}
+
+      {/* MODAL GATEKEEPER: KHUSUS ANGGOTA RESMI KOPSIM */}
+      {showGatekeeperModal && gatedCampaign && (
+        <div
+          id="investment-member-gatekeeper-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-xs animate-fadeIn overflow-y-auto"
+        >
+          <div className="bg-surface rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-6 space-y-5 my-auto">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-stone-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-950 text-accent-gold flex items-center justify-center shrink-0 border border-emerald-800 shadow-xs">
+                  <Lock className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-200">
+                    Akses Khusus Anggota Koperasi
+                  </span>
+                  <h3 className="font-bold text-base sm:text-lg font-serif text-stone-900 mt-1">
+                    Penyertaan Modal Proyek Sektor Riil
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGatekeeperModal(false)}
+                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
+                aria-label="Tutup"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Campaign Overview */}
+            <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200/80 flex items-center justify-between text-xs">
+              <div>
+                <span className="text-[10px] font-mono text-emerald-800 font-bold block">
+                  PROYEK TERPILIH: {gatedCampaign.project_id}
+                </span>
+                <span className="font-bold text-sm font-serif text-stone-900 block mt-0.5">
+                  {gatedCampaign.project_name}
+                </span>
+                <span className="text-[11px] text-stone-600 block">
+                  Efek {gatedCampaign.instrument_type} • Akad {gatedCampaign.akad_type}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-stone-500 block">Min. Investasi</span>
+                <span className="font-bold font-mono text-emerald-900 text-sm">
+                  {formatRupiah(gatedCampaign.min_investment)}
+                </span>
+                <span className="text-[10px] text-emerald-700 font-bold block">
+                  ROI {gatedCampaign.projected_roi_percent}% p.a.
+                </span>
+              </div>
+            </div>
+
+            {/* Legal & Sharia Narrative */}
+            <div className="space-y-2 text-xs text-stone-600 leading-relaxed bg-stone-50 p-3.5 rounded-xl border border-stone-200">
+              <div className="flex items-center gap-1.5 font-bold text-stone-800">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                <span>Prinsip Urun Dana Tertutup (Closed-Loop SCF)</span>
+              </div>
+              <p>
+                Sesuai dengan <strong>Undang-Undang Perkoperasian No. 25/1992</strong> dan{' '}
+                <strong>Fatwa DSN-MUI No. 140/DSN-MUI/VIII/2021</strong>, penyertaan modal proyek
+                sektor riil KOPSIM beroperasi dalam ekosistem internal tertutup.
+              </p>
+              <p className="font-medium text-emerald-950">
+                Hanya anggota resmi terdaftar yang berhak menyetorkan modal investasi, menandatangani
+                akad syariah digital, dan menerima distribusi bagi hasil SHU investasi.
+              </p>
+            </div>
+
+            {/* Action Buttons: Masuk Portal vs Daftar Anggota */}
+            <div className="space-y-3 pt-1">
+              <div className="p-3.5 rounded-xl border border-emerald-800/20 bg-gradient-to-r from-emerald-900 to-emerald-950 text-white flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold block text-white flex items-center gap-1.5">
+                    <LogIn className="w-3.5 h-3.5 text-amber-300" />
+                    Sudah Menjadi Anggota?
+                  </span>
+                  <span className="text-[11px] text-emerald-200/90 block">
+                    Masuk ke portal internal untuk verifikasi NRA dan langsung lakukan pemesanan efek.
+                  </span>
+                </div>
+                <Button
+                  variant="gold"
+                  size="sm"
+                  onClick={() => {
+                    setShowGatekeeperModal(false);
+                    if (onOpenLogin) {
+                      onOpenLogin();
+                    }
+                  }}
+                  className="font-bold text-xs shrink-0 shadow-md"
+                  rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+                >
+                  Masuk Portal
+                </Button>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-stone-200 bg-white flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold block text-stone-900 flex items-center gap-1.5">
+                    <UserPlus className="w-3.5 h-3.5 text-emerald-700" />
+                    Belum Menjadi Anggota?
+                  </span>
+                  <span className="text-[11px] text-stone-500 block">
+                    Daftar online sebagai anggota baru untuk ikut serta mendanai proyek sektor riil ini.
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowGatekeeperModal(false);
+                    if (onOpenRegister) {
+                      onOpenRegister();
+                    }
+                  }}
+                  className="font-semibold text-xs border-stone-300 text-stone-800 hover:bg-stone-50 shrink-0"
+                  rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+                >
+                  Daftar Anggota
+                </Button>
+              </div>
+            </div>
+
+            {/* Footer Dismiss */}
+            <div className="text-center pt-1 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setShowGatekeeperModal(false)}
+                className="text-xs text-stone-500 hover:text-stone-800 underline underline-offset-2"
+              >
+                Tutup & Kembali Lihat Prospektus
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MODAL KEPATUHAN & TRANSPARANSI */}

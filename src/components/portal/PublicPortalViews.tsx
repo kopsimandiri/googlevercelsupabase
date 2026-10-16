@@ -55,7 +55,10 @@ const MARKETPLACE_PRODUCTS: ProductItem[] = [
   { sku: 'MEAT-PRIME-01', name: 'Daging Sapi Prime Cut Halal MUI', category: 'Peternakan & Meatshop', grade: 'Prime Beef Halal', packaging: 'Thermovac Frozen Box', availability: 'Tersedia', moq: 25, supplyCapacity: '10 Ton / Bulan', price: 125000 },
 ];
 
-export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }> = ({ onOpenRegister }) => {
+export const PortfolioMarketplaceView: React.FC<{
+  onOpenRegister?: () => void;
+  onOpenLogin?: () => void;
+}> = ({ onOpenRegister, onOpenLogin }) => {
   const { showToast } = useNotification();
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(null);
   const [selectedExposure, setSelectedExposure] = useState<ProjectExposure | null>(null);
@@ -167,6 +170,8 @@ export const PortfolioMarketplaceView: React.FC<{ onOpenRegister?: () => void }>
 
       {activePortalTab === 'INVESTASI' ? (
         <InvestmentHomeSection
+          onOpenLogin={onOpenLogin}
+          onOpenRegister={onOpenRegister}
           onSelectProjectDetail={(projId) => {
             const exp = exposures.find(
               (e) =>

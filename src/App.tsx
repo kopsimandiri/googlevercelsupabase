@@ -686,7 +686,10 @@ function AppContent() {
             breadcrumbs={['Portal Publik', 'Katalog Komoditas']}
             idPrefix="portfolio-view"
           >
-            <PortfolioMarketplaceView onOpenRegister={() => setShowRegisterModal(true)} />
+            <PortfolioMarketplaceView
+              onOpenRegister={() => setShowRegisterModal(true)}
+              onOpenLogin={() => setShowLoginModal(true)}
+            />
           </PageContainer>
         );
 

@@ -15,6 +15,7 @@ import {
   ProofOptimizationResult,
   STORAGE_BUKTI_TRANSFER_SQL_DDL,
   KNOWN_STORAGE_PROOFS,
+  hasTransactionProof,
 } from '../../services/storageService';
 import { TransactionRecord, CustomerRecord, SupplierRecord, MemberRecord } from '../../types/database';
 import { formatDateIndo, formatRupiah, cleanRupiah } from '../../utils/formatters';
@@ -1567,64 +1568,58 @@ export const TransactionModule: React.FC = () => {
                       {formatRupiah(t.jumlah)}
                     </td>
                     <td className="py-3 px-3 text-center">
-                      {t.filelink ? (
-                        (() => {
-                          const pubUrl = getPublicProofUrl(t.filelink);
-                          const isPdf = isPdfFile(t.filelink) || (pubUrl && isPdfFile(pubUrl));
+                      {(() => {
+                        const hasProof = hasTransactionProof(t);
+                        const proofPath =
+                          (t.filelink && t.filelink.trim() !== '' && t.filelink !== '-' && t.filelink !== 'null' && t.filelink !== 'undefined')
+                            ? t.filelink
+                            : KNOWN_STORAGE_PROOFS[t.id] || KNOWN_STORAGE_PROOFS[(t.id || '').replace(/[-_.]\d+$/, '')] || null;
 
-                          if (isPdf && pubUrl) {
-                            return (
-                              <a
-                                href={pubUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-blue-700"
-                                title="Buka Dokumen PDF di Tab Baru"
-                              >
-                                <FileText className="w-3.5 h-3.5 shrink-0" />
-                                <span>Lihat Lampiran</span>
-                              </a>
-                            );
-                          }
+                        if (!hasProof || !proofPath) {
+                          return <span className="text-stone-400 font-medium text-xs select-none">-</span>;
+                        }
 
-                          // Default for images or any registered filelink: open internal Quick Proof Modal (with auto-recovery)
+                        const pubUrl = getPublicProofUrl(proofPath);
+                        const isPdf = isPdfFile(proofPath) || (pubUrl && isPdfFile(pubUrl));
+
+                        if (isPdf && pubUrl) {
                           return (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenQuickProof(t)}
-                              className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
-                              title="Klik untuk melihat bukti transaksi"
+                            <a
+                              href={pubUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-blue-700"
+                              title="Buka Dokumen PDF di Tab Baru"
                             >
-                              <Eye className="w-3.5 h-3.5 shrink-0" />
-                              {pubUrl && (
-                                <img
-                                  src={pubUrl}
-                                  alt="Bukti"
-                                  className="w-4 h-4 object-cover rounded bg-white/20"
-                                  onError={(e) => {
-                                    (e.target as HTMLElement).style.display = 'none';
-                                  }}
-                                />
-                              )}
-                              <span className="hidden sm:inline">Lihat Bukti</span>
-                            </button>
+                              <FileText className="w-3.5 h-3.5 shrink-0" />
+                              <span>Lihat Lampiran</span>
+                            </a>
                           );
-                        })()
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleSearchBucketForTrx(t)}
-                          disabled={isSearchingStorageId === t.id}
-                          className="text-stone-400 hover:text-emerald-700 font-medium text-xs inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-emerald-50 transition-colors cursor-pointer"
-                          title="Cek apakah berkas ada di storage bucket bukti_transfer"
-                        >
-                          {isSearchingStorageId === t.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
-                          ) : (
-                            <span>-</span>
-                          )}
-                        </button>
-                      )}
+                        }
+
+                        // Default for images or any registered filelink: open internal Quick Proof Modal (with auto-recovery)
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenQuickProof({ ...t, filelink: proofPath })}
+                            className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
+                            title="Klik untuk melihat bukti transaksi"
+                          >
+                            <Eye className="w-3.5 h-3.5 shrink-0" />
+                            {pubUrl && (
+                              <img
+                                src={pubUrl}
+                                alt="Bukti"
+                                className="w-4 h-4 object-cover rounded bg-white/20"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            )}
+                            <span className="hidden sm:inline">Lihat Bukti</span>
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="py-3 px-3 text-center">
                       <div className="flex items-center justify-center gap-1.5">
