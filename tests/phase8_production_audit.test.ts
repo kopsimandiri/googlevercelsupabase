@@ -1,9 +1,16 @@
 import { authService } from '../src/services/authService';
-import { transactionService } from '../src/services/transactionService';
+import { transactionService, mapAndCleanTransactionRow } from '../src/services/transactionService';
 import { paymentService } from '../src/services/paymentService';
 import { notificationService } from '../src/services/notificationService';
 import { auditService } from '../src/services/auditService';
 import { generateWebhookSignature, verifyWebhookSignature } from '../src/utils/cryptoSecurity';
+import {
+  isGoogleDriveUrl,
+  isSupabaseStorageUrl,
+  extractStoragePath,
+  getPublicProofUrl,
+  hasTransactionProof,
+} from '../src/services/storageService';
 
 let passed = 0;
 let failed = 0;
@@ -140,6 +147,50 @@ async function runE2ECriticalFlows() {
 
   const retryRes = await notificationService.retryJob(jobRes.data!.id);
   assert(retryRes.success === true, 'Worker retry execution sukses memproses antrean notifikasi');
+
+  // ----------------------------------------------------------------------------
+  // FLOW 8: Supabase Storage Proof Enforcement (Reject Legacy Google Drive Links)
+  // ----------------------------------------------------------------------------
+  console.log('\n▶ [CRITICAL FLOW 8] Supabase Storage Proof Enforcement & Google Drive Rejection');
+  const legacyDriveUrl = 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing';
+  const validSupabaseUrl = 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229001-jnpf6q.webp';
+
+  assert(isGoogleDriveUrl(legacyDriveUrl) === true, 'isGoogleDriveUrl mendeteksi link Google Drive');
+  assert(isSupabaseStorageUrl(legacyDriveUrl) === false, 'isSupabaseStorageUrl menolak link Google Drive');
+  assert(isSupabaseStorageUrl(validSupabaseUrl) === true, 'isSupabaseStorageUrl menerima URL Supabase Storage valid');
+  assert(extractStoragePath(legacyDriveUrl) === null, 'extractStoragePath mengembalikan null untuk URL Google Drive');
+  assert(
+    extractStoragePath(validSupabaseUrl) === '2025/12/T251229001-jnpf6q.webp',
+    'extractStoragePath mengekstrak object path dari URL Supabase Storage'
+  );
+  assert(getPublicProofUrl(legacyDriveUrl) === '', 'getPublicProofUrl memblokir URL Google Drive menjadi string kosong');
+  assert(getPublicProofUrl(validSupabaseUrl) === validSupabaseUrl, 'getPublicProofUrl mempertahankan URL Supabase Storage valid');
+  assert(
+    hasTransactionProof({ id: 'T999999001', filelink: legacyDriveUrl }) === false,
+    'hasTransactionProof menolak transaksi dengan URL Google Drive jika tidak ada di Supabase Storage'
+  );
+
+  const cleanedUnknownDriveRow = mapAndCleanTransactionRow({
+    transaction_no: 'T999999001',
+    transaction_date: '2026-01-10',
+    amount: 500000,
+    file_url: legacyDriveUrl,
+  });
+  assert(
+    cleanedUnknownDriveRow.filelink === '',
+    'mapAndCleanTransactionRow membersihkan URL Google Drive jika belum ada di bucket Supabase'
+  );
+
+  const cleanedKnownDriveRow = mapAndCleanTransactionRow({
+    transaction_no: 'T251229001-1',
+    transaction_date: '2025-12-29',
+    amount: 500000,
+    file_url: legacyDriveUrl,
+  });
+  assert(
+    cleanedKnownDriveRow.filelink === validSupabaseUrl,
+    'mapAndCleanTransactionRow mengganti URL Google Drive dengan URL Supabase Storage dari registry untuk transaksi terdaftar'
+  );
 
   // ----------------------------------------------------------------------------
   // SUMMARY

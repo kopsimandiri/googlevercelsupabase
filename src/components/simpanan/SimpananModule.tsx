@@ -15,6 +15,7 @@ import {
   uploadMemberProof,
   hasTransactionProof,
   getPublicProofUrl,
+  resolveKnownStorageProofUrl,
 } from '../../services/storageService';
 import {
   Wallet,
@@ -503,7 +504,9 @@ export const SimpananModule: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-stone-100">
                     {savingsTransactions.map((trx) => {
-                      const proofUrl = hasTransactionProof(trx) ? getPublicProofUrl(trx.filelink) : '';
+                      const proofUrl = hasTransactionProof(trx)
+                        ? (getPublicProofUrl(trx.filelink) || resolveKnownStorageProofUrl(trx.id))
+                        : '';
                       return (
                         <tr key={trx.id} className="hover:bg-stone-50">
                           <td className="py-3 px-3 font-mono font-bold text-emerald-950">{trx.id}</td>

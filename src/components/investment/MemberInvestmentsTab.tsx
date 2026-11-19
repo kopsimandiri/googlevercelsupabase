@@ -319,18 +319,21 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
                   </div>
 
                   <div className="flex items-center gap-3 mt-2 flex-wrap justify-end">
-                    {tx.payment_proof_url && tx.payment_proof_url.trim() !== '-' ? (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedProofUrl(getPublicProofUrl(tx.payment_proof_url))}
-                        className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        Lihat Bukti
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-stone-400">Bukti: -</span>
-                    )}
+                    {(() => {
+                      const resolvedProofUrl = getPublicProofUrl(tx.payment_proof_url);
+                      return resolvedProofUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProofUrl(resolvedProofUrl)}
+                          className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          Lihat Bukti
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-stone-400">Bukti: -</span>
+                      );
+                    })()}
 
                     {tx.agreement && (
                       <button

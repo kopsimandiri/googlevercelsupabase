@@ -3,7 +3,15 @@ import { CustomerRecord, SupplierRecord, TransactionRecord } from '../types/data
 import { cleanRupiah } from '../utils/formatters';
 import { authService } from './authService';
 import { auditService } from './auditService';
-import { extractStoragePath, getPublicProofUrl, findProofInBucketByTransactionNo, KNOWN_STORAGE_PROOFS } from './storageService';
+import {
+  extractStoragePath,
+  getPublicProofUrl,
+  findProofInBucketByTransactionNo,
+  KNOWN_STORAGE_PROOFS,
+  isGoogleDriveUrl,
+  isSupabaseStorageUrl,
+  resolveKnownStorageProofUrl,
+} from './storageService';
 
 const STORAGE_TRX_KEY = 'KOPSIM_TRANSACTIONS_DATA';
 export const TRANSACTIONS_TABLE_NAME = 'transactions';
@@ -398,22 +406,17 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
 
   const trxId = String(row.transaction_no || row.id || '').trim();
   const rawFileUrl = String(row.file_url ?? row.filelink ?? '').trim();
+  const resolvedDbProofUrl = getPublicProofUrl(rawFileUrl);
   let filelink = '';
 
-  if (rawFileUrl && rawFileUrl !== '-' && rawFileUrl !== 'null' && rawFileUrl !== 'undefined') {
-    if (rawFileUrl.startsWith('http://') || rawFileUrl.startsWith('https://')) {
-      // Direct pass-through: baca file_url murni dari database tabel transactions
-      filelink = rawFileUrl;
-    } else {
-      // Relative path disimpan di database
-      filelink = getPublicProofUrl(rawFileUrl);
-    }
+  if (resolvedDbProofUrl) {
+    // Hanya terima URL Supabase Storage / path storage yang valid (URL Google Drive ditolak otomatis)
+    filelink = resolvedDbProofUrl;
   } else {
-    const baseTrxId = trxId.replace(/[-_.]\d+$/, '');
-    const known = KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseTrxId];
-    if (known) {
-      // Fallback registry hanya jika kolom database benar-benar kosong
-      filelink = getPublicProofUrl(known);
+    // Jika file_url kosong, terpotong, atau berisi link Google Drive lama, fallback ke registry Supabase Storage
+    const knownPublicUrl = resolveKnownStorageProofUrl(trxId);
+    if (knownPublicUrl) {
+      filelink = knownPublicUrl;
     }
   }
 
@@ -462,7 +465,7 @@ export function mapTransactionRecordToSupabaseRow(trx: Partial<TransactionRecord
     transaction_type: trx.jenis || 'MASUK',
     payment_method: trx.metode_bayar || 'Bank BSI',
     amount: cleanNumeric(trx.jumlah),
-    file_url: trx.filelink || '',
+    file_url: getPublicProofUrl(trx.filelink) || '',
     account_name_legacy: trx.akun || trx.customer_name || (trx.referal === 'PROJECT' ? 'DANA PROJECT' : 'Bank BSI'),
     description: trx.keterangan || '',
     category_name: trx.kategori || 'Kas',
@@ -1803,27 +1806,33 @@ export const transactionService = {
     }> = [];
 
     for (const row of data) {
-      const oldUrl = row.file_url || '';
+      const oldUrl = String(row.file_url || '').trim();
       const path = extractStoragePath(oldUrl);
       let newUrl = getPublicProofUrl(oldUrl);
 
-      // If URL is truncated (e.g. points to .../storage/v1/object/public/bukti_transfer/ without object name)
-      // Attempt bucket discovery by transaction number
-      if (!newUrl && oldUrl.includes('bukti_transfer')) {
+      // Check if it's already a clean and complete Supabase Storage public URL
+      const isAlreadyPublicValid =
+        isSupabaseStorageUrl(oldUrl) &&
+        oldUrl.includes('/storage/v1/object/public/') &&
+        !oldUrl.includes('?token=') &&
+        Boolean(path);
+
+      if (isAlreadyPublicValid) {
+        continue;
+      }
+
+      // If URL is truncated OR is a legacy Google Drive URL, try known registry then bucket discovery
+      if (!newUrl) {
+        newUrl = resolveKnownStorageProofUrl(row.transaction_no);
+      }
+      if (!newUrl && (oldUrl.includes('bukti_transfer') || isGoogleDriveUrl(oldUrl) || !isSupabaseStorageUrl(oldUrl))) {
         const found = await findProofInBucketByTransactionNo(row.transaction_no, row.transaction_date);
         if (found.found && found.publicUrl) {
           newUrl = found.publicUrl;
         }
       }
 
-      // Check if it's already a clean and complete public URL
-      const isAlreadyPublicValid =
-        oldUrl.startsWith('https://') &&
-        oldUrl.includes('/storage/v1/object/public/') &&
-        !oldUrl.includes('?token=') &&
-        Boolean(path);
-
-      if (!isAlreadyPublicValid && newUrl && newUrl !== oldUrl) {
+      if (newUrl && newUrl !== oldUrl) {
         items.push({
           id: String(row.id || row.transaction_no),
           transaction_no: row.transaction_no,
@@ -1969,7 +1978,7 @@ export const transactionService = {
             file_url: targetUrl,
             updated_at: new Date().toISOString(),
           })
-          .or(`transaction_no.eq.${trxNo},id.eq.${trxNo}`);
+          .or(`transaction_no.eq.${trxNo},transaction_no.like.${trxNo}-%,id.eq.${trxNo}`);
 
         if (error) {
           errors.push(`Gagal update TRX ${trxNo}: ${error.message}`);
@@ -1991,41 +2000,78 @@ export const transactionService = {
   },
 
   /**
-   * Scans all transactions that are missing file_url, have empty links, or have truncated bucket URLs,
-   * searches the storage bucket for matching files by transaction_no, and updates the database row.
+   * Scans all transactions that are missing file_url, have empty links, legacy Google Drive URLs,
+   * or truncated bucket URLs, searches the Supabase Storage bucket for matching files by transaction_no,
+   * and updates the database row.
    */
   async scanAndRecoverBucketProofs(): Promise<{
     scannedCount: number;
     recoveredCount: number;
     recoveredItems: Array<{ transaction_no: string; publicUrl: string }>;
   }> {
-    // 1. Sync all known verified storage objects to database first
+    // 1. Sync all known verified storage objects to database first (including split rows & legacy Google Drive rows)
     await this.syncKnownStorageProofsToDatabase();
 
-    const trxs = await this.getTransactions();
-    // Match transactions with missing filelink, or broken truncated bucket root URLs (e.g. ends with /bukti_transfer/ or has no extracted path)
-    const candidates = trxs.filter((t) => {
-      if (!t.filelink || t.filelink.trim() === '' || t.filelink === '-') return true;
-      const path = extractStoragePath(t.filelink);
-      if (!path) return true; // Truncated or malformed bucket URL
-      return false;
-    });
+    // 2. Migrasikan baris yang punya relative path / signed URL / URL Google Drive jika file fisiknya ada di bucket
+    const migrationRes = await this.executeLegacyFileUrlMigration();
 
     const recoveredItems: Array<{ transaction_no: string; publicUrl: string }> = [];
+    const seenTrxNo = new Set<string>();
 
-    for (const trx of candidates) {
-      const res = await this.findAndLinkTransactionProof(trx.id, trx.tanggal);
-      if (res.found && res.publicUrl) {
+    // 3. Periksa langsung baris di Supabase (jika tersedia) agar URL Google Drive di DB ikut dipindai
+    const client = getSupabaseClient();
+    let candidateRows: Array<{ transaction_no: string; transaction_date?: string }> = [];
+
+    if (client) {
+      try {
+        const { data: rawRows } = await client
+          .from(TRANSACTIONS_TABLE_NAME)
+          .select('transaction_no, transaction_date, file_url');
+        if (Array.isArray(rawRows)) {
+          candidateRows = rawRows
+            .filter((r: any) => {
+              const rawUrl = String(r.file_url || '').trim();
+              if (!rawUrl || rawUrl === '-') return true;
+              if (isGoogleDriveUrl(rawUrl) || !isSupabaseStorageUrl(rawUrl)) return true;
+              return !extractStoragePath(rawUrl);
+            })
+            .map((r: any) => ({
+              transaction_no: String(r.transaction_no || '').trim(),
+              transaction_date: r.transaction_date,
+            }))
+            .filter((r) => Boolean(r.transaction_no));
+        }
+      } catch {
+        // Fallback to mapped transactions below
+      }
+    }
+
+    if (candidateRows.length === 0) {
+      const trxs = await this.getTransactions();
+      candidateRows = trxs
+        .filter((t) => {
+          if (!t.filelink || t.filelink.trim() === '' || t.filelink === '-') return true;
+          if (isGoogleDriveUrl(t.filelink)) return true;
+          const path = extractStoragePath(t.filelink);
+          return !path;
+        })
+        .map((t) => ({ transaction_no: t.id, transaction_date: t.tanggal }));
+    }
+
+    for (const trx of candidateRows) {
+      const res = await this.findAndLinkTransactionProof(trx.transaction_no, trx.transaction_date);
+      if (res.found && res.publicUrl && !seenTrxNo.has(trx.transaction_no)) {
+        seenTrxNo.add(trx.transaction_no);
         recoveredItems.push({
-          transaction_no: trx.id,
+          transaction_no: trx.transaction_no,
           publicUrl: res.publicUrl,
         });
       }
     }
 
     return {
-      scannedCount: candidates.length,
-      recoveredCount: recoveredItems.length,
+      scannedCount: candidateRows.length,
+      recoveredCount: recoveredItems.length + (migrationRes.updatedCount || 0),
       recoveredItems,
     };
   },

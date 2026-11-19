@@ -484,18 +484,21 @@ export const AdminInvestmentManager: React.FC<AdminInvestmentManagerProps> = ({
                             ? 'Transfer Bank'
                             : 'Potong Simpanan'}
                         </span>
-                        {t.payment_proof_url && t.payment_proof_url.trim() !== '-' ? (
-                          <a
-                            href={getPublicProofUrl(t.payment_proof_url)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[10px] text-emerald-700 block underline mt-0.5"
-                          >
-                            Lihat Slip
-                          </a>
-                        ) : (
-                          <span className="text-[10px] text-stone-400 block mt-0.5">Slip: -</span>
-                        )}
+                        {(() => {
+                          const resolvedProofUrl = getPublicProofUrl(t.payment_proof_url);
+                          return resolvedProofUrl ? (
+                            <a
+                              href={resolvedProofUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[10px] text-emerald-700 block underline mt-0.5"
+                            >
+                              Lihat Slip
+                            </a>
+                          ) : (
+                            <span className="text-[10px] text-stone-400 block mt-0.5">Slip: -</span>
+                          );
+                        })()}
                       </td>
                       <td className="p-3">
                         <Badge

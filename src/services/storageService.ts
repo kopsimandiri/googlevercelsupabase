@@ -604,6 +604,93 @@ export const MEMBER_DEFAULT_PROOFS: Record<string, string> = {
 };
 
 /**
+ * Memeriksa apakah URL mengarah ke Google Drive / Google Docs / Apps Script (legacy eksternal)
+ */
+export function isGoogleDriveUrl(urlOrPath?: string | null): boolean {
+  if (!urlOrPath) return false;
+  const lower = urlOrPath.trim().toLowerCase();
+  if (!lower) return false;
+  return (
+    lower.includes('drive.google.com') ||
+    lower.includes('docs.google.com') ||
+    lower.includes('googleusercontent.com') ||
+    lower.includes('script.google.com')
+  );
+}
+
+/**
+ * Memeriksa apakah URL lengkap merupakan URL objek Supabase Storage yang valid (bukan root bucket terpotong)
+ */
+export function isSupabaseStorageUrl(urlOrPath?: string | null): boolean {
+  if (!urlOrPath) return false;
+  const trimmed = urlOrPath.trim();
+  if (!trimmed || isGoogleDriveUrl(trimmed)) return false;
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+
+  try {
+    const urlObj = new URL(trimmed);
+    const pathname = urlObj.pathname;
+
+    // Tolak URL root bucket tanpa nama objek file
+    if (
+      pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) ||
+      pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`) ||
+      pathname.endsWith('/object/public') ||
+      pathname.endsWith('/object/public/') ||
+      pathname.endsWith('/object/sign') ||
+      pathname.endsWith('/object/sign/') ||
+      pathname.endsWith('/object/authenticated') ||
+      pathname.endsWith('/object/authenticated/')
+    ) {
+      return false;
+    }
+
+    // Cek pola standar Supabase Storage object path
+    const storageMatch = pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\/(.*)/);
+    if (storageMatch && storageMatch[2] && storageMatch[2].replace(/^\/+|\/+$/g, '').length > 0) {
+      return true;
+    }
+
+    // Cek pola bucket bukti_transfer pada host Supabase yang aktif atau domain supabase.co/.in
+    const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
+    if (bucketIdx !== -1) {
+      const remainder = pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2).replace(/^\/+|\/+$/g, '');
+      const envHost = (() => {
+        try {
+          const envUrl = getSupabaseUrl();
+          return envUrl ? new URL(envUrl).hostname : '';
+        } catch {
+          return '';
+        }
+      })();
+      const isSupabaseHost =
+        urlObj.hostname.endsWith('.supabase.co') ||
+        urlObj.hostname.endsWith('.supabase.in') ||
+        (envHost !== '' && urlObj.hostname === envHost);
+      if (isSupabaseHost && remainder.length > 0) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Mengambil URL publik Supabase Storage dari KNOWN_STORAGE_PROOFS untuk suatu nomor transaksi (termasuk ID split)
+ */
+export function resolveKnownStorageProofUrl(trxId?: string | null): string {
+  if (!trxId) return '';
+  const cleanId = trxId.trim();
+  if (!cleanId) return '';
+  const baseId = cleanId.replace(/[-_.]\d+$/, '');
+  const relPath = KNOWN_STORAGE_PROOFS[cleanId] || KNOWN_STORAGE_PROOFS[baseId];
+  return relPath ? getPublicProofUrl(relPath) : '';
+}
+
+/**
  * Mendapatkan URL bukti transfer terverifikasi untuk nomor anggota tertentu
  * (Tidak pernah mengembalikan slip milik anggota lain jika tidak ada kecocokan)
  */
@@ -615,12 +702,13 @@ export function getMemberDefaultProof(memberNo?: string): string {
 }
 
 /**
- * Memeriksa apakah transaksi memiliki berkas bukti transfer / lampiran yang valid
+ * Memeriksa apakah transaksi memiliki berkas bukti transfer / lampiran Supabase Storage yang valid
+ * (Menolak URL legacy Google Drive dan nilai kosong/'-')
  */
 export function hasTransactionProof(trx?: { id?: string; filelink?: string } | null): boolean {
   if (!trx) return false;
-  const link = (trx.filelink || '').trim();
-  if (link && link !== '-' && link !== 'null' && link !== 'undefined') {
+  const resolved = getPublicProofUrl(trx.filelink);
+  if (resolved) {
     return true;
   }
   const trxId = (trx.id || '').trim();
@@ -811,43 +899,59 @@ export async function deleteTransactionProof(storagePath: string): Promise<{ suc
 export function extractStoragePath(rawLinkOrUrl?: string | null): string | null {
   if (!rawLinkOrUrl) return null;
   const trimmed = rawLinkOrUrl.trim();
-  if (!trimmed) return null;
+  if (!trimmed || trimmed === '-' || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'none') {
+    return null;
+  }
+
+  // Tolak URL Google Drive / Google Docs legacy — bukan objek Supabase Storage
+  if (isGoogleDriveUrl(trimmed)) {
+    return null;
+  }
 
   // If already a data URI or local asset
   if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
     return trimmed;
   }
 
-  try {
-    // If it's a URL
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+  // If it's an HTTP/HTTPS URL, only extract paths belonging to Supabase Storage
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
       const urlObj = new URL(trimmed);
-      let pathname = urlObj.pathname; // e.g. /storage/v1/object/public/bukti_transfer/2026/08/TRX-001.webp
-      
-      // Remove query parameters (?token=...)
-      // Match pattern /storage/v1/object/(public|sign|authenticated)/bukti_transfer/(.*)
+      const pathname = urlObj.pathname; // e.g. /storage/v1/object/public/bukti_transfer/2026/08/TRX-001.webp
+
+      // URL points to bucket root with no filename
+      if (
+        pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) ||
+        pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`) ||
+        pathname.endsWith('/object/public') ||
+        pathname.endsWith('/object/public/') ||
+        pathname.endsWith('/object/sign') ||
+        pathname.endsWith('/object/sign/')
+      ) {
+        return null;
+      }
+
+      // Match pattern /storage/v1/object/(public|sign|authenticated)/<bucket>/(.*)
       const storageMatch = pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\/(.*)/);
       if (storageMatch && storageMatch[2]) {
         const extracted = decodeURIComponent(storageMatch[2]).replace(/^\/+|\/+$/g, '');
         return extracted.length > 0 ? extracted : null;
       }
 
-      // If generic path ending with bucket
-      const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
-      if (bucketIdx !== -1) {
-        const extracted = decodeURIComponent(pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2)).replace(/^\/+|\/+$/g, '');
-        return extracted.length > 0 ? extracted : null;
+      // Match bucket folder only on valid Supabase host
+      if (isSupabaseStorageUrl(trimmed)) {
+        const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
+        if (bucketIdx !== -1) {
+          const extracted = decodeURIComponent(pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2)).replace(/^\/+|\/+$/g, '');
+          return extracted.length > 0 ? extracted : null;
+        }
       }
-
-      // URL points to bucket root with no filename (e.g. .../storage/v1/object/public/bukti_transfer or .../bukti_transfer/)
-      if (pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) || pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`)) {
-        return null;
-      }
-
-      return trimmed;
+    } catch {
+      return null;
     }
-  } catch {
-    // If URL parsing fails, treat as path
+
+    // URL eksternal non-Supabase (mis. Google Drive, link pihak ketiga lain) wajib mengembalikan null
+    return null;
   }
 
   // Remove leading slashes and bucket prefix if any
@@ -863,31 +967,46 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
 }
 
 /**
- * Resolves consistent Public URL from any storage reference (path, legacy signed URL, or public URL).
- * Prioritizes direct full URLs from public.transactions.file_url without rewriting or stripping.
+ * Resolves consistent Public URL ONLY from valid Supabase Storage references (path, signed URL, or public URL),
+ * local assets, or data/blob previews. Strictly rejects Google Drive and non-Supabase external URLs.
  */
 export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   if (!storagePathOrUrl) return '';
   const trimmed = storagePathOrUrl.trim();
-  if (!trimmed) return '';
+  if (!trimmed || trimmed === '-' || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'none') {
+    return '';
+  }
+
+  // 0. Tolak secara eksplisit URL legacy Google Drive / Google Docs
+  if (isGoogleDriveUrl(trimmed)) {
+    return '';
+  }
 
   // 1. Return immediately if data URI or local asset
   if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
     return trimmed;
   }
 
-  // 2. If it is already a full HTTP/HTTPS URL
+  const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
+  const envUrl = getSupabaseUrl().replace(/\/+$/, '');
+
+  // 2. If it is already a full HTTP/HTTPS URL, allow ONLY valid Supabase Storage URLs
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    // If it's a truncated bucket root URL with no file, treat as empty
-    if (
-      trimmed.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) ||
-      trimmed.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`) ||
-      trimmed.endsWith('/object/public/') ||
-      trimmed.endsWith('/object/sign/')
-    ) {
+    if (!isSupabaseStorageUrl(trimmed)) {
       return '';
     }
-    // Return full URL directly as stored in database
+    const extracted = extractStoragePath(trimmed);
+    if (!extracted) {
+      return '';
+    }
+    // Pertahankan URL public Supabase Storage lengkap (jika bukan signed/authenticated token)
+    if (trimmed.includes('/storage/v1/object/public/') && !trimmed.includes('?token=')) {
+      return trimmed;
+    }
+    // Konversi URL sign/authenticated menjadi public URL bucket yang stabil jika envUrl tersedia
+    if (envUrl) {
+      return `${envUrl}/storage/v1/object/public/${bucketName}/${extracted}`;
+    }
     return trimmed;
   }
 
@@ -895,12 +1014,8 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   const path = extractStoragePath(trimmed);
   if (!path) return '';
 
-  const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
-
-  // Gunakan VITE_SUPABASE_URL aktif dari environment
-  const envUrl = getSupabaseUrl().replace(/\/+$/, '');
   if (!envUrl) {
-    return trimmed;
+    return `https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/${bucketName}/${path}`;
   }
   return `${envUrl}/storage/v1/object/public/${bucketName}/${path}`;
 }

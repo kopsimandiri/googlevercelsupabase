@@ -170,7 +170,8 @@ export const MemberPortalView: React.FC = () => {
         }
 
         // Resolve transfer proof url for member via SECURITY DEFINER RPC first (cross-device safe)
-        let proofUrl = found?.transfer_proof_url || user?.transferProofUrl || '';
+        // Selalu validasi melalui getPublicProofUrl agar URL Google Drive legacy tidak pernah lolos
+        let proofUrl = getPublicProofUrl(found?.transfer_proof_url) || getPublicProofUrl(user?.transferProofUrl);
         const client = getSupabaseClient();
         if (!proofUrl && client && (memberNo || memberName || found?.nama)) {
           try {
@@ -179,7 +180,7 @@ export const MemberPortalView: React.FC = () => {
               p_member_name: memberName || found?.nama || '',
             });
             if (!rpcErr && typeof rpcProof === 'string' && rpcProof.trim()) {
-              proofUrl = rpcProof.trim();
+              proofUrl = getPublicProofUrl(rpcProof);
             }
           } catch {
             // ignore RPC error and fallback to direct table lookup
@@ -196,7 +197,7 @@ export const MemberPortalView: React.FC = () => {
               .limit(1)
               .maybeSingle();
             if (reg?.transfer_proof_url) {
-              proofUrl = reg.transfer_proof_url;
+              proofUrl = getPublicProofUrl(reg.transfer_proof_url);
             }
           } catch {
             // ignore
@@ -361,14 +362,8 @@ export const MemberPortalView: React.FC = () => {
       errorMessage: null,
     });
 
-    let resolvedUrl = (trx.filelink || '').trim();
-
-    // 1. Full URL check
-    if (resolvedUrl && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))) {
-      // Direct pass-through dari kolom file_url di database
-    } else if (resolvedUrl) {
-      resolvedUrl = getPublicProofUrl(resolvedUrl);
-    }
+    // 1. Validasi ketat hanya menerima URL / path Supabase Storage (tolak Google Drive)
+    let resolvedUrl = getPublicProofUrl(trx.filelink);
 
     // 2. Lookup in verified storage registry
     if (!resolvedUrl) {
@@ -378,8 +373,8 @@ export const MemberPortalView: React.FC = () => {
       }
     }
 
-    // 3. Fallback auto-recovery: cari berkas fisik di storage bucket
-    if (!resolvedUrl && trxId) {
+    // 3. Fallback auto-recovery: cari berkas fisik di Supabase Storage bucket 'bukti_transfer'
+    if (!resolvedUrl && trxId && !trxId.startsWith('REG-')) {
       try {
         const res = await transactionService.findAndLinkTransactionProof(trxId, trx.tanggal);
         if (res.found && res.publicUrl) {
@@ -391,27 +386,27 @@ export const MemberPortalView: React.FC = () => {
       }
     }
 
-    // 4. Fallback ke bukti registrasi anggota HANYA untuk transaksi Simpanan Pokok / Pendaftaran
+    // 4. Fallback ke bukti registrasi anggota (wajib lolos validasi Supabase Storage) HANYA untuk Simpanan Pokok / Pendaftaran
     const isRegistrationOrPokok =
       (trx.kategori || '').toLowerCase().includes('pokok') ||
       (trx.kategori || '').toLowerCase().includes('pendaftaran') ||
       trxId.startsWith('T251229');
     if (!resolvedUrl && isRegistrationOrPokok) {
       resolvedUrl =
-        memberData?.transfer_proof_url ||
-        user?.transferProofUrl ||
+        getPublicProofUrl(memberData?.transfer_proof_url) ||
+        getPublicProofUrl(user?.transferProofUrl) ||
         getMemberDefaultProof(trx.member_id || memberNo);
     }
 
     setSelectedProof({
       url: resolvedUrl || null,
-      originalPath: trx.filelink || resolvedUrl || '',
+      originalPath: resolvedUrl || '',
       title,
       trx,
       isLoading: false,
       imageLoaded: false,
       imageError: false,
-      errorMessage: resolvedUrl ? null : 'Berkas bukti belum diunggah atau tidak ditemukan di server.',
+      errorMessage: resolvedUrl ? null : 'Berkas bukti belum tersedia di Supabase Storage.',
     });
   };
 
@@ -695,8 +690,8 @@ export const MemberPortalView: React.FC = () => {
             {(() => {
               const trxWithProofs = memberTransactions.filter((t) => hasTransactionProof(t));
               const regProofUrl =
-                memberData?.transfer_proof_url ||
-                user?.transferProofUrl ||
+                getPublicProofUrl(memberData?.transfer_proof_url) ||
+                getPublicProofUrl(user?.transferProofUrl) ||
                 getMemberDefaultProof(memberNo);
 
               const itemsToShow: TransactionRecord[] =
@@ -733,7 +728,7 @@ export const MemberPortalView: React.FC = () => {
               return (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {itemsToShow.map((trx) => {
-                    const hasProof = hasTransactionProof(trx) || Boolean(trx.filelink);
+                    const hasProof = hasTransactionProof(trx);
                     return (
                       <div
                         key={trx.id}
@@ -823,8 +818,8 @@ export const MemberPortalView: React.FC = () => {
                         trx.id === 'T251229003' ||
                         trx.id === 'T251229004';
                       const memberRegistrationProof =
-                        memberData?.transfer_proof_url ||
-                        user?.transferProofUrl ||
+                        getPublicProofUrl(memberData?.transfer_proof_url) ||
+                        getPublicProofUrl(user?.transferProofUrl) ||
                         getMemberDefaultProof(memberNo);
 
                       const hasProof = Boolean(
@@ -894,8 +889,8 @@ export const MemberPortalView: React.FC = () => {
                         />
                         {(() => {
                           const regProofUrl =
-                            memberData?.transfer_proof_url ||
-                            user?.transferProofUrl ||
+                            getPublicProofUrl(memberData?.transfer_proof_url) ||
+                            getPublicProofUrl(user?.transferProofUrl) ||
                             getMemberDefaultProof(memberNo);
                           if (!regProofUrl) return null;
                           return (
@@ -1288,8 +1283,8 @@ export const MemberPortalView: React.FC = () => {
                 </div>
                 {(() => {
                   const proofUrl =
-                    memberData?.transfer_proof_url ||
-                    user?.transferProofUrl ||
+                    getPublicProofUrl(memberData?.transfer_proof_url) ||
+                    getPublicProofUrl(user?.transferProofUrl) ||
                     getMemberDefaultProof(memberNo);
 
                   if (!proofUrl) {

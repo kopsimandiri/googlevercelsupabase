@@ -16,6 +16,7 @@ import {
   STORAGE_BUKTI_TRANSFER_SQL_DDL,
   KNOWN_STORAGE_PROOFS,
   hasTransactionProof,
+  resolveKnownStorageProofUrl,
 } from '../../services/storageService';
 import { TransactionRecord, CustomerRecord, SupplierRecord, MemberRecord } from '../../types/database';
 import { formatDateIndo, formatRupiah, cleanRupiah } from '../../utils/formatters';
@@ -48,7 +49,6 @@ import {
   UploadCloud,
   Database,
   CheckCircle2,
-  HardDrive,
   Code,
   Copy,
   Check,
@@ -788,10 +788,10 @@ export const TransactionModule: React.FC = () => {
     }
   };
 
-  // Load public URL when viewing transaction detail
+  // Load public URL when viewing transaction detail (strictly Supabase Storage)
   useEffect(() => {
-    if (viewingTrx?.filelink) {
-      const url = getPublicProofUrl(viewingTrx.filelink);
+    if (viewingTrx) {
+      const url = getPublicProofUrl(viewingTrx.filelink) || resolveKnownStorageProofUrl(viewingTrx.id);
       setViewingProofSignedUrl(url || null);
       setIsLoadingProofSignedUrl(false);
     } else {
@@ -804,30 +804,24 @@ export const TransactionModule: React.FC = () => {
     setQuickProofTrx(t);
     setIsLoadingQuickProof(true);
     setProofLoadError(false);
-    
-    let resolvedUrl = (t.filelink || '').trim();
 
-    // 1. Jika sudah berupa Full URL (misal dari kolom file_url di Supabase), gunakan langsung
-    if (resolvedUrl && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))) {
-      setQuickProofUrl(resolvedUrl);
-      setIsLoadingQuickProof(false);
-      return;
+    // 1. Resolusi ketat hanya menerima URL/path Supabase Storage (URL Google Drive ditolak menjadi '')
+    let resolvedUrl = getPublicProofUrl(t.filelink);
+
+    // 2. Jika belum valid atau berasal dari URL legacy (mis. Google Drive), cek registry terverifikasi
+    if (!resolvedUrl) {
+      resolvedUrl = resolveKnownStorageProofUrl(t.id);
     }
 
-    // 2. Jika path relatif
-    if (resolvedUrl) {
-      resolvedUrl = getPublicProofUrl(resolvedUrl);
-    }
-
-    // 3. Fallback pencarian berkas fisik hanya jika filelink belum ada
+    // 3. Fallback pencarian berkas fisik langsung di Supabase Storage bucket 'bukti_transfer'
     if (!resolvedUrl) {
       try {
         const res = await transactionService.findAndLinkTransactionProof(t.id, t.tanggal);
         if (res.found && res.publicUrl) {
           resolvedUrl = res.publicUrl;
-          t.filelink = res.publicUrl; // update in-memory object
+          t.filelink = res.publicUrl;
           setQuickProofTrx({ ...t, filelink: res.publicUrl });
-          showToast(`Bukti transaksi ditemukan di bucket storage dan otomatis dihubungkan ke ${t.id}!`, 'success');
+          showToast(`Bukti transaksi ditemukan di bucket Supabase Storage dan otomatis dihubungkan ke ${t.id}!`, 'success');
           executeSearch(false);
         }
       } catch (err) {
@@ -928,13 +922,14 @@ export const TransactionModule: React.FC = () => {
     setFormJumlah(t.jumlah);
     setFormAkun(t.akun || (t.referal === 'PROJECT' ? 'DANA PROJECT' : 'Kas Umum Koperasi (Non-Anggota)'));
     setFormKeterangan(t.keterangan || '');
-    setFormFilelink(t.filelink || '');
-    setFileName(t.filelink ? (t.filelink.split('/').pop() || 'Lampiran Bukti Tersedia') : '');
+    const sanitizedProofUrl = getPublicProofUrl(t.filelink) || resolveKnownStorageProofUrl(t.id);
+    setFormFilelink(sanitizedProofUrl);
+    setFileName(sanitizedProofUrl ? (sanitizedProofUrl.split('/').pop() || 'Lampiran Bukti Tersedia') : '');
     setSelectedProofFile(null);
     setOptimizedProof(null);
     setProofError(null);
-    if (t.filelink) {
-      setProofPreviewUrl(getPublicProofUrl(t.filelink));
+    if (sanitizedProofUrl) {
+      setProofPreviewUrl(sanitizedProofUrl);
     } else {
       setProofPreviewUrl(null);
     }
@@ -1582,17 +1577,13 @@ export const TransactionModule: React.FC = () => {
                     <td className="py-3 px-3 text-center">
                       {(() => {
                         const hasProof = hasTransactionProof(t);
-                        const proofPath =
-                          (t.filelink && t.filelink.trim() !== '' && t.filelink !== '-' && t.filelink !== 'null' && t.filelink !== 'undefined')
-                            ? t.filelink
-                            : KNOWN_STORAGE_PROOFS[t.id] || KNOWN_STORAGE_PROOFS[(t.id || '').replace(/[-_.]\d+$/, '')] || null;
+                        const pubUrl = getPublicProofUrl(t.filelink) || resolveKnownStorageProofUrl(t.id);
 
-                        if (!hasProof || !proofPath) {
+                        if (!hasProof || !pubUrl) {
                           return <span className="text-stone-400 font-medium text-xs select-none">-</span>;
                         }
 
-                        const pubUrl = getPublicProofUrl(proofPath);
-                        const isPdf = isPdfFile(proofPath) || (pubUrl && isPdfFile(pubUrl));
+                        const isPdf = isPdfFile(pubUrl);
 
                         if (isPdf && pubUrl) {
                           return (
@@ -1613,7 +1604,7 @@ export const TransactionModule: React.FC = () => {
                         return (
                           <button
                             type="button"
-                            onClick={() => handleOpenQuickProof({ ...t, filelink: proofPath })}
+                            onClick={() => handleOpenQuickProof({ ...t, filelink: pubUrl })}
                             className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
                             title="Klik untuk melihat bukti transaksi"
                           >
