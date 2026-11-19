@@ -1028,6 +1028,10 @@ export const TransactionModule: React.FC = () => {
 
       try {
         const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
+        const matchedMember =
+          formReferal === 'KOPERASI'
+            ? members.find((m) => m.nama === finalAkun || m.id === finalAkun)
+            : undefined;
         const targetTrxId = await transactionService.generateTransactionId(formReferal, formTanggal);
         let finalFileUrl = formFilelink;
 
@@ -1065,7 +1069,9 @@ export const TransactionModule: React.FC = () => {
           metode_bayar: formMetodeBayar,
           akun: finalAkun,
           filelink: finalFileUrl,
-          customer_id: formCustomerId,
+          member_id: matchedMember?.id,
+          customer_id: formCustomerId || matchedMember?.id || '',
+          customer_name: formCustomerId ? undefined : matchedMember?.nama,
           supplier_id: formSupplierId,
           login_as: user?.name || role || 'ADMIN',
           keterangan_umum: formKeterangan,
@@ -1125,6 +1131,10 @@ export const TransactionModule: React.FC = () => {
 
     try {
       const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
+      const matchedMember =
+        formReferal === 'KOPERASI'
+          ? members.find((m) => m.nama === finalAkun || m.id === finalAkun)
+          : undefined;
       const targetTrxId = editingTrx?.id || (await transactionService.generateTransactionId(formReferal, formTanggal));
       
       let finalFileUrl = formFilelink;
@@ -1172,7 +1182,9 @@ export const TransactionModule: React.FC = () => {
         sku_name: formReferal === 'PROJECT' ? formSkuName : '',
         qty: formReferal === 'PROJECT' ? formQty : 1,
         harga_satuan: formReferal === 'PROJECT' ? formHargaSatuan : formJumlah,
-        customer_id: formCustomerId,
+        member_id: matchedMember?.id,
+        customer_id: formCustomerId || matchedMember?.id || '',
+        customer_name: formCustomerId ? undefined : matchedMember?.nama,
         supplier_id: formSupplierId,
         login_as: user?.name || role || 'ADMIN',
       };

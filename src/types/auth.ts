@@ -20,6 +20,7 @@ export interface UserSession {
   areaJenis?: string;
   plantation?: string;
   avatarUrl?: string;
+  transferProofUrl?: string;
   loginTime: string;
 }
 

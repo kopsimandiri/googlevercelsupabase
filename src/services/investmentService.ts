@@ -342,9 +342,14 @@ export const investmentService = {
 
     // 1. Simpan ke Supabase jika tersedia
     if (client) {
-      try {
-        await client.from('investment_transactions').insert([trxRecord]);
-        await client.from('digital_agreements').insert([agrRecord]);
+      const { error: trxErr } = await client.from('investment_transactions').insert([trxRecord]);
+      if (trxErr) {
+        console.warn('createInvestmentTransaction Supabase insert warning:', trxErr.message);
+      } else {
+        const { error: agrErr } = await client.from('digital_agreements').insert([agrRecord]);
+        if (agrErr) {
+          console.warn('digital_agreements Supabase insert warning:', agrErr.message);
+        }
 
         // Update collected amount di kampanye
         const newCollected = (campaign.collected_amount || 0) + payload.amount;
@@ -357,8 +362,6 @@ export const investmentService = {
             updated_at: nowIso,
           })
           .eq('id', campaign.id);
-      } catch (err) {
-        console.warn('createInvestmentTransaction Supabase write error:', err);
       }
     }
 
@@ -400,24 +403,26 @@ export const investmentService = {
     const client = getSupabaseClient();
     const cleanNo = memberNo.trim();
     let result: InvestmentTransaction[] = [];
+    let supabaseQueried = false;
 
-    if (client) {
+    if (client && cleanNo) {
       try {
         const { data, error } = await client
           .from('investment_transactions')
           .select('*')
-          .eq('member_no', cleanNo)
+          .ilike('member_no', cleanNo)
           .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
+        if (!error && Array.isArray(data)) {
           result = data as InvestmentTransaction[];
+          supabaseQueried = true;
         }
       } catch (err) {
         console.warn('getTransactionsByMember Supabase error:', err);
       }
     }
 
-    if (result.length === 0) {
+    if (!supabaseQueried) {
       try {
         const cached = JSON.parse(localStorage.getItem(STORAGE_TRANSACTIONS_KEY) || '[]');
         result = cached.filter(

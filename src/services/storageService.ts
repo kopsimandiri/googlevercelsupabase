@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, getSupabaseUrl } from '../lib/supabase';
 
 export const BUKTI_TRANSFER_BUCKET = 'bukti_transfer';
 export const CANDIDATE_BUCKETS = ['bukti_transfer', 'bukti-transfer', 'transaksi', 'bukti_transaksi', 'documents', 'public', 'uploads'];
@@ -597,22 +597,21 @@ export const KNOWN_STORAGE_PROOFS: Record<string, string> = {
  * Pemetaan resmi nomor anggota ke berkas bukti transfer fisik yang tersimpan di bucket storage
  */
 export const MEMBER_DEFAULT_PROOFS: Record<string, string> = {
-  '1121-00001': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229001-jnpf6q.webp',
-  '1121-00002': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229002-1cpdp8.webp',
-  '1121-00003': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229003-7nucag.webp',
-  '1121-00004': 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229004-9j1797.webp',
+  '1121-00001': '2025/12/T251229001-jnpf6q.webp',
+  '1121-00002': '2025/12/T251229002-1cpdp8.webp',
+  '1121-00003': '2025/12/T251229003-7nucag.webp',
+  '1121-00004': '2025/12/T251229004-9j1797.webp',
 };
-
-export const UNIVERSAL_FALLBACK_PROOF_URL =
-  'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2025/12/T251229001-jnpf6q.webp';
 
 /**
  * Mendapatkan URL bukti transfer terverifikasi untuk nomor anggota tertentu
+ * (Tidak pernah mengembalikan slip milik anggota lain jika tidak ada kecocokan)
  */
 export function getMemberDefaultProof(memberNo?: string): string {
-  if (!memberNo) return UNIVERSAL_FALLBACK_PROOF_URL;
+  if (!memberNo) return '';
   const clean = memberNo.trim();
-  return MEMBER_DEFAULT_PROOFS[clean] || UNIVERSAL_FALLBACK_PROOF_URL;
+  const relPath = MEMBER_DEFAULT_PROOFS[clean];
+  return relPath ? getPublicProofUrl(relPath) : '';
 }
 
 /**
@@ -671,17 +670,8 @@ export async function findProofInBucketByTransactionNo(
   const lowerTrxNo = cleanTrxNo.toLowerCase();
   const lowerBaseTrxNo = baseTrxNo.toLowerCase();
 
-  // 1. Resolve all active and existing buckets in Supabase Storage
-  let bucketList = Array.from(new Set([_resolvedActiveBucket || BUKTI_TRANSFER_BUCKET, ...CANDIDATE_BUCKETS]));
-  try {
-    const { data: remoteBuckets } = await client.storage.listBuckets();
-    if (remoteBuckets && remoteBuckets.length > 0) {
-      const names = remoteBuckets.map((b) => b.name);
-      bucketList = Array.from(new Set([...bucketList, ...names]));
-    }
-  } catch {
-    // Ignore listBuckets failure if restricted
-  }
+  // 1. Gunakan bucket utama secara langsung (hindari listBuckets() yang sering diblokir untuk role anon/anggota)
+  let bucketList = Array.from(new Set([_resolvedActiveBucket || BUKTI_TRANSFER_BUCKET, 'bukti_transfer']));
 
   // 2. Build folder search list based on transaction_no format (e.g. T260421001 -> 2026-04-21)
   const foldersToCheck: Set<string> = new Set(['', 'bukti_transfer', 'bukti', 'transaksi', 'transactions', 'uploads', 'proofs', 'proof']);
@@ -907,9 +897,12 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
 
   const bucketName = _resolvedActiveBucket || BUKTI_TRANSFER_BUCKET;
 
-  // Active production Supabase project for storage
-  const activeBaseUrl = 'https://iqamratpkvnyyayjpnsu.supabase.co';
-  return `${activeBaseUrl}/storage/v1/object/public/${bucketName}/${path}`;
+  // Gunakan VITE_SUPABASE_URL aktif dari environment
+  const envUrl = getSupabaseUrl().replace(/\/+$/, '');
+  if (!envUrl) {
+    return trimmed;
+  }
+  return `${envUrl}/storage/v1/object/public/${bucketName}/${path}`;
 }
 
 /**
@@ -948,96 +941,116 @@ export async function getSignedProofUrl(storagePath: string): Promise<string | n
   return url || null;
 }
 
-/**
- * Upload bukti transfer pendaftaran anggota baru ke bucket bukti_transfer
- * Berjalan secara publik (tanpa memerlukan sesi Supabase Auth admin)
- * dan memiliki fallback otomatis agar data dan berkas slip tidak pernah hilang.
- */
-export async function uploadPublicRegistrationProof(
-  file: File | Blob,
-  memberId: string,
-  originalFileName?: string
-): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string }> {
-  const client = getSupabaseClient();
-  const rawName = originalFileName || (file instanceof File ? file.name : 'bukti_transfer.jpg');
-  const fileExt = rawName.split('.').pop()?.toLowerCase() || 'jpg';
-  const cleanMemberId = (memberId || 'REG').replace(/[^a-zA-Z0-9_-]/g, '_');
-  const fileName = `${cleanMemberId}_${Date.now()}.${fileExt}`;
-  const storagePath = `pendaftaran/${fileName}`;
+async function fileToDataUrl(file: File | Blob): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
-  // 1. Coba upload langsung ke Supabase Storage bucket 'bukti_transfer'
+/**
+ * Mengunggah berkas anggota/publik (pendaftaran, investasi, setoran, avatar) ke bucket bukti_transfer
+ * Urutan prioritas:
+ * 1. Direct upload ke Supabase Storage (sesuai folder prefix yang diizinkan RLS)
+ * 2. Fallback melalui backend proxy /api/storage/upload-proof (memakai Service Role jika tersedia)
+ * 3. Fallback terakhir ke Data URL terkompresi agar bukti tidak hilang jika offline
+ */
+export async function uploadMemberProof(
+  file: File | Blob,
+  folderPrefix: 'pendaftaran' | 'investasi' | 'setoran' | 'avatar',
+  refId: string,
+  originalFileName?: string
+): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string; source?: 'SUPABASE' | 'SERVER' | 'DATA_URL' }> {
+  const client = getSupabaseClient();
+  const rawName = originalFileName || (file instanceof File ? file.name : 'bukti_transfer.webp');
+  const fileExt = (rawName.split('.').pop()?.toLowerCase() || (file.type?.includes('webp') ? 'webp' : 'jpg')).replace(/[^a-z0-9]/g, '') || 'webp';
+  const cleanRefId = (refId || 'DOC').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const fileName = `${cleanRefId}_${Date.now()}.${fileExt}`;
+  const storagePath = `${folderPrefix}/${fileName}`;
+  const mimeType = file.type || (fileExt === 'pdf' ? 'application/pdf' : fileExt === 'webp' ? 'image/webp' : 'image/jpeg');
+
+  // 1. Upload langsung ke Supabase Storage bucket 'bukti_transfer'
   if (client) {
     try {
-      const mimeType = file.type || (fileExt === 'pdf' ? 'application/pdf' : 'image/jpeg');
-
-      // Prioritas 1: Unggah langsung ke bucket resmi 'bukti_transfer'
-      let uploadRes = await client.storage
+      const uploadRes = await client.storage
         .from(BUKTI_TRANSFER_BUCKET)
         .upload(storagePath, file, {
           contentType: mimeType,
           cacheControl: '3600',
-          upsert: true,
+          upsert: false,
         });
-
-      let chosenBucket = BUKTI_TRANSFER_BUCKET;
-
-      // Jika error, cek resolveActiveBucket sebagai fallback
-      if (uploadRes.error) {
-        const activeBucket = await resolveActiveBucket();
-        if (activeBucket !== BUKTI_TRANSFER_BUCKET) {
-          uploadRes = await client.storage
-            .from(activeBucket)
-            .upload(storagePath, file, {
-              contentType: mimeType,
-              cacheControl: '3600',
-              upsert: true,
-            });
-          chosenBucket = activeBucket;
-        }
-      }
 
       if (!uploadRes.error && uploadRes.data) {
         const { data: urlData } = client.storage
-          .from(chosenBucket)
-          .getPublicUrl(storagePath);
+          .from(BUKTI_TRANSFER_BUCKET)
+          .getPublicUrl(uploadRes.data.path || storagePath);
 
-        const publicUrl = urlData?.publicUrl || storagePath;
+        const publicUrl = urlData?.publicUrl || getPublicProofUrl(uploadRes.data.path || storagePath);
         return {
           success: true,
           fileUrl: publicUrl,
-          storagePath,
+          storagePath: uploadRes.data.path || storagePath,
+          source: 'SUPABASE',
         };
       }
-
-      console.warn('[Storage] Public upload to bucket', chosenBucket, 'returned error:', uploadRes.error);
-    } catch (err: any) {
-      console.warn('[Storage] Public upload exception, falling back to data URL:', err);
+      console.warn('[Storage] Direct scoped upload returned error:', uploadRes.error?.message);
+    } catch (err) {
+      console.warn('[Storage] Direct scoped upload exception:', err);
     }
   }
 
-  // 2. Robust fallback jika storage Supabase offline / RLS strict:
-  // Mengonversi berkas ke Data URL agar berkas bukti transfer tetap tersimpan & dapat dilihat admin
+  // 2. Fallback via server endpoint (/api/storage/upload-proof)
   try {
-    if (typeof FileReader !== 'undefined') {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+    if (typeof FileReader !== 'undefined' && typeof fetch !== 'undefined') {
+      const dataUrl = await fileToDataUrl(file);
+      const resp = await fetch('/api/storage/upload-proof', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: storagePath,
+          mimeType,
+          dataUrl,
+        }),
       });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json?.success && json?.publicUrl) {
+          return {
+            success: true,
+            fileUrl: json.publicUrl,
+            storagePath: json.path || storagePath,
+            source: 'SERVER',
+          };
+        }
+      }
 
+      // 3. Last-resort offline Data URL
       return {
         success: true,
         fileUrl: dataUrl,
         storagePath,
+        source: 'DATA_URL',
       };
     }
-  } catch (readerErr: any) {
-    console.warn('[Storage] FileReader fallback error:', readerErr);
+  } catch (err) {
+    console.warn('[Storage] Server/FileReader fallback error:', err);
   }
 
   return {
     success: false,
     error: 'Gagal mengunggah berkas bukti transfer. Silakan periksa koneksi Anda atau coba lagi.',
   };
+}
+
+/**
+ * Upload bukti transfer pendaftaran anggota baru ke bucket bukti_transfer
+ */
+export async function uploadPublicRegistrationProof(
+  file: File | Blob,
+  memberId: string,
+  originalFileName?: string
+): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string }> {
+  return uploadMemberProof(file, 'pendaftaran', memberId, originalFileName);
 }

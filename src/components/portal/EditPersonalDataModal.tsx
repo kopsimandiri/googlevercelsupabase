@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MemberRecord } from '../../types/database';
 import { memberService } from '../../services/memberService';
+import { uploadMemberProof } from '../../services/storageService';
+import { authService } from '../../services/authService';
 import { useNotification } from '../../context/NotificationContext';
 import { Button } from '../common/Button';
 import {
@@ -64,6 +66,7 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
   const [avatarPreview, setAvatarPreview] = useState<string>(
     activeMember.avatar_url || memberService.getMemberAvatar(activeMember.id) || ''
   );
+  const [avatarBlob, setAvatarBlob] = useState<Blob | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -86,6 +89,7 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
         memberService.getMemberAvatar((activeMember as any)?.member_no) ||
         ''
       );
+      setAvatarBlob(null);
       setErrorMsg(null);
     }
   }, [
@@ -141,6 +145,13 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
           ctx.drawImage(img, 0, 0, width, height);
           const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
           setAvatarPreview(compressedDataUrl);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) setAvatarBlob(blob);
+            },
+            'image/jpeg',
+            0.85
+          );
           showToast('Foto baru berhasil dimuat. Klik Simpan untuk memperbarui.', 'info');
         }
       };
@@ -151,6 +162,7 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
 
   const handleRemovePhoto = () => {
     setAvatarPreview('');
+    setAvatarBlob(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -168,6 +180,15 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
 
     try {
       const targetIdentifier = activeMember.id || (activeMember as any).member_no || (activeMember as any).username || '';
+      let finalAvatarUrl = avatarPreview;
+
+      if (avatarBlob && targetIdentifier) {
+        const upRes = await uploadMemberProof(avatarBlob, 'avatar', targetIdentifier, 'avatar.jpg');
+        if (upRes.success && upRes.fileUrl) {
+          finalAvatarUrl = upRes.fileUrl;
+        }
+      }
+
       const res = await memberService.updateMemberPersonalData(targetIdentifier, {
         nama: formData.nama,
         gender: formData.gender,
@@ -177,7 +198,7 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
         alamat: formData.alamat,
         kota: formData.kota,
         provinsi: formData.provinsi,
-        avatar_url: avatarPreview,
+        avatar_url: finalAvatarUrl,
       });
 
       const updatedRecord: MemberRecord = {
@@ -190,8 +211,20 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
         alamat: formData.alamat,
         kota: formData.kota,
         provinsi: formData.provinsi,
-        avatar_url: avatarPreview,
+        avatar_url: finalAvatarUrl,
       };
+
+      await authService.updateActiveMemberProfile({
+        name: formData.nama.trim(),
+        gender: formData.gender,
+        address: formData.alamat,
+        city: formData.kota,
+        province: formData.provinsi,
+        occupation: formData.pekerjaan,
+        birthDate: formData.tgl_lahir,
+        birthPlace: formData.tempat_lahir,
+        avatarUrl: finalAvatarUrl,
+      });
 
       showToast(
         res.message || 'Data pribadi dan foto berhasil disimpan ke database.',

@@ -11,7 +11,6 @@ import {
   KNOWN_STORAGE_PROOFS,
   getMemberDefaultProof,
   hasTransactionProof,
-  UNIVERSAL_FALLBACK_PROOF_URL,
 } from '../../services/storageService';
 import { MemberRecord, TransactionRecord } from '../../types/database';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../../utils/formatters';
@@ -144,7 +143,7 @@ export const MemberPortalView: React.FC = () => {
     },
   ]);
 
-  const memberNo = user?.memberNo || user?.memberId || user?.id || '0824-03001';
+  const memberNo = user?.memberNo || user?.memberId || user?.id || '';
 
   useEffect(() => {
     let isMounted = true;
@@ -164,21 +163,36 @@ export const MemberPortalView: React.FC = () => {
           found =
             allMembers.find(
               (m) =>
-                (m.id && m.id.toLowerCase() === memberNo.toLowerCase()) ||
+                (memberNo && m.id && m.id.toLowerCase() === memberNo.toLowerCase()) ||
                 (m.nama && memberName && m.nama.toLowerCase() === memberName.toLowerCase()) ||
                 (m.nama && memberName && m.nama.toLowerCase().includes(memberName.toLowerCase()))
             ) || null;
         }
 
-        // Resolve transfer proof url for member if available
-        let proofUrl = found?.transfer_proof_url || (user as any)?.transferProofUrl || '';
+        // Resolve transfer proof url for member via SECURITY DEFINER RPC first (cross-device safe)
+        let proofUrl = found?.transfer_proof_url || user?.transferProofUrl || '';
         const client = getSupabaseClient();
-        if (!proofUrl && client) {
+        if (!proofUrl && client && (memberNo || memberName || found?.nama)) {
           try {
+            const { data: rpcProof, error: rpcErr } = await client.rpc('get_member_registration_proof', {
+              p_member_no: memberNo,
+              p_member_name: memberName || found?.nama || '',
+            });
+            if (!rpcErr && typeof rpcProof === 'string' && rpcProof.trim()) {
+              proofUrl = rpcProof.trim();
+            }
+          } catch {
+            // ignore RPC error and fallback to direct table lookup
+          }
+        }
+        if (!proofUrl && client && (memberName || found?.nama)) {
+          try {
+            const lookupName = (memberName || found?.nama || '').trim();
             const { data: reg } = await client
               .from('member_registrations')
               .select('transfer_proof_url')
-              .or(`member_no.eq.${memberNo},full_name.ilike.%${memberName || found?.nama || ''}%`)
+              .ilike('full_name', `%${lookupName}%`)
+              .order('submitted_at', { ascending: false })
               .limit(1)
               .maybeSingle();
             if (reg?.transfer_proof_url) {
@@ -192,8 +206,11 @@ export const MemberPortalView: React.FC = () => {
           proofUrl = getMemberDefaultProof(memberNo);
         }
 
+        const resolvedAvatarUrl =
+          found?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo) || '';
+
         if (found) {
-          found = { ...found, transfer_proof_url: proofUrl };
+          found = { ...found, transfer_proof_url: proofUrl, avatar_url: resolvedAvatarUrl };
           if (isMounted) setMemberData(found);
         } else {
           // Fallback constructed record from user session
@@ -213,6 +230,7 @@ export const MemberPortalView: React.FC = () => {
             simpanan_wajib: 360000,
             simpanan_sukarela: 0,
             transfer_proof_url: proofUrl,
+            avatar_url: resolvedAvatarUrl,
           };
           if (isMounted) setMemberData(fallbackMember);
         }
@@ -373,11 +391,15 @@ export const MemberPortalView: React.FC = () => {
       }
     }
 
-    // 4. Fallback ke bukti registrasi anggota terverifikasi
-    if (!resolvedUrl) {
+    // 4. Fallback ke bukti registrasi anggota HANYA untuk transaksi Simpanan Pokok / Pendaftaran
+    const isRegistrationOrPokok =
+      (trx.kategori || '').toLowerCase().includes('pokok') ||
+      (trx.kategori || '').toLowerCase().includes('pendaftaran') ||
+      trxId.startsWith('T251229');
+    if (!resolvedUrl && isRegistrationOrPokok) {
       resolvedUrl =
         memberData?.transfer_proof_url ||
-        (user as any)?.transferProofUrl ||
+        user?.transferProofUrl ||
         getMemberDefaultProof(trx.member_id || memberNo);
     }
 
@@ -389,7 +411,7 @@ export const MemberPortalView: React.FC = () => {
       isLoading: false,
       imageLoaded: false,
       imageError: false,
-      errorMessage: null,
+      errorMessage: resolvedUrl ? null : 'Berkas bukti belum diunggah atau tidak ditemukan di server.',
     });
   };
 
@@ -421,9 +443,9 @@ export const MemberPortalView: React.FC = () => {
             {/* Foto Profil Anggota dengan Tombol Ganti Cepat */}
             <div className="relative group shrink-0">
               <div className="w-16 h-20 sm:w-20 sm:h-24 bg-emerald-950/90 rounded-2xl border-2 border-amber-400/70 shadow-lg overflow-hidden flex items-center justify-center">
-                {memberData?.avatar_url || memberService.getMemberAvatar(memberNo) ? (
+                {memberData?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo) ? (
                   <img
-                    src={memberData?.avatar_url || memberService.getMemberAvatar(memberNo) || ''}
+                    src={memberData?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo) || ''}
                     alt={memberData?.nama || 'Foto Anggota'}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
@@ -670,78 +692,77 @@ export const MemberPortalView: React.FC = () => {
               </button>
             }
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {(memberTransactions.filter((t) => hasTransactionProof(t)).length > 0
-                ? memberTransactions.filter((t) => hasTransactionProof(t))
-                : [
-                    {
-                      id:
-                        memberNo === '1121-00002'
-                          ? 'T251229002'
-                          : memberNo === '1121-00003'
-                          ? 'T251229003'
-                          : memberNo === '1121-00004'
-                          ? 'T251229004'
-                          : 'T251229001',
-                      tanggal: memberData?.tgl_reg || '2025-12-29',
-                      kategori: 'Simpanan Pokok',
-                      jumlah: savingsData.pokok,
-                      filelink:
-                        memberData?.transfer_proof_url ||
-                        (user as any)?.transferProofUrl ||
-                        getMemberDefaultProof(memberNo),
-                      keterangan: 'Bukti Transfer Pendaftaran Simpanan Pokok',
-                      referal: 'KOPERASI',
-                      plantation: 'PUSAT JAKARTA',
-                      jenis: 'MASUK',
-                      metode_bayar: 'Bank BSI',
-                      qty: 1,
-                      area_jenis: 'KOPERASI PUSAT',
-                    } as TransactionRecord,
-                    {
-                      id: 'T260320001',
-                      tanggal: '2026-03-20',
-                      kategori: 'Simpanan Wajib',
-                      jumlah: savingsData.wajib,
-                      filelink: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/03/T260320001-ou4pzo.webp',
-                      keterangan: 'Bukti Setoran Simpanan Wajib Paket 3 Tahun',
-                      referal: 'KOPERASI',
-                      plantation: 'PUSAT JAKARTA',
-                      jenis: 'MASUK',
-                      metode_bayar: 'Bank BSI',
-                      qty: 1,
-                      area_jenis: 'KOPERASI PUSAT',
-                    } as TransactionRecord,
-                  ]
-              ).map((trx) => {
-                const hasProof = hasTransactionProof(trx) || Boolean(trx.filelink);
+            {(() => {
+              const trxWithProofs = memberTransactions.filter((t) => hasTransactionProof(t));
+              const regProofUrl =
+                memberData?.transfer_proof_url ||
+                user?.transferProofUrl ||
+                getMemberDefaultProof(memberNo);
+
+              const itemsToShow: TransactionRecord[] =
+                trxWithProofs.length > 0
+                  ? trxWithProofs
+                  : regProofUrl
+                  ? [
+                      {
+                        id: `REG-${memberNo || 'ANGGOTA'}`,
+                        tanggal: memberData?.tgl_reg || user?.registeredAt || new Date().toISOString().split('T')[0],
+                        kategori: 'Bukti Transfer Pendaftaran',
+                        jumlah: savingsData.pokok,
+                        filelink: regProofUrl,
+                        keterangan: 'Bukti Transfer Setoran Awal Keanggotaan',
+                        referal: 'KOPERASI',
+                        plantation: memberData?.plantation || 'PUSAT JAKARTA',
+                        jenis: 'MASUK',
+                        metode_bayar: 'Bank BSI',
+                        qty: 1,
+                        area_jenis: 'KOPERASI PUSAT',
+                      } as TransactionRecord,
+                    ]
+                  : [];
+
+              if (itemsToShow.length === 0) {
                 return (
-                  <div
-                    key={trx.id}
-                    className="p-3.5 rounded-xl bg-stone-50 border border-stone-200/90 flex items-center justify-between gap-3 hover:bg-emerald-50/40 hover:border-emerald-200 transition-all"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-stone-800 truncate">{trx.kategori}</div>
-                      <div className="text-[11px] text-stone-500 font-mono mt-0.5">{formatDateIndo(trx.tanggal)}</div>
-                      <div className="text-xs font-bold font-mono text-emerald-800 mt-1">{formatRupiah(trx.jumlah)}</div>
-                    </div>
-                    {hasProof ? (
-                      <button
-                        type="button"
-                        onClick={() => handleViewProof(trx)}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer border border-emerald-700 shrink-0"
-                        title="Lihat Bukti Transfer"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Lihat Bukti</span>
-                      </button>
-                    ) : (
-                      <span className="text-stone-400 font-medium text-xs px-2 select-none">-</span>
-                    )}
-                  </div>
+                  <EmptyState
+                    title="Belum Ada Lampiran Bukti Setoran"
+                    description="Bukti transfer simpanan yang telah diunggah oleh Anda atau admin koperasi akan tampil otomatis di sini lintas perangkat."
+                  />
                 );
-              })}
-            </div>
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {itemsToShow.map((trx) => {
+                    const hasProof = hasTransactionProof(trx) || Boolean(trx.filelink);
+                    return (
+                      <div
+                        key={trx.id}
+                        className="p-3.5 rounded-xl bg-stone-50 border border-stone-200/90 flex items-center justify-between gap-3 hover:bg-emerald-50/40 hover:border-emerald-200 transition-all"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-stone-800 truncate">{trx.kategori}</div>
+                          <div className="text-[11px] text-stone-500 font-mono mt-0.5">{formatDateIndo(trx.tanggal)}</div>
+                          <div className="text-xs font-bold font-mono text-emerald-800 mt-1">{formatRupiah(trx.jumlah)}</div>
+                        </div>
+                        {hasProof ? (
+                          <button
+                            type="button"
+                            onClick={() => handleViewProof(trx)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer border border-emerald-700 shrink-0"
+                            title="Lihat Bukti Transfer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Lihat Bukti</span>
+                          </button>
+                        ) : (
+                          <span className="text-stone-400 font-medium text-xs px-2 select-none">-</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </Card>
         </div>
       )}
@@ -803,7 +824,7 @@ export const MemberPortalView: React.FC = () => {
                         trx.id === 'T251229004';
                       const memberRegistrationProof =
                         memberData?.transfer_proof_url ||
-                        (user as any)?.transferProofUrl ||
+                        user?.transferProofUrl ||
                         getMemberDefaultProof(memberNo);
 
                       const hasProof = Boolean(
@@ -865,180 +886,49 @@ export const MemberPortalView: React.FC = () => {
                       );
                     })
                   ) : (
-                    <>
-                      {/* Default Row 1: Simpanan Pokok Pendaftaran */}
-                      <tr className="hover:bg-stone-50/60 transition-colors">
-                        <td className="py-3 px-4 text-stone-600 font-mono">
-                          {formatDateIndo(memberData?.tgl_reg || '2024-08-10')}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
-                            <ArrowDownLeft className="w-3 h-3" /> SETORAN
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 font-semibold text-stone-800">Simpanan Pokok</td>
-                        <td className="py-3 px-4 text-stone-600">Setoran Simpanan Pokok registrasi resmi</td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
-                          {formatRupiah(savingsData.pokok)}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {(() => {
-                              const proofUrl =
-                                memberData?.transfer_proof_url ||
-                                (user as any)?.transferProofUrl ||
-                                getMemberDefaultProof(memberNo);
-
-                              if (!proofUrl) {
-                                return <span className="text-stone-400 font-medium px-2 select-none">-</span>;
-                              }
-
-                              const trxId =
-                                memberNo === '1121-00002'
-                                  ? 'T251229002'
-                                  : memberNo === '1121-00003'
-                                  ? 'T251229003'
-                                  : memberNo === '1121-00004'
-                                  ? 'T251229004'
-                                  : 'T251229001';
-
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    handleViewProof({
-                                      id: trxId,
-                                      tanggal: memberData?.tgl_reg || '2025-12-29',
-                                      referal: 'KOPERASI',
-                                      plantation: 'PUSAT JAKARTA',
-                                      jenis: 'MASUK',
-                                      kategori: 'Simpanan Pokok Anggota',
-                                      metode_bayar: 'Bank Transfer BSI',
-                                      qty: 1,
-                                      jumlah: savingsData.pokok,
-                                      area_jenis: 'KOPERASI PUSAT',
-                                      filelink: proofUrl,
-                                      akun: memberData?.nama || user?.name || 'Anggota',
-                                      keterangan: 'Setoran Simpanan Pokok Keanggotaan KOPSIM Mandiri',
-                                    });
-                                  }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer border border-emerald-700"
-                                  title="Lihat Bukti Transfer Simpanan Pokok"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>Lihat Bukti</span>
-                                </button>
-                              );
-                            })()}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSelectedKuitansi({
-                                  id: 'TRX-POKOK-INIT',
-                                  tanggal: memberData?.tgl_reg || '2024-08-10',
-                                  referal: 'KOPERASI',
-                                  plantation: 'PUSAT JAKARTA',
-                                  jenis: 'MASUK',
-                                  kategori: 'Simpanan Pokok Anggota',
-                                  metode_bayar: 'Bank Transfer BSI',
-                                  jumlah: savingsData.pokok,
-                                  akun: memberData?.nama || user?.name || 'Anggota',
-                                  keterangan: 'Setoran Simpanan Pokok Keanggotaan KOPSIM Mandiri',
-                                })
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-600 hover:text-white rounded-lg border border-purple-200 hover:border-purple-600 transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
-                              title="Cetak Kuitansi Transaksi"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>Kuitansi</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-
-                      {/* Default Row 2: Simpanan Wajib */}
-                      <tr className="hover:bg-stone-50/60 transition-colors">
-                        <td className="py-3 px-4 text-stone-600 font-mono">
-                          {formatDateIndo(memberData?.tgl_reg || '2024-08-10')}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
-                            <ArrowDownLeft className="w-3 h-3" /> SETORAN
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 font-semibold text-stone-800">Simpanan Wajib</td>
-                        <td className="py-3 px-4 text-stone-600">Setoran Simpanan Wajib paket 3 tahun</td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
-                          {formatRupiah(savingsData.wajib)}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {(() => {
-                              const proofUrl =
-                                memberData?.transfer_proof_url ||
-                                (user as any)?.transferProofUrl ||
-                                (memberNo === '1121-00001'
-                                  ? 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/03/T260320001-ou4pzo.webp'
-                                  : null);
-
-                              if (!proofUrl) {
-                                return <span className="text-stone-400 font-medium px-2 select-none">-</span>;
-                              }
-
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    handleViewProof({
-                                      id: 'T260320001',
-                                      tanggal: memberData?.tgl_reg || '2026-03-20',
-                                      referal: 'KOPERASI',
-                                      plantation: 'PUSAT JAKARTA',
-                                      jenis: 'MASUK',
-                                      kategori: 'Simpanan Wajib Anggota',
-                                      metode_bayar: 'Bank Transfer BSI',
-                                      qty: 1,
-                                      jumlah: savingsData.wajib,
-                                      area_jenis: 'KOPERASI PUSAT',
-                                      filelink: proofUrl,
-                                      akun: memberData?.nama || user?.name || 'Anggota',
-                                      keterangan: 'Setoran Simpanan Wajib Paket 3 Tahun (36 Bulan)',
-                                    });
-                                  }}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer border border-emerald-700"
-                                  title="Lihat Bukti Transfer Simpanan Wajib"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>Lihat Bukti</span>
-                                </button>
-                              );
-                            })()}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSelectedKuitansi({
-                                  id: 'TRX-WAJIB-INIT',
-                                  tanggal: memberData?.tgl_reg || '2024-08-10',
-                                  referal: 'KOPERASI',
-                                  plantation: 'PUSAT JAKARTA',
-                                  jenis: 'MASUK',
-                                  kategori: 'Simpanan Wajib Anggota',
-                                  metode_bayar: 'Bank Transfer BSI',
-                                  jumlah: savingsData.wajib,
-                                  akun: memberData?.nama || user?.name || 'Anggota',
-                                  keterangan: 'Setoran Simpanan Wajib Paket 3 Tahun (36 Bulan)',
-                                })
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-600 hover:text-white rounded-lg border border-purple-200 hover:border-purple-600 transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
-                              title="Cetak Kuitansi Transaksi"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>Kuitansi</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    </>
+                    <tr>
+                      <td colSpan={6} className="py-10 px-4">
+                        <EmptyState
+                          title="Belum Ada Riwayat Mutasi Transaksi"
+                          description="Semua transaksi setoran simpanan, penarikan, dan pembayaran yang telah dibukukan di kas koperasi akan muncul otomatis di sini."
+                        />
+                        {(() => {
+                          const regProofUrl =
+                            memberData?.transfer_proof_url ||
+                            user?.transferProofUrl ||
+                            getMemberDefaultProof(memberNo);
+                          if (!regProofUrl) return null;
+                          return (
+                            <div className="mt-3 flex justify-center">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleViewProof({
+                                    id: `REG-${memberNo || 'ANGGOTA'}`,
+                                    tanggal: memberData?.tgl_reg || user?.registeredAt || new Date().toISOString().split('T')[0],
+                                    referal: 'KOPERASI',
+                                    plantation: memberData?.plantation || 'PUSAT JAKARTA',
+                                    jenis: 'MASUK',
+                                    kategori: 'Bukti Transfer Pendaftaran',
+                                    metode_bayar: 'Bank Transfer BSI',
+                                    qty: 1,
+                                    jumlah: savingsData.pokok,
+                                    area_jenis: 'KOPERASI PUSAT',
+                                    filelink: regProofUrl,
+                                    akun: memberData?.nama || user?.name || 'Anggota',
+                                    keterangan: 'Setoran Simpanan Pokok Keanggotaan KOPSIM Mandiri',
+                                  })
+                                }
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs transition-all cursor-pointer border border-emerald-700"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Lihat Bukti Pendaftaran</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -1160,7 +1050,7 @@ export const MemberPortalView: React.FC = () => {
                     pekerjaan: memberData?.pekerjaan || 'Anggota',
                     tgl_reg: memberData?.tgl_reg || '2024-08-10',
                     tgl_lahir: memberData?.tgl_lahir || '1990-01-01',
-                    avatar_url: memberData?.avatar_url || memberService.getMemberAvatar(memberNo),
+                    avatar_url: memberData?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo),
                   }}
                   showQrDetails={true}
                 />
@@ -1399,7 +1289,7 @@ export const MemberPortalView: React.FC = () => {
                 {(() => {
                   const proofUrl =
                     memberData?.transfer_proof_url ||
-                    (user as any)?.transferProofUrl ||
+                    user?.transferProofUrl ||
                     getMemberDefaultProof(memberNo);
 
                   if (!proofUrl) {
@@ -1412,17 +1302,10 @@ export const MemberPortalView: React.FC = () => {
                       size="sm"
                       onClick={() => {
                         handleViewProof({
-                          id:
-                            memberNo === '1121-00002'
-                              ? 'T251229002'
-                              : memberNo === '1121-00003'
-                              ? 'T251229003'
-                              : memberNo === '1121-00004'
-                              ? 'T251229004'
-                              : 'T251229001',
+                          id: `REG-${memberNo || 'ANGGOTA'}`,
                           tanggal: memberData?.tgl_reg || '2025-12-29',
                           referal: 'KOPERASI',
-                          plantation: 'PUSAT JAKARTA',
+                          plantation: memberData?.plantation || 'PUSAT JAKARTA',
                           jenis: 'MASUK',
                           kategori: 'Simpanan Pokok Anggota',
                           metode_bayar: 'Bank Transfer BSI',
@@ -1523,7 +1406,7 @@ export const MemberPortalView: React.FC = () => {
             pekerjaan: memberData?.pekerjaan || 'Anggota',
             tgl_reg: memberData?.tgl_reg || '2024-08-10',
             tgl_lahir: memberData?.tgl_lahir || '1990-01-01',
-            avatar_url: memberData?.avatar_url || memberService.getMemberAvatar(memberNo),
+            avatar_url: memberData?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo),
           }}
         />
       )}
@@ -1722,19 +1605,19 @@ export const MemberPortalView: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-center p-6 text-stone-300 space-y-3 max-w-sm">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-950/80 border border-emerald-600/40 text-emerald-400 flex items-center justify-center mx-auto">
-                    <ShieldCheck className="w-6 h-6" />
+                  <div className="w-12 h-12 rounded-2xl bg-amber-950/80 border border-amber-600/40 text-amber-400 flex items-center justify-center mx-auto">
+                    <AlertCircle className="w-6 h-6" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-white text-sm">Bukti Transaksi Terverifikasi</h4>
+                    <h4 className="font-bold text-white text-sm">Berkas Bukti Belum Tersedia</h4>
                     <p className="text-[11px] text-stone-400 mt-0.5">
-                      Transaksi telah dibukukan dan divalidasi secara sah di sistem pembukuan KOPSIM Mandiri.
+                      {selectedProof.errorMessage || 'Berkas lampiran tidak ditemukan di server penyimpanan atau belum diunggah.'}
                     </p>
                   </div>
                   <div className="text-left bg-stone-950/90 p-2.5 rounded-xl border border-stone-800 space-y-1">
                     <div className="flex justify-between text-[10px]">
-                      <span className="text-stone-400">Status Validasi:</span>
-                      <span className="font-bold text-emerald-400">Sah & Terverifikasi</span>
+                      <span className="text-stone-400">Status Berkas:</span>
+                      <span className="font-bold text-amber-400">Tidak Tersedia</span>
                     </div>
                     <div className="flex justify-between text-[10px]">
                       <span className="text-stone-400">Ref Object Path:</span>

@@ -606,7 +606,9 @@ export interface SaveSplitTransactionsParams {
   metode_bayar: string;
   akun: string;
   filelink: string;
+  member_id?: string;
   customer_id?: string;
+  customer_name?: string;
   supplier_id?: string;
   login_as?: string;
   keterangan_umum?: string;
@@ -1011,8 +1013,11 @@ export const transactionService = {
       login_as: currentUser?.username || trxData.login_as || currentUser?.role || 'ADMIN',
       logtime: new Date().toISOString().replace('T', ' ').substring(0, 19),
       area_jenis: areaJenis,
+      member_id: trxData.member_id || undefined,
       customer_id: trxData.customer_id || '',
+      customer_name: trxData.customer_name || undefined,
       supplier_id: trxData.supplier_id || '',
+      supplier_name: trxData.supplier_name || undefined,
     };
 
     let oldRecord: TransactionRecord | null = null;
@@ -1062,9 +1067,34 @@ export const transactionService = {
           }
           savedToSupabase = true;
         } else {
-          const { error } = await client
+          let { error } = await client
             .from(TRANSACTIONS_TABLE_NAME)
             .insert([dbRow]);
+
+          // Handle Foreign Key violation on member_id (when member_no != members.id PK)
+          if (error && (error.code === '23503' || error.message?.toLowerCase().includes('foreign key'))) {
+            let resolvedPk: string | null = null;
+            if (dbRow.member_id) {
+              try {
+                const { data: mRow } = await client
+                  .from('members')
+                  .select('id')
+                  .or(`member_no.eq.${dbRow.member_id},id.eq.${dbRow.member_id}`)
+                  .limit(1)
+                  .maybeSingle();
+                if (mRow?.id) resolvedPk = String(mRow.id);
+              } catch {
+                // ignore
+              }
+            }
+            const safeRow = {
+              ...dbRow,
+              member_id: resolvedPk,
+              customer_name: dbRow.customer_name || newRecord.customer_id || newRecord.akun || '',
+            };
+            const retryRes = await client.from(TRANSACTIONS_TABLE_NAME).insert([safeRow]);
+            error = retryRes.error;
+          }
 
           if (error) {
             console.error('Supabase insert transaction error:', error);
@@ -1116,7 +1146,9 @@ export const transactionService = {
       metode_bayar,
       akun,
       filelink,
+      member_id,
       customer_id = '',
+      customer_name,
       supplier_id = '',
       login_as = 'ADMIN',
       keterangan_umum = '',
@@ -1166,7 +1198,9 @@ export const transactionService = {
         sku_name: referal === 'PROJECT' ? (sp.sku_name || '') : '',
         qty: itemQty,
         harga_satuan: itemPrice,
+        member_id,
         customer_id,
+        customer_name,
         supplier_id,
         login_as,
         logtime: new Date().toISOString().replace('T', ' ').substring(0, 19),
@@ -1212,7 +1246,13 @@ export const transactionService = {
     if (client) {
       try {
         const dbRows = newRecords.map((r) => mapTransactionRecordToSupabaseRow(r));
-        const { error } = await client.from(TRANSACTIONS_TABLE_NAME).insert(dbRows);
+        let { error } = await client.from(TRANSACTIONS_TABLE_NAME).insert(dbRows);
+
+        if (error && (error.code === '23503' || error.message?.toLowerCase().includes('foreign key'))) {
+          const safeRows = dbRows.map((row) => ({ ...row, member_id: null }));
+          const retryRes = await client.from(TRANSACTIONS_TABLE_NAME).insert(safeRows);
+          error = retryRes.error;
+        }
 
         if (error) {
           console.error('Supabase batch insert split transactions error:', error);
@@ -1496,41 +1536,60 @@ export const transactionService = {
 
     let hasSavingsTrx = false;
     let transactionsList: any[] = [];
+    let supabaseQueriedSuccessfully = false;
 
-    if (client && (cleanName.length >= 3 || cleanNo.length >= 3)) {
+    if (client && (cleanName.length >= 2 || cleanNo.length >= 2)) {
+      // 1. Prioritas: SECURITY DEFINER RPC agar aman di portal anggota lintas perangkat (tanpa terhalang RLS anon)
       try {
-        const orClauses: string[] = [];
-        if (cleanName.length >= 3) {
-          orClauses.push(
-            `account_name_legacy.ilike.%${cleanName}%`,
-            `description.ilike.%${cleanName}%`,
-            `customer_name.ilike.%${cleanName}%`
-          );
+        const { data: rpcRows, error: rpcErr } = await client.rpc('get_member_portal_transactions', {
+          p_member_no: cleanNo,
+          p_member_name: cleanName,
+        });
+        if (!rpcErr && Array.isArray(rpcRows)) {
+          transactionsList = rpcRows;
+          supabaseQueriedSuccessfully = true;
         }
-        if (cleanNo.length >= 3) {
-          orClauses.push(
-            `member_id.eq.${cleanNo}`,
-            `customer_name.ilike.%${cleanNo}%`,
-            `account_name_legacy.ilike.%${cleanNo}%`,
-            `description.ilike.%${cleanNo}%`
-          );
-        }
+      } catch (rpcEx) {
+        console.warn('getMemberSavingsSummary RPC fallback:', rpcEx);
+      }
 
-        const { data, error } = await client
-          .from(TRANSACTIONS_TABLE_NAME)
-          .select('account_name_legacy, category_name, transaction_type, amount, description, customer_name, member_id')
-          .or(orClauses.join(','));
+      // 2. Fallback query langsung jika RPC belum terpasang
+      if (!supabaseQueriedSuccessfully) {
+        try {
+          const orClauses: string[] = [];
+          if (cleanName.length >= 3) {
+            orClauses.push(
+              `account_name_legacy.ilike.%${cleanName}%`,
+              `description.ilike.%${cleanName}%`,
+              `customer_name.ilike.%${cleanName}%`
+            );
+          }
+          if (cleanNo.length >= 3) {
+            orClauses.push(
+              `member_id.eq.${cleanNo}`,
+              `customer_name.ilike.%${cleanNo}%`,
+              `account_name_legacy.ilike.%${cleanNo}%`,
+              `description.ilike.%${cleanNo}%`
+            );
+          }
 
-        if (!error && data && data.length > 0) {
-          transactionsList = data;
+          const { data, error } = await client
+            .from(TRANSACTIONS_TABLE_NAME)
+            .select('account_name_legacy, category_name, transaction_type, amount, description, customer_name, member_id')
+            .or(orClauses.join(','));
+
+          if (!error && Array.isArray(data)) {
+            transactionsList = data;
+            supabaseQueriedSuccessfully = true;
+          }
+        } catch (err) {
+          console.warn('getMemberSavingsSummary Supabase query error:', err);
         }
-      } catch (err) {
-        console.warn('getMemberSavingsSummary Supabase query error:', err);
       }
     }
 
-    // Fallback to local stored transactions filtered strictly by member name or ID
-    if (transactionsList.length === 0 && (cleanName.length >= 3 || cleanNo.length >= 3)) {
+    // Fallback ke local storage HANYA jika Supabase belum terkonfigurasi atau query gagal
+    if (!supabaseQueriedSuccessfully && (cleanName.length >= 3 || cleanNo.length >= 3)) {
       const localTrx = this.getStoredTransactions();
       transactionsList = localTrx.filter((t) => {
         const desc = (t.keterangan || '').toLowerCase();
@@ -1616,7 +1675,21 @@ export const transactionService = {
     const cleanNo = (memberNo || '').trim();
     const client = getSupabaseClient();
 
-    if (client && (cleanName.length >= 3 || cleanNo.length >= 3)) {
+    if (client && (cleanName.length >= 2 || cleanNo.length >= 2)) {
+      // 1. Prioritas: gunakan SECURITY DEFINER RPC get_member_portal_transactions agar lintas perangkat tetap dapat membaca file_url & riwayat transaksi
+      try {
+        const { data: rpcRows, error: rpcErr } = await client.rpc('get_member_portal_transactions', {
+          p_member_no: cleanNo,
+          p_member_name: cleanName,
+        });
+        if (!rpcErr && Array.isArray(rpcRows)) {
+          return rpcRows.map(mapAndCleanTransactionRow);
+        }
+      } catch (rpcEx) {
+        console.warn('getMemberTransactions RPC fallback:', rpcEx);
+      }
+
+      // 2. Fallback query langsung jika RPC belum dipasang
       try {
         const orClauses: string[] = [];
         if (cleanName.length >= 3) {
@@ -1641,7 +1714,7 @@ export const transactionService = {
           .or(orClauses.join(','))
           .order('transaction_date', { ascending: false });
 
-        if (!error && data && data.length > 0) {
+        if (!error && Array.isArray(data)) {
           return data.map(mapAndCleanTransactionRow);
         } else if (error) {
           console.warn('getMemberTransactions Supabase query warning:', error.message);
@@ -1651,7 +1724,7 @@ export const transactionService = {
       }
     }
 
-    // Fallback to local stored transactions
+    // Fallback to local stored transactions only when offline or query failed
     const all = this.getStoredTransactions();
     return all.filter((t) => {
       const desc = (t.keterangan || '').toLowerCase();
@@ -1712,7 +1785,7 @@ export const transactionService = {
 
     const { data, error } = await client
       .from(TRANSACTIONS_TABLE_NAME)
-      .select('id, transaction_no, file_url, date')
+      .select('id, transaction_no, file_url, transaction_date')
       .not('file_url', 'is', null)
       .neq('file_url', '');
 
@@ -1737,7 +1810,7 @@ export const transactionService = {
       // If URL is truncated (e.g. points to .../storage/v1/object/public/bukti_transfer/ without object name)
       // Attempt bucket discovery by transaction number
       if (!newUrl && oldUrl.includes('bukti_transfer')) {
-        const found = await findProofInBucketByTransactionNo(row.transaction_no, row.date);
+        const found = await findProofInBucketByTransactionNo(row.transaction_no, row.transaction_date);
         if (found.found && found.publicUrl) {
           newUrl = found.publicUrl;
         }

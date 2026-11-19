@@ -7,6 +7,7 @@ import { Badge } from '../common/Badge';
 import { Button } from '../common/Button';
 import { InvestmentCampaignCard } from './InvestmentCampaignCard';
 import { InvestmentCheckoutModal } from './InvestmentCheckoutModal';
+import { getPublicProofUrl, isPdfFile } from '../../services/storageService';
 import {
   Coins,
   TrendingUp,
@@ -22,6 +23,7 @@ import {
   X,
   Printer,
   Sparkles,
+  Eye,
 } from 'lucide-react';
 
 interface MemberInvestmentsTabProps {
@@ -40,6 +42,7 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
     useState<ProjectInvestmentCampaign | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedAgreement, setSelectedAgreement] = useState<DigitalAgreement | null>(null);
+  const [selectedProofUrl, setSelectedProofUrl] = useState<string | null>(null);
 
   useEffect(() => {
     loadMemberInvestments();
@@ -315,16 +318,31 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
                     </span>
                   </div>
 
-                  {tx.agreement && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedAgreement(tx.agreement || null)}
-                      className="mt-2 text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2"
-                    >
-                      <FileCheck className="w-3.5 h-3.5" />
-                      Naskah Akad Digital
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3 mt-2 flex-wrap justify-end">
+                    {tx.payment_proof_url && tx.payment_proof_url.trim() !== '-' ? (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProofUrl(getPublicProofUrl(tx.payment_proof_url))}
+                        className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        Lihat Bukti
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-stone-400">Bukti: -</span>
+                    )}
+
+                    {tx.agreement && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAgreement(tx.agreement || null)}
+                        className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2"
+                      >
+                        <FileCheck className="w-3.5 h-3.5" />
+                        Naskah Akad Digital
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -447,6 +465,63 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
                 className="text-xs"
               >
                 Cetak Kontrak
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Pratinjau Bukti Pembayaran Investasi */}
+      {selectedProofUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-xs">
+          <div className="bg-surface rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <h3 className="font-bold text-sm font-serif text-stone-900">
+                Bukti Pembayaran Investasi
+              </h3>
+              <button
+                type="button"
+                onClick={() => setSelectedProofUrl(null)}
+                aria-label="Tutup pratinjau bukti"
+                className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-stone-900 rounded-xl p-3 flex items-center justify-center min-h-56">
+              {isPdfFile(selectedProofUrl) ? (
+                <a
+                  href={selectedProofUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Buka Dokumen PDF Bukti Transfer
+                </a>
+              ) : (
+                <img
+                  src={selectedProofUrl}
+                  alt="Bukti Pembayaran Investasi"
+                  className="max-h-[55vh] w-auto max-w-full object-contain rounded-lg"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <a
+                href={selectedProofUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-800 text-white text-xs font-semibold hover:bg-emerald-900"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Buka Berkas Asli
+              </a>
+              <Button variant="outline" size="sm" onClick={() => setSelectedProofUrl(null)}>
+                Tutup
               </Button>
             </div>
           </div>

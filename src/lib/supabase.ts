@@ -17,6 +17,10 @@ export const isSupabaseConfigured = Boolean(
   supabasePublishableKey !== 'your-anon-key'
 );
 
+export function getSupabaseUrl(): string {
+  return supabaseUrl;
+}
+
 let supabaseInstance: SupabaseClient | null = null;
 
 export function validateEnvironment(): void {

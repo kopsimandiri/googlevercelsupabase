@@ -11,6 +11,12 @@ import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
 import {
+  validateAndOptimizeProofImage,
+  uploadMemberProof,
+  hasTransactionProof,
+  getPublicProofUrl,
+} from '../../services/storageService';
+import {
   Wallet,
   Plus,
   ArrowUpRight,
@@ -23,6 +29,8 @@ import {
   ShieldAlert,
   Coins,
   History,
+  UploadCloud,
+  Eye,
 } from 'lucide-react';
 
 export const SimpananModule: React.FC = () => {
@@ -55,6 +63,7 @@ export const SimpananModule: React.FC = () => {
   const [depositAmount, setDepositAmount] = useState<number>(500000);
   const [depositMethod, setDepositMethod] = useState<string>('Bank BSI');
   const [depositNotes, setDepositNotes] = useState<string>('');
+  const [depositProofFile, setDepositProofFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const canMutate = role === 'ADMIN' || role === 'DIRECTOR';
@@ -177,6 +186,33 @@ export const SimpananModule: React.FC = () => {
     setIsSubmitting(true);
     try {
       const member = members.find((m) => m.id === selectedMemberId);
+      let filelink = '';
+
+      if (depositProofFile) {
+        let uploadSource: File | Blob = depositProofFile;
+        if (depositProofFile.type.startsWith('image/')) {
+          try {
+            const optimized = await validateAndOptimizeProofImage(depositProofFile);
+            uploadSource = optimized.file;
+          } catch {
+            // fallback to original file
+          }
+        }
+        const upRes = await uploadMemberProof(
+          uploadSource,
+          'setoran',
+          member?.id || selectedMemberId,
+          depositProofFile.name
+        );
+        if (upRes.success && upRes.fileUrl) {
+          filelink = upRes.fileUrl;
+        } else {
+          showToast(upRes.error || 'Gagal mengunggah bukti setoran.', 'error');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const res = await transactionService.saveTransaction({
         tanggal: new Date().toISOString().split('T')[0],
         referal: 'KOPERASI',
@@ -187,12 +223,19 @@ export const SimpananModule: React.FC = () => {
         qty: 1,
         jumlah: depositAmount,
         area_jenis: member?.area_jenis || 'KOPERASI PUSAT',
+        akun: member?.nama || depositMethod,
+        member_id: member?.id,
+        customer_id: member?.id,
+        customer_name: member?.nama,
+        filelink,
         keterangan: depositNotes || `Setoran ${depositType} an. ${member?.nama} (${member?.id})`,
       });
 
       if (res.success) {
         showToast(`Setoran ${depositType} berhasil dicatat dengan ID: ${res.id}`, 'success');
         setIsDepositOpen(false);
+        setDepositProofFile(null);
+        setDepositNotes('');
         await loadData();
       } else {
         showToast(res.error || 'Gagal mencatat simpanan.', 'error');
@@ -454,22 +497,41 @@ export const SimpananModule: React.FC = () => {
                       <th className="py-2.5 px-3">Kategori</th>
                       <th className="py-2.5 px-3">Metode / Akun</th>
                       <th className="py-2.5 px-3">Keterangan</th>
+                      <th className="py-2.5 px-3 text-center">Bukti</th>
                       <th className="py-2.5 px-3 text-right">Nominal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
-                    {savingsTransactions.map((trx) => (
-                      <tr key={trx.id} className="hover:bg-stone-50">
-                        <td className="py-3 px-3 font-mono font-bold text-emerald-950">{trx.id}</td>
-                        <td className="py-3 px-3 text-stone-600">{formatDateIndo(trx.tanggal)}</td>
-                        <td className="py-3 px-3 font-medium text-stone-800">{trx.kategori}</td>
-                        <td className="py-3 px-3 text-stone-600">{trx.metode_bayar}</td>
-                        <td className="py-3 px-3 text-stone-600">{trx.keterangan}</td>
-                        <td className="py-3 px-3 text-right font-bold text-emerald-950 font-serif">
-                          {formatRupiah(trx.jumlah)}
-                        </td>
-                      </tr>
-                    ))}
+                    {savingsTransactions.map((trx) => {
+                      const proofUrl = hasTransactionProof(trx) ? getPublicProofUrl(trx.filelink) : '';
+                      return (
+                        <tr key={trx.id} className="hover:bg-stone-50">
+                          <td className="py-3 px-3 font-mono font-bold text-emerald-950">{trx.id}</td>
+                          <td className="py-3 px-3 text-stone-600">{formatDateIndo(trx.tanggal)}</td>
+                          <td className="py-3 px-3 font-medium text-stone-800">{trx.kategori}</td>
+                          <td className="py-3 px-3 text-stone-600">{trx.metode_bayar}</td>
+                          <td className="py-3 px-3 text-stone-600">{trx.keterangan}</td>
+                          <td className="py-3 px-3 text-center">
+                            {proofUrl ? (
+                              <a
+                                href={proofUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Lihat Bukti</span>
+                              </a>
+                            ) : (
+                              <span className="text-stone-400 select-none">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-right font-bold text-emerald-950 font-serif">
+                            {formatRupiah(trx.jumlah)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -553,6 +615,36 @@ export const SimpananModule: React.FC = () => {
                   placeholder="Keterangan setoran tambahan"
                   className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-lg focus:outline-hidden"
                 />
+              </div>
+
+              <div>
+                <label className="block text-stone-700 font-semibold mb-1">Lampiran Bukti Transfer (Opsional)</label>
+                <label className="flex items-center justify-between gap-2 px-3 py-2 bg-stone-50 border border-dashed border-stone-300 hover:border-emerald-600 rounded-lg cursor-pointer">
+                  <span className="flex items-center gap-2 text-stone-600 truncate">
+                    <UploadCloud className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span className="truncate">
+                      {depositProofFile ? depositProofFile.name : 'Pilih foto struk / PDF bukti transfer'}
+                    </span>
+                  </span>
+                  {depositProofFile && (
+                    <button
+                      type="button"
+                      onClick={(ev) => {
+                        ev.preventDefault();
+                        setDepositProofFile(null);
+                      }}
+                      className="text-stone-400 hover:text-rose-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    onChange={(e) => setDepositProofFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                </label>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">

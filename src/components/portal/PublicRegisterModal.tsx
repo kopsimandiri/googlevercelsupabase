@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { memberService } from '../../services/memberService';
 import { transactionService } from '../../services/transactionService';
 import { uploadPublicRegistrationProof } from '../../services/storageService';
+import { getSupabaseClient } from '../../lib/supabase';
 import { INDONESIA_REGIONS } from '../../data/indonesiaRegions';
 import { useNotification } from '../../context/NotificationContext';
 import { formatRupiah, isValidNik, normalizeNik } from '../../utils/formatters';
@@ -318,6 +319,7 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
               filelink: finalFileUrl,
               akun: nama.trim(), // account_name_legacy sesuai nama lengkap anggota
               keterangan: `Setoran awal pendaftaran anggota baru a.n. ${nama.trim()} (No. Registrasi: ${newMemberId})`,
+              member_id: newMemberId,
               customer_id: newMemberId,
               customer_name: nama.trim(),
               login_as: nama.trim() || 'CALON ANGGOTA',
@@ -332,6 +334,43 @@ export const PublicRegisterModal: React.FC<PublicRegisterModalProps> = ({
           }
         } catch (uploadErr) {
           console.warn('[PublicRegisterModal] Upload bukti warning:', uploadErr);
+        }
+      }
+
+      // 4. Sinkronkan entri member_registrations agar link bukti transfer selalu terbaca lintas perangkat
+      const sbClient = getSupabaseClient();
+      if (sbClient) {
+        try {
+          const regPayload: Record<string, any> = {
+            id: `REG-${Date.now()}`,
+            submitted_at: new Date().toISOString(),
+            member_no: newMemberId,
+            full_name: nama.trim(),
+            nik: cleanNik,
+            birth_place: kota || 'Jakarta',
+            birth_date: '1990-01-01',
+            gender: 'L',
+            address: alamat.trim() || '-',
+            city: kota || 'Jakarta Pusat',
+            province: provinsi || 'DKI Jakarta',
+            whatsapp: noHp.trim(),
+            email: email.trim() || '',
+            member_status: 'Calon Anggota',
+            profession: pekerjaan.trim() || 'Wiraswasta',
+            savings_type: 'Simpanan Pokok & Wajib',
+            transfer_amount: totalSetoranAwal,
+            transfer_date: new Date().toISOString().split('T')[0],
+            transfer_proof_url: finalFileUrl || '',
+            approval_status: 'PENDING',
+            verification_status: finalFileUrl ? 'Bukti Transfer Terunggah' : 'Menunggu Verifikasi Admin',
+          };
+          const { error: regErr } = await sbClient.from('member_registrations').insert([regPayload]);
+          if (regErr && regErr.message?.includes('member_no')) {
+            delete regPayload.member_no;
+            await sbClient.from('member_registrations').insert([regPayload]);
+          }
+        } catch (regInsertErr) {
+          console.warn('[PublicRegisterModal] Sync member_registrations warning:', regInsertErr);
         }
       }
 

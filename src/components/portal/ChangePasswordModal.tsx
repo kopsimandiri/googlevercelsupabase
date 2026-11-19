@@ -40,8 +40,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
       return;
     }
 
-    if (newPassword.trim().length < 4) {
-      setErrorMessage('Password baru minimal 4 karakter.');
+    if (newPassword.trim().length < 6) {
+      setErrorMessage('Password baru minimal 6 karakter.');
       return;
     }
 
@@ -55,13 +55,17 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
     try {
       // 1. Target identifier: member_no, id, or username
       const targetId = memberNo || username || '';
-      
-      const result = await memberService.updateMemberPassword(targetId, newPassword.trim());
+
+      const result = await memberService.updateMemberPassword(
+        targetId,
+        newPassword.trim(),
+        oldPassword.trim() || undefined
+      );
 
       if (result.success) {
         setIsSuccess(true);
         showToast(
-          'Password anggota berhasil diperbarui dan disimpan ke tabel public.members (kolom legacy_password_hash).',
+          result.message || 'Password anggota berhasil diperbarui dengan enkripsi aman di server.',
           'success',
           'Ganti Password Berhasil'
         );
@@ -135,7 +139,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
                 Password Berhasil Diperbarui!
               </h4>
               <p className="text-xs text-stone-600 max-w-xs mx-auto">
-                Tersimpan langsung pada tabel <code className="px-1.5 py-0.5 bg-stone-100 rounded text-emerald-800 font-mono font-bold">public.members</code> kolom <code className="px-1.5 py-0.5 bg-stone-100 rounded text-emerald-800 font-mono font-bold">legacy_password_hash</code>.
+                Kredensial login Anda kini tersimpan aman dan terenkripsi di server untuk akses lintas perangkat.
               </p>
             </div>
           ) : (
@@ -147,12 +151,12 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
                 </div>
               )}
 
-              {/* Info target DB */}
+              {/* Info keamanan server */}
               <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900 flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold">Database Target: </span>
-                  Tersimpan di tabel <span className="font-mono font-bold text-emerald-950">public.members</span> kolom <span className="font-mono font-bold text-emerald-950">legacy_password_hash</span>.
+                  <span className="font-bold">Enkripsi Server: </span>
+                  Password baru wajib minimal 6 karakter dan diverifikasi langsung melalui RPC terenkripsi di Supabase.
                 </div>
               </div>
 

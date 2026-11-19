@@ -1081,42 +1081,7 @@ export const memberService = {
 
     const tempId = `REG-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
 
-    // Also insert to member_registrations table in Supabase
-    const client = getSupabaseClient();
-    if (client) {
-      try {
-        await client.from('member_registrations').insert([
-          {
-            id: tempId,
-            submitted_at: new Date().toISOString(),
-            full_name: payload.namaLengkap,
-            nik: payload.nik,
-            birth_place: payload.tempatLahir,
-            birth_date: payload.tanggalLahir,
-            gender: payload.jenisKelamin === 'Perempuan' ? 'P' : 'L',
-            address: payload.alamat,
-            city: payload.kota,
-            province: payload.provinsi,
-            whatsapp: payload.whatsapp,
-            email: payload.email || '',
-            member_status: payload.statusAnggota || 'Calon Anggota',
-            profession: payload.profesi,
-            savings_type: payload.jenisSimpanan,
-            transfer_amount: payload.jumlahTransfer,
-            transfer_date: payload.tanggalTransfer || new Date().toISOString().split('T')[0],
-            transfer_proof_url: payload.fileBuktiData || '',
-            ktp_url: payload.fileKTPData || '',
-            selfie_url: payload.fotoAnggotaData || '',
-            approval_status: 'PENDING',
-            verification_status: 'Menunggu Verifikasi Admin',
-          },
-        ]);
-      } catch (e) {
-        console.warn('Supabase member registration insert fallback:', e);
-      }
-    }
-
-    await this.saveMember(
+    const saveRes = await this.saveMember(
       {
         nama: payload.namaLengkap,
         provinsi: payload.provinsi,
@@ -1131,22 +1096,67 @@ export const memberService = {
       {
         nik: payload.nik,
         birth_place: payload.tempatLahir,
+        avatar_url: payload.fotoAnggotaData || '',
       }
     );
 
-    return { success: true, tempId };
+    const assignedMemberNo = saveRes.id || '';
+
+    // Insert to member_registrations table in Supabase with assigned member_no
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const regPayload: Record<string, any> = {
+          id: tempId,
+          submitted_at: new Date().toISOString(),
+          member_no: assignedMemberNo,
+          full_name: payload.namaLengkap,
+          nik: payload.nik,
+          birth_place: payload.tempatLahir,
+          birth_date: payload.tanggalLahir,
+          gender: payload.jenisKelamin === 'Perempuan' ? 'P' : 'L',
+          address: payload.alamat,
+          city: payload.kota,
+          province: payload.provinsi,
+          whatsapp: payload.whatsapp,
+          email: payload.email || '',
+          member_status: payload.statusAnggota || 'Calon Anggota',
+          profession: payload.profesi,
+          savings_type: payload.jenisSimpanan,
+          transfer_amount: payload.jumlahTransfer,
+          transfer_date: payload.tanggalTransfer || new Date().toISOString().split('T')[0],
+          transfer_proof_url: payload.fileBuktiData || '',
+          ktp_url: payload.fileKTPData || '',
+          selfie_url: payload.fotoAnggotaData || '',
+          approval_status: 'PENDING',
+          verification_status: 'Menunggu Verifikasi Admin',
+        };
+
+        const { error: regErr } = await client.from('member_registrations').insert([regPayload]);
+        if (regErr && regErr.message?.includes('member_no')) {
+          delete regPayload.member_no;
+          await client.from('member_registrations').insert([regPayload]);
+        }
+      } catch (e) {
+        console.warn('Supabase member registration insert fallback:', e);
+      }
+    }
+
+    return { success: true, tempId: assignedMemberNo || tempId };
   },
 
   /**
-   * Update password anggota dan simpan langsung ke database public.members pada kolom legacy_password_hash
+   * Update password anggota via RPC change_member_password (terenkripsi bcrypt)
+   * dengan fallback aman ke tabel public.members
    */
   async updateMemberPassword(
     memberNoOrId: string,
-    newPassword: string
+    newPassword: string,
+    oldPassword?: string
   ): Promise<{ success: boolean; message: string }> {
     const cleanPassword = (newPassword || '').trim();
-    if (!cleanPassword || cleanPassword.length < 4) {
-      throw new Error('Password baru minimal 4 karakter.');
+    if (!cleanPassword || cleanPassword.length < 6) {
+      throw new Error('Password baru minimal 6 karakter.');
     }
 
     const cleanId = (memberNoOrId || '').trim();
@@ -1154,42 +1164,80 @@ export const memberService = {
       throw new Error('ID atau Nomor Anggota tidak valid.');
     }
 
-    // 1. Update in Supabase public.members table (column: legacy_password_hash)
     const client = getSupabaseClient();
     let supabaseSuccess = false;
+    let rpcErrorMsg = '';
 
     if (client) {
+      // 1. Prioritas: gunakan SECURITY DEFINER RPC change_member_password (bcrypt + validasi password lama)
       try {
-        let updateRes = await client
-          .from(MEMBERS_TABLE_NAME)
-          .update({
-            legacy_password_hash: cleanPassword,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('member_no', cleanId);
+        const { data: rpcData, error: rpcErr } = await client.rpc('change_member_password', {
+          p_member_no: cleanId,
+          p_new_password: cleanPassword,
+          p_old_password: oldPassword ? oldPassword.trim() : null,
+        });
 
-        if (!updateRes.error) {
-          supabaseSuccess = true;
-        } else if (/^\d+$/.test(cleanId)) {
-          // If numeric ID, fallback to eq('id', Number(cleanId))
-          const numRes = await client
+        if (!rpcErr && rpcData) {
+          if (rpcData.success === false) {
+            throw new Error(rpcData.message || 'Gagal memperbarui password.');
+          }
+          if (rpcData.success === true) {
+            supabaseSuccess = true;
+          }
+        } else if (rpcErr) {
+          rpcErrorMsg = rpcErr.message;
+        }
+      } catch (rpcEx: any) {
+        const msg = String(rpcEx?.message || '');
+        if (msg.includes('tidak sesuai') || msg.includes('minimal') || msg.includes('tidak ditemukan')) {
+          throw rpcEx;
+        }
+        rpcErrorMsg = msg;
+      }
+
+      // 2. Fallback direct update jika fungsi RPC belum dipasang di Supabase
+      if (!supabaseSuccess) {
+        try {
+          const updateRes = await client
             .from(MEMBERS_TABLE_NAME)
             .update({
               legacy_password_hash: cleanPassword,
               updated_at: new Date().toISOString(),
             })
-            .eq('id', Number(cleanId));
+            .eq('member_no', cleanId)
+            .select('id');
 
-          if (!numRes.error) {
+          if (!updateRes.error && updateRes.data && updateRes.data.length > 0) {
             supabaseSuccess = true;
+          } else {
+            const byIdRes = await client
+              .from(MEMBERS_TABLE_NAME)
+              .update({
+                legacy_password_hash: cleanPassword,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', cleanId)
+              .select('id');
+
+            if (!byIdRes.error && byIdRes.data && byIdRes.data.length > 0) {
+              supabaseSuccess = true;
+            }
           }
+        } catch (dbErr: any) {
+          console.warn('Supabase updateMemberPassword fallback exception:', dbErr);
         }
-      } catch (dbErr) {
-        console.warn('Supabase updateMemberPassword exception:', dbErr);
+      }
+
+      if (isSupabaseConfigured && !supabaseSuccess) {
+        throw new Error(
+          rpcErrorMsg
+            ? `Password belum tersimpan ke server database (${rpcErrorMsg}). Pastikan Anda menjalankan migrasi SQL terbaru.`
+            : 'Password belum dapat disimpan ke server database. Silakan coba lagi.'
+        );
       }
     }
 
-    // 2. Update local storage cache if exists
+    // 3. Update local storage cache if exists
     try {
       const stored = this.getStoredMembers();
       const idx = stored.findIndex(
@@ -1209,7 +1257,6 @@ export const memberService = {
       console.warn('Local member cache update error:', localErr);
     }
 
-    // Record audit log (mask password)
     await auditService.logActivity(
       'CHANGE_MEMBER_PASSWORD',
       'members',
@@ -1221,8 +1268,8 @@ export const memberService = {
     return {
       success: true,
       message: supabaseSuccess
-        ? 'Password berhasil diperbarui dan disimpan ke Supabase (tabel members).'
-        : 'Password anggota berhasil diperbarui.',
+        ? 'Password berhasil diperbarui dan disinkronkan ke server database untuk semua perangkat.'
+        : 'Password anggota berhasil diperbarui secara lokal.',
     };
   },
 
@@ -1254,16 +1301,38 @@ export const memberService = {
     let dbReturnedRow: any = null;
     let targetRow: any = null;
 
-    // 1. Update / Upsert ke database Supabase public.members
+    // 1. Update via SECURITY DEFINER RPC terlebih dahulu agar aman terhadap RLS lintas perangkat
     if (client) {
       try {
-        // Step A: Cari data baris anggota yang cocok di Supabase
-        // Cari berdasarkan member_no terlebih dahulu (business identifier unik)
-        const { data: rowByNo } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .select('*')
-          .eq('member_no', cleanId)
-          .maybeSingle();
+        const { data: rpcRes, error: rpcErr } = await client.rpc('update_member_profile_self', {
+          p_member_no: cleanId,
+          p_full_name: payload.nama.trim(),
+          p_gender: payload.gender === 'P' ? 'P' : 'L',
+          p_birth_place: payload.tempat_lahir || null,
+          p_birth_date: payload.tgl_lahir || null,
+          p_occupation: payload.pekerjaan || null,
+          p_address: payload.alamat || '',
+          p_city: payload.kota || null,
+          p_province: payload.provinsi || null,
+          p_avatar_url: payload.avatar_url !== undefined ? payload.avatar_url : null,
+        });
+
+        if (!rpcErr && rpcRes?.success && rpcRes.member) {
+          savedToSupabase = true;
+          dbReturnedRow = rpcRes.member;
+        }
+      } catch (rpcEx) {
+        console.warn('[memberService] RPC update_member_profile_self fallback:', rpcEx);
+      }
+
+      if (!savedToSupabase) {
+        try {
+          // Step A: Cari data baris anggota yang cocok di Supabase
+          const { data: rowByNo } = await client
+            .from(MEMBERS_TABLE_NAME)
+            .select('*')
+            .eq('member_no', cleanId)
+            .maybeSingle();
 
         if (rowByNo) {
           targetRow = rowByNo;
@@ -1409,8 +1478,9 @@ export const memberService = {
             console.warn('[memberService] Supabase insert error:', insertRes.error);
           }
         }
-      } catch (dbErr) {
-        console.warn('Supabase updateMemberPersonalData exception:', dbErr);
+        } catch (dbErr) {
+          console.warn('Supabase updateMemberPersonalData exception:', dbErr);
+        }
       }
     }
 
@@ -1509,29 +1579,45 @@ export const memberService = {
     const client = getSupabaseClient();
     if (client) {
       try {
-        let updateRes = await client
-          .from(MEMBERS_TABLE_NAME)
-          .update({
-            avatar_url: avatarDataUrl,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('member_no', cleanId);
-
-        if (!updateRes.error) {
+        const { data: rpcRes, error: rpcErr } = await client.rpc('update_member_profile_self', {
+          p_member_no: cleanId,
+          p_avatar_url: avatarDataUrl,
+        });
+        if (!rpcErr && rpcRes?.success) {
           savedToSupabase = true;
-        } else if (/^\d+$/.test(cleanId)) {
-          const numRes = await client
+        }
+      } catch {
+        // Fallback ke query langsung
+      }
+
+      if (!savedToSupabase) {
+        try {
+          const updateRes = await client
             .from(MEMBERS_TABLE_NAME)
             .update({
               avatar_url: avatarDataUrl,
               updated_at: new Date().toISOString(),
             })
-            .eq('id', Number(cleanId));
+            .eq('member_no', cleanId)
+            .select('id');
 
-          if (!numRes.error) savedToSupabase = true;
+          if (!updateRes.error && updateRes.data && updateRes.data.length > 0) {
+            savedToSupabase = true;
+          } else {
+            const byIdRes = await client
+              .from(MEMBERS_TABLE_NAME)
+              .update({
+                avatar_url: avatarDataUrl,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', cleanId)
+              .select('id');
+
+            if (!byIdRes.error && byIdRes.data && byIdRes.data.length > 0) savedToSupabase = true;
+          }
+        } catch (err) {
+          console.warn('Supabase updateMemberAvatar warning:', err);
         }
-      } catch (err) {
-        console.warn('Supabase updateMemberAvatar warning:', err);
       }
     }
 

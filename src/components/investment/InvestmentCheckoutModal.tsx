@@ -9,6 +9,7 @@ import { formatRupiah, formatDateIndo } from '../../utils/formatters';
 import { Button } from '../common/Button';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
+import { validateAndOptimizeProofImage, uploadMemberProof } from '../../services/storageService';
 import {
   X,
   Coins,
@@ -23,6 +24,7 @@ import {
   Lock,
   ArrowRight,
   Download,
+  UploadCloud,
 } from 'lucide-react';
 
 interface InvestmentCheckoutModalProps {
@@ -45,6 +47,8 @@ export const InvestmentCheckoutModal: React.FC<InvestmentCheckoutModalProps> = (
     'TRANSFER_BANK' | 'SIMPANAN_SUKARELA' | 'VIRTUAL_ACCOUNT'
   >('TRANSFER_BANK');
   const [proofUrl, setProofUrl] = useState<string>('');
+  const [proofFileName, setProofFileName] = useState<string>('');
+  const [isUploadingProof, setIsUploadingProof] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Form identity strictly bound to active member session
@@ -149,6 +153,39 @@ export const InvestmentCheckoutModal: React.FC<InvestmentCheckoutModalProps> = (
       return;
     }
     setStep(3);
+  };
+
+  const handleProofFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('Ukuran berkas bukti maksimal 10MB.', 'error');
+      return;
+    }
+    setIsUploadingProof(true);
+    try {
+      let uploadSource: File | Blob = file;
+      if (file.type.startsWith('image/')) {
+        try {
+          const opt = await validateAndOptimizeProofImage(file);
+          uploadSource = opt.file;
+        } catch {
+          // fallback to raw image
+        }
+      }
+      const res = await uploadMemberProof(uploadSource, 'investasi', memberNo || 'ANGGOTA', file.name);
+      if (res.success && res.fileUrl) {
+        setProofUrl(res.fileUrl);
+        setProofFileName(file.name);
+        showToast('Bukti transfer investasi berhasil diunggah.', 'success');
+      } else {
+        showToast(res.error || 'Gagal mengunggah bukti transfer.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memproses berkas bukti transfer.', 'error');
+    } finally {
+      setIsUploadingProof(false);
+    }
   };
 
   const handleFinalSubmit = async () => {
@@ -596,18 +633,49 @@ export const InvestmentCheckoutModal: React.FC<InvestmentCheckoutModalProps> = (
               )}
 
               {/* Upload Bukti Pembayaran */}
-              <div>
-                <label className="block text-xs font-bold text-stone-800 mb-1">
-                  Bukti Setor / Tautan Slip Transfer (Opsional / Dapat Disusulkan)
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-stone-800">
+                  Unggah Bukti Setor / Slip Transfer (Opsional / Dapat Disusulkan)
                 </label>
+
+                <label className="flex items-center justify-between gap-3 p-3 rounded-xl border-2 border-dashed border-stone-300 hover:border-emerald-700 bg-stone-50/70 cursor-pointer transition-colors">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <UploadCloud className="w-5 h-5 text-emerald-700 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-xs font-semibold text-stone-800 block truncate">
+                        {isUploadingProof
+                          ? 'Mengunggah bukti transfer...'
+                          : proofFileName
+                          ? `Terunggah: ${proofFileName}`
+                          : 'Pilih foto struk / PDF bukti transfer'}
+                      </span>
+                      <span className="text-[10px] text-stone-500 block">
+                        JPG, PNG, WebP, atau PDF (maks. 10MB)
+                      </span>
+                    </div>
+                  </div>
+                  {proofUrl && !isUploadingProof && (
+                    <Badge variant="success" size="sm">
+                      Siap
+                    </Badge>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    onChange={handleProofFileUpload}
+                    disabled={isUploadingProof}
+                    className="hidden"
+                  />
+                </label>
+
                 <input
                   type="text"
                   value={proofUrl}
                   onChange={(e) => setProofUrl(e.target.value)}
-                  placeholder="https://... atau nomor referensi transfer bank"
+                  placeholder="Atau tempel tautan https://... / nomor referensi transfer bank"
                   className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:border-emerald-700 outline-none"
                 />
-                <span className="text-[10px] text-stone-500 mt-1 block">
+                <span className="text-[10px] text-stone-500 block">
                   Pengurus akan memvalidasi bukti transfer dalam 1x24 jam kerja.
                 </span>
               </div>
@@ -619,12 +687,12 @@ export const InvestmentCheckoutModal: React.FC<InvestmentCheckoutModalProps> = (
                 <Button
                   variant="gold"
                   size="sm"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isUploadingProof}
                   onClick={handleFinalSubmit}
                   leftIcon={<CheckCircle2 className="w-4 h-4" />}
                   className="font-bold"
                 >
-                  {isSubmitting ? 'Memproses...' : 'Konfirmasi & Terbitkan Akad'}
+                  {isSubmitting ? 'Memproses...' : isUploadingProof ? 'Mengunggah Bukti...' : 'Konfirmasi & Terbitkan Akad'}
                 </Button>
               </div>
             </div>

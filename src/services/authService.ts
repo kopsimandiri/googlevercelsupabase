@@ -248,11 +248,12 @@ export const authService = {
               birthDate: m.birth_date || '1990-01-01',
               birthPlace: m.birth_place || 'Jakarta',
               status: m.status || 'AKTIF',
+              avatarUrl: m.avatar_url || '',
+              transferProofUrl: m.transfer_proof_url || '',
               loginTime: new Date().toISOString(),
             };
 
-            sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-            localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+            safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
             return memberSession;
           }
         }
@@ -267,7 +268,7 @@ export const authService = {
       try {
         let query = client
           .from('members')
-          .select('id, member_no, registered_at, full_name, gender, province, city, address, occupation, username, birth_date, birth_place, nik, work_area, legacy_password_hash, status');
+          .select('id, member_no, registered_at, full_name, gender, province, city, address, occupation, username, birth_date, birth_place, nik, work_area, legacy_password_hash, avatar_url, status');
 
         // Check if cleanUsername is numeric (e.g. searching by bigint id)
         const isNumeric = /^\d+$/.test(cleanUsername);
@@ -318,12 +319,11 @@ export const authService = {
                 birthDate: mapped.tgl_lahir || '1990-01-01',
                 birthPlace: (mapped as any).tempat_lahir || (m as any).birth_place || 'Jakarta',
                 status: (mapped as any).status || 'AKTIF',
+                avatarUrl: (mapped as any).avatar_url || (m as any).avatar_url || '',
                 loginTime: new Date().toISOString(),
               };
 
               safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-              sessionStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
-              localStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
               return memberSession;
             } else {
               throw new Error('Password anggota yang Anda masukkan tidak sesuai.');

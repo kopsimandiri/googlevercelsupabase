@@ -5,6 +5,7 @@ import {
   InvestmentDividendDistribution,
 } from '../../types/investment';
 import { investmentService } from '../../services/investmentService';
+import { getPublicProofUrl } from '../../services/storageService';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatRupiah, formatDateIndo } from '../../utils/formatters';
@@ -483,15 +484,17 @@ export const AdminInvestmentManager: React.FC<AdminInvestmentManagerProps> = ({
                             ? 'Transfer Bank'
                             : 'Potong Simpanan'}
                         </span>
-                        {t.payment_proof_url && (
+                        {t.payment_proof_url && t.payment_proof_url.trim() !== '-' ? (
                           <a
-                            href={t.payment_proof_url}
+                            href={getPublicProofUrl(t.payment_proof_url)}
                             target="_blank"
                             rel="noreferrer"
                             className="text-[10px] text-emerald-700 block underline mt-0.5"
                           >
                             Lihat Slip
                           </a>
+                        ) : (
+                          <span className="text-[10px] text-stone-400 block mt-0.5">Slip: -</span>
                         )}
                       </td>
                       <td className="p-3">

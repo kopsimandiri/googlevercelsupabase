@@ -168,6 +168,58 @@ export const paymentService = {
   },
 
   /**
+   * Admin/Sandbox Payment Simulation (invokes server-signed sandbox endpoint in development)
+   */
+  async sandboxSimulatePayment(orderId: string): Promise<{
+    success: boolean;
+    status: PaymentStatus;
+    message: string;
+    transaction_id?: string;
+    is_duplicate?: boolean;
+    error?: string;
+  }> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await fetch('/api/payments/sandbox-simulate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: orderId, status: 'PAID' }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          // Sync local cache status so UI stays consistent
+          const local = this.getLocalPayments();
+          const idx = local.findIndex((p) => p.order_id === orderId);
+          if (idx !== -1) {
+            local[idx].status = 'POSTED';
+            local[idx].posted_transaction_id = json.transaction_id;
+            local[idx].settlement_status = 'SETTLED';
+            this.saveLocalPayments(local);
+          }
+          return json;
+        }
+        const errJson = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+          return {
+            success: false,
+            status: 'FAILED',
+            message: errJson.message || 'Simulasi tidak diizinkan pada mode produksi.',
+            error: errJson.error || 'SANDBOX_DISABLED',
+          };
+        }
+      } catch {
+        // Fallback when backend server isn't reachable (e.g. unit tests)
+      }
+    }
+
+    return this.processWebhook({
+      order_id: orderId,
+      status: 'PAID',
+      signature: 'sig_valid_sandbox',
+    });
+  },
+
+  /**
    * Process Verified Webhook (Server Authoritative)
    * Enforces HMAC validation, Idempotency, Ledger Auto-Posting, Audit, and Notifications.
    */
@@ -208,11 +260,11 @@ export const paymentService = {
           };
         }
       } catch {
-        // Continue to client/local authoritative simulation fallback
+        // Continue to local test runner fallback when server is not mounted
       }
     }
 
-    // 2. Client / RPC fallback handling with strict idempotency and signature check
+    // 2. Offline / Node test-runner fallback
     const local = this.getLocalPayments();
     const payment = local.find((p) => p.order_id === payload.order_id);
 
@@ -224,7 +276,6 @@ export const paymentService = {
       };
     }
 
-    // Signature verification check (Simulated secret "kopsim_secret_webhook_key_2026")
     const expectedPrefix = 'sig_valid_';
     if (!payload.signature || (!payload.signature.startsWith(expectedPrefix) && payload.signature !== 'VALID_GATEWAY_SIGNATURE')) {
       return {

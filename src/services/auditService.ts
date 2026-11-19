@@ -89,10 +89,11 @@ export const auditService = {
     // 1. Try insert to Supabase public.audit_logs
     if (client) {
       try {
+        const isUuid = (val?: string | null) =>
+          Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
         const { error } = await client.from('audit_logs').insert([
           {
-            id: newEntry.id.length > 36 ? undefined : newEntry.id,
-            user_id: user?.id && user.id.length === 36 ? user.id : null,
+            user_id: isUuid(user?.id) ? user?.id : null,
             user_email: newEntry.user_email,
             action: newEntry.action,
             entity: newEntry.entity,

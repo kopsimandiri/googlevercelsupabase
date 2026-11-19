@@ -138,7 +138,7 @@ WHERE transaction_no = 'T260421001' OR id::text = 'T260421001';
 -- 3. Verifikasi hasil pembaruan
 SELECT 
     transaction_no, 
-    date, 
+    transaction_date, 
     amount, 
     file_url,
     updated_at

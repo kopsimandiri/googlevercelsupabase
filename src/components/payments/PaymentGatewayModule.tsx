@@ -7,6 +7,7 @@ import { Badge } from '../common/Badge';
 import { Modal } from '../common/Modal';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
+import QRCode from 'qrcode';
 import { paymentService } from '../../services/paymentService';
 import {
   PaymentRequestRecord,
@@ -41,8 +42,11 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
   const { user } = useAuth();
   const { showToast } = useNotification();
 
-  const activeMemberId = user?.role === 'ANGGOTA' ? (user as any).username || (user as any).member_no || '0824-03001' : '0824-03001';
-  const activeMemberName = user?.nama || 'M. FACHRI MUBAROK';
+  const activeMemberId =
+    user?.role === 'ANGGOTA'
+      ? user.memberNo || user.memberId || user.id || ''
+      : user?.id || 'ADMIN';
+  const activeMemberName = user?.name || 'Anggota KOPSIM';
 
   const [activeTab, setActiveTab] = useState<'CHECKOUT' | 'HISTORY' | 'SANDBOX_TESTER' | 'RECONCILIATION'>('CHECKOUT');
 
@@ -53,6 +57,7 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
   const [paymentChannel, setPaymentChannel] = useState<string>('QRIS_DYNAMIC');
   const [isCreatingPayment, setIsCreatingPayment] = useState(false);
   const [activePayment, setActivePayment] = useState<PaymentRequestRecord | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isPollingStatus, setIsPollingStatus] = useState(false);
 
   // History State
@@ -88,6 +93,26 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
   useEffect(() => {
     loadPayments();
   }, [user]);
+
+  // Generate local QRIS Data URL whenever activePayment changes
+  useEffect(() => {
+    let active = true;
+    if (activePayment && activePayment.payment_type === 'QRIS') {
+      const qrText = activePayment.qr_string || activePayment.order_id;
+      QRCode.toDataURL(qrText, { width: 220, margin: 2 })
+        .then((url) => {
+          if (active) setQrDataUrl(url);
+        })
+        .catch(() => {
+          if (active) setQrDataUrl('');
+        });
+    } else {
+      setQrDataUrl('');
+    }
+    return () => {
+      active = false;
+    };
+  }, [activePayment?.order_id, activePayment?.qr_string, activePayment?.payment_type]);
 
   // Polling for live payment completion
   useEffect(() => {
@@ -142,9 +167,13 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
     }
   };
 
-  // Run Sandbox Test Scenario
-  const handleRunSandboxScenario = async (scenario: 'SUCCESS' | 'FAIL' | 'EXPIRE' | 'DUPLICATE' | 'TAMPERED_SIGNATURE') => {
-    if (!selectedOrderForTest) {
+  // Run Sandbox Test Scenario (Admin/Dev only, uses server-signed sandbox endpoint)
+  const handleRunSandboxScenario = async (
+    scenario: 'SUCCESS' | 'FAIL' | 'EXPIRE' | 'DUPLICATE' | 'TAMPERED_SIGNATURE',
+    overrideOrderId?: string
+  ) => {
+    const targetOrderId = overrideOrderId || selectedOrderForTest;
+    if (!targetOrderId) {
       showToast('Pilih Order ID terlebih dahulu untuk pengujian.', 'warning');
       return;
     }
@@ -153,27 +182,19 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
     setTestResult(null);
 
     try {
-      let payload: any = {
-        order_id: selectedOrderForTest,
-        channel: 'QRIS',
-      };
-
+      let res: any;
       if (scenario === 'SUCCESS') {
-        payload.status = 'PAID';
-        payload.signature = 'sig_valid_kopsim_live_webhook_secret_key_2026';
-      } else if (scenario === 'FAIL') {
-        payload.status = 'FAILED';
-        payload.signature = 'sig_valid_kopsim_live_webhook_secret_key_2026';
-      } else if (scenario === 'EXPIRE') {
-        payload.status = 'EXPIRED';
-        payload.signature = 'sig_valid_kopsim_live_webhook_secret_key_2026';
+        res = await paymentService.sandboxSimulatePayment(targetOrderId);
+      } else if (scenario === 'TAMPERED_SIGNATURE') {
+        res = await paymentService.processWebhook({
+          order_id: targetOrderId,
+          status: 'PAID',
+          channel: 'QRIS',
+          signature: 'INVALID_FAKE_SIGNATURE_9999',
+        });
       } else if (scenario === 'DUPLICATE') {
-        // First send success, then immediately send duplicate
-        payload.status = 'PAID';
-        payload.signature = 'sig_valid_kopsim_live_webhook_secret_key_2026';
-        await paymentService.processWebhook(payload);
-        // Duplicate call
-        const duplicateRes = await paymentService.processWebhook(payload);
+        await paymentService.sandboxSimulatePayment(targetOrderId);
+        const duplicateRes = await paymentService.sandboxSimulatePayment(targetOrderId);
         setTestResult({
           scenario: 'DUPLICATE_WEBHOOK (IDEMPOTENCY)',
           result: duplicateRes,
@@ -182,25 +203,29 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
         setIsTestingScenario(false);
         await loadPayments();
         return;
-      } else if (scenario === 'TAMPERED_SIGNATURE') {
-        payload.status = 'PAID';
-        payload.signature = 'INVALID_FAKE_SIGNATURE_9999';
+      } else {
+        const statusValue = scenario === 'FAIL' ? 'FAILED' : 'EXPIRED';
+        const resp = await fetch('/api/payments/sandbox-simulate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: targetOrderId, status: statusValue }),
+        });
+        res = await resp.json().catch(() => ({ success: false, message: 'Sandbox endpoint unavailable' }));
       }
 
-      const res = await paymentService.processWebhook(payload);
       setTestResult({
         scenario,
         result: res,
         note:
           scenario === 'TAMPERED_SIGNATURE'
             ? 'Server menolak webhook karena HMAC signature tidak cocok.'
-            : 'Webhook terverifikasi dan dieksekusi server-side.',
+            : 'Simulasi ditandatangani & dieksekusi di sisi server.',
       });
 
-      if (res.success) {
-        showToast('Webhook berhasil diproses oleh server!', 'success');
+      if (res?.success) {
+        showToast('Simulasi webhook berhasil diproses oleh server!', 'success');
       } else {
-        showToast(res.message || 'Webhook ditolak sesuai ekspektasi pengujian.', 'info');
+        showToast(res?.message || 'Webhook ditolak sesuai ekspektasi pengujian.', 'info');
       }
 
       await loadPayments();
@@ -444,15 +469,19 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
                   <div className="space-y-4">
                     {activePayment.payment_type === 'QRIS' ? (
                       <div className="flex flex-col items-center justify-center p-6 bg-stone-50 rounded-xl border border-stone-200">
-                        {/* Dynamic QR Display */}
+                        {/* Dynamic Local QR Display */}
                         <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200 text-center">
-                          <img
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                              activePayment.qr_string || activePayment.order_id
-                            )}`}
-                            alt="QRIS Code"
-                            className="w-44 h-44 mx-auto"
-                          />
+                          {qrDataUrl ? (
+                            <img
+                              src={qrDataUrl}
+                              alt="QRIS Code"
+                              className="w-44 h-44 mx-auto"
+                            />
+                          ) : (
+                            <div className="w-44 h-44 mx-auto flex items-center justify-center bg-stone-100 text-stone-400 rounded-lg text-xs">
+                              Membuat QR...
+                            </div>
+                          )}
                           <div className="text-[11px] font-bold text-stone-700 mt-2">
                             Scan dengan GoPay, OVO, Dana, ShopeePay, BCA, Livin
                           </div>
@@ -495,21 +524,23 @@ export const PaymentGatewayModule: React.FC<PaymentGatewayModuleProps> = ({
                       </div>
                     )}
 
-                    {/* Simulation Shortcut for demo */}
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between text-xs text-amber-900">
-                      <span>Simulasi pembayaran untuk testing langsung:</span>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedOrderForTest(activePayment.order_id);
-                          handleRunSandboxScenario('SUCCESS');
-                        }}
-                        className="text-[11px] py-1 bg-emerald-800"
-                      >
-                        ⚡ Simulasikan Sukses (Webhook)
-                      </Button>
-                    </div>
+                    {/* Simulation Shortcut strictly for Admin Sandbox */}
+                    {isAdminView && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between text-xs text-amber-900">
+                        <span>Simulasi pembayaran sandbox (khusus Admin Dev):</span>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedOrderForTest(activePayment.order_id);
+                            handleRunSandboxScenario('SUCCESS', activePayment.order_id);
+                          }}
+                          className="text-[11px] py-1 bg-emerald-800"
+                        >
+                          Simulasikan Sukses (Server)
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="p-6 bg-emerald-50 rounded-xl border border-emerald-200 text-center space-y-3">

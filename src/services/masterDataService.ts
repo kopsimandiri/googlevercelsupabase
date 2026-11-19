@@ -126,9 +126,9 @@ export const SUPABASE_TABLES_METADATA: Record<
   },
   member_registrations: {
     label: 'Pendaftaran Anggota (Registrations)',
-    columnCount: 22,
+    columnCount: 23,
     columns: [
-      'id', 'submitted_at', 'full_name', 'nik', 'birth_place', 'birth_date', 'gender',
+      'id', 'submitted_at', 'member_no', 'full_name', 'nik', 'birth_place', 'birth_date', 'gender',
       'address', 'city', 'province', 'whatsapp', 'email', 'member_status', 'profession',
       'savings_type', 'transfer_amount', 'transfer_date', 'transfer_proof_url', 'ktp_url',
       'selfie_url', 'approval_status', 'verification_status',
@@ -137,6 +137,7 @@ export const SUPABASE_TABLES_METADATA: Record<
     ddlSql: `CREATE TABLE IF NOT EXISTS public.member_registrations (
   id TEXT PRIMARY KEY,
   submitted_at TIMESTAMPTZ DEFAULT NOW(),
+  member_no TEXT DEFAULT '',
   full_name TEXT NOT NULL,
   nik VARCHAR(16) NOT NULL,
   birth_place TEXT DEFAULT '',
@@ -161,15 +162,15 @@ export const SUPABASE_TABLES_METADATA: Record<
   },
   members: {
     label: 'Data Anggota Tetap (Members)',
-    columnCount: 18,
+    columnCount: 19,
     columns: [
       'id', 'member_no', 'registered_at', 'full_name', 'gender', 'province', 'city',
       'address', 'occupation', 'username', 'birth_date', 'birth_place', 'nik',
-      'work_area', 'legacy_password_hash', 'status', 'created_at', 'updated_at',
+      'work_area', 'legacy_password_hash', 'avatar_url', 'status', 'created_at', 'updated_at',
     ],
     primaryKey: 'id',
     ddlSql: `CREATE TABLE IF NOT EXISTS public.members (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   member_no TEXT NOT NULL UNIQUE,
   registered_at DATE DEFAULT CURRENT_DATE,
   full_name TEXT NOT NULL,
@@ -184,6 +185,7 @@ export const SUPABASE_TABLES_METADATA: Record<
   nik VARCHAR(16) NOT NULL UNIQUE CHECK (nik ~ '^[0-9]{16}$'),
   work_area TEXT DEFAULT 'PUSAT JAKARTA',
   legacy_password_hash TEXT DEFAULT '',
+  avatar_url TEXT DEFAULT '',
   status TEXT DEFAULT 'AKTIF' CHECK (status IN ('AKTIF', 'NONAKTIF', 'PENDING', 'SUSPENDED')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -345,13 +347,15 @@ CREATE INDEX IF NOT EXISTS idx_products_sku_name ON public.products (sku_name);`
   },
   profiles: {
     label: 'Profil Pengurus (Profiles)',
-    columnCount: 7,
-    columns: ['id', 'full_name', 'role', 'phone', 'avatar_url', 'created_at', 'updated_at'],
+    columnCount: 9,
+    columns: ['id', 'full_name', 'role', 'member_id', 'username', 'phone', 'avatar_url', 'created_at', 'updated_at'],
     primaryKey: 'id',
     ddlSql: `CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY,
   full_name VARCHAR(255),
   role VARCHAR(50) NOT NULL DEFAULT 'ANGGOTA' CHECK (role IN ('ADMIN', 'DIRECTOR', 'ANGGOTA')),
+  member_id VARCHAR(50),
+  username VARCHAR(100),
   phone VARCHAR(50),
   avatar_url TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -451,7 +455,7 @@ CREATE INDEX IF NOT EXISTS idx_products_sku_name ON public.products (sku_name);`
   loan_applications: {
     label: 'Pengajuan Pembiayaan Syariah (Loan Applications)',
     columnCount: 15,
-    columns: ['id', 'application_no', 'member_id', 'member_name', 'akad_type', 'peruntukan', 'loan_amount', 'tenor_months', 'margin_rate_pa', 'total_margin', 'total_payment', 'monthly_installment', 'status', 'committee_notes', 'created_at'],
+    columns: ['id', 'application_no', 'member_id', 'member_name', 'akad_type', 'peruntukan', 'loan_amount', 'tenor_months', 'margin_rate_pa', 'margin_amount', 'total_payment', 'monthly_installment', 'status', 'approval_notes', 'created_at'],
     primaryKey: 'id',
     ddlSql: `CREATE TABLE IF NOT EXISTS public.loan_applications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -463,11 +467,11 @@ CREATE INDEX IF NOT EXISTS idx_products_sku_name ON public.products (sku_name);`
   loan_amount NUMERIC(15,2) NOT NULL,
   tenor_months INT NOT NULL,
   margin_rate_pa NUMERIC(5,2) NOT NULL,
-  total_margin NUMERIC(15,2) NOT NULL,
+  margin_amount NUMERIC(15,2) NOT NULL,
   total_payment NUMERIC(15,2) NOT NULL,
   monthly_installment NUMERIC(15,2) NOT NULL,
   status VARCHAR(30) DEFAULT 'SUBMITTED',
-  committee_notes TEXT,
+  approval_notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );`,
   },

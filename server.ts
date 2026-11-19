@@ -1,21 +1,40 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const app = express();
 const PORT = 3000;
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Middleware (15MB limit to support base64 compressed proof upload fallback)
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // Server-side Secrets (Kept strictly on backend, NEVER exposed to client)
 const PAYMENT_GATEWAY_WEBHOOK_SECRET = process.env.PAYMENT_GATEWAY_SECRET || 'kopsim_live_webhook_secret_key_2026';
-const WHATSAPP_PROVIDER_TOKEN = process.env.WHATSAPP_TOKEN || 'kopsim_wa_token_secret';
-const EMAIL_PROVIDER_API_KEY = process.env.SENDGRID_API_KEY || 'kopsim_sendgrid_secret';
+const WHATSAPP_PROVIDER_TOKEN = process.env.WHATSAPP_TOKEN || '';
+const EMAIL_PROVIDER_API_KEY = process.env.SENDGRID_API_KEY || '';
 
-// In-Memory fallback store for server-state persistence during development
+// Optional Server-Side Supabase Client (prefers SUPABASE_SERVICE_ROLE_KEY if configured)
+const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
+const SUPABASE_KEY = (
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  ''
+).trim();
+
+const hasServiceRoleKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+const supabaseAdmin: SupabaseClient | null =
+  SUPABASE_URL && SUPABASE_KEY && SUPABASE_URL !== 'https://your-project.supabase.co'
+    ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+    : null;
+
+// In-Memory fallback store for server-state persistence during development/offline
 interface ServerPaymentRecord {
   order_id: string;
   idempotency_key: string;
@@ -26,6 +45,11 @@ interface ServerPaymentRecord {
   total_amount: number;
   payment_type: string;
   payment_channel: string;
+  va_number?: string | null;
+  qr_string?: string | null;
+  payment_url?: string | null;
+  category?: string;
+  description?: string;
   status: 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED' | 'REFUNDED' | 'POSTED';
   expiry_time: string;
   paid_at?: string;
@@ -64,14 +88,15 @@ export function generateWebhookSignature(payloadString: string, secret: string =
   return crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
 }
 
-// Helper: Verify HMAC SHA256 Webhook Signature
+// Helper: Verify HMAC SHA256 Webhook Signature (strict cryptographic comparison)
 export function verifyWebhookSignature(payloadString: string, signature: string, secret: string = PAYMENT_GATEWAY_WEBHOOK_SECRET): boolean {
   if (!signature) return false;
-  // Allow test signature in sandbox mode
-  if (signature === 'VALID_GATEWAY_SIGNATURE' || signature.startsWith('sig_valid_')) return true;
   try {
     const expected = crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+    const bufA = Buffer.from(expected, 'utf8');
+    const bufB = Buffer.from(signature, 'utf8');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
   } catch {
     return false;
   }
@@ -81,23 +106,166 @@ export function verifyWebhookSignature(payloadString: string, signature: string,
 async function dispatchProviderNotification(job: ServerNotificationJob): Promise<{ success: boolean; error?: string }> {
   try {
     if (job.channel === 'WHATSAPP') {
-      // Server-side WhatsApp dispatch (e.g. Fonnte / Official WhatsApp Cloud API)
-      // Securely consumes WHATSAPP_PROVIDER_TOKEN on the backend
       const formattedNumber = job.recipient.replace(/[^0-9]/g, '');
       const messageBody = `[KOPSIM MANDIRI] ${job.payload.title || 'Notifikasi'}\n\nYth. ${job.recipient_name || 'Anggota'},\n${job.payload.message || JSON.stringify(job.payload)}\n\nTerima kasih atas partisipasi Anda di KOPSIM Mandiri.`;
-      
-      // In development or sandbox, simulate carrier delivery with guaranteed low latency
-      console.log(`[SERVER WA PROVIDER] Dispatched to ${formattedNumber} via Fonnte/WA-Cloud: "${messageBody.substring(0, 50)}..."`);
+      if (WHATSAPP_PROVIDER_TOKEN && formattedNumber.length >= 9) {
+        // Real Fonnte-compatible API dispatch if WHATSAPP_TOKEN is configured
+        try {
+          await fetch('https://api.fonnte.com/send', {
+            method: 'POST',
+            headers: {
+              Authorization: WHATSAPP_PROVIDER_TOKEN,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ target: formattedNumber, message: messageBody }),
+          });
+        } catch (waErr) {
+          console.warn('[SERVER WA PROVIDER] Dispatch warning:', waErr);
+        }
+      } else {
+        console.log(`[SERVER WA PROVIDER] Queued to ${formattedNumber || job.recipient}: "${messageBody.substring(0, 50)}..."`);
+      }
       return { success: true };
     } else if (job.channel === 'EMAIL') {
-      // Server-side Email dispatch (e.g. SendGrid / Resend / Postmark)
-      console.log(`[SERVER EMAIL PROVIDER] Dispatched email to ${job.recipient} with SendGrid key.`);
+      if (EMAIL_PROVIDER_API_KEY) {
+        console.log(`[SERVER EMAIL PROVIDER] Dispatched email to ${job.recipient}`);
+      } else {
+        console.log(`[SERVER EMAIL PROVIDER] Queued email to ${job.recipient} (sandbox)`);
+      }
       return { success: true };
     }
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Provider dispatch failed' };
   }
+}
+
+async function processPaymentPosting(payment: ServerPaymentRecord, signatureToVerify: string, rawBody: any) {
+  const transactionNo = `PG-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const nowIso = new Date().toISOString();
+
+  payment.status = 'POSTED';
+  payment.paid_at = nowIso;
+  payment.posted_at = nowIso;
+  payment.posted_transaction_id = transactionNo;
+  payment.settlement_status = 'SETTLED';
+  payment.raw_signature = signatureToVerify;
+
+  // Persist to Supabase if configured
+  if (supabaseAdmin) {
+    try {
+      // 1. Insert official transaction row
+      let resolvedMemberPk: string | null = null;
+      if (payment.member_id) {
+        const { data: mRow } = await supabaseAdmin
+          .from('members')
+          .select('id')
+          .or(`member_no.eq.${payment.member_id},id.eq.${payment.member_id}`)
+          .limit(1)
+          .maybeSingle();
+        if (mRow?.id) resolvedMemberPk = String(mRow.id);
+      }
+
+      const trxPayload = {
+        transaction_no: transactionNo,
+        transaction_date: nowIso.split('T')[0],
+        referral_type: 'KOPERASI',
+        area_name: 'PUSAT JAKARTA',
+        transaction_type: 'MASUK',
+        payment_method: `Payment Gateway (${payment.payment_channel})`,
+        amount: payment.amount,
+        file_url: '',
+        account_name_legacy: payment.member_name || 'Anggota Koperasi',
+        description: `Setoran Pembayaran Online ${payment.order_id} - ${payment.member_name} (${payment.member_id})`,
+        category_name: payment.category || 'Simpanan Wajib Anggota',
+        customer_name: payment.member_name || payment.member_id,
+        member_id: resolvedMemberPk,
+        qty: 1,
+        price: payment.amount,
+      };
+      await supabaseAdmin.from('transactions').insert([trxPayload]);
+
+      // 2. Update payment_requests status
+      await supabaseAdmin
+        .from('payment_requests')
+        .update({
+          status: 'POSTED',
+          paid_at: nowIso,
+          posted_at: nowIso,
+          posted_transaction_id: transactionNo,
+          webhook_received_at: nowIso,
+          webhook_attempts: payment.webhook_attempts,
+          webhook_signature: signatureToVerify,
+          raw_webhook_payload: rawBody,
+          settlement_status: 'SETTLED',
+          settled_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq('order_id', payment.order_id);
+
+      // 3. Audit & user notification
+      await supabaseAdmin.from('audit_logs').insert([
+        {
+          user_email: 'SYSTEM_PAYMENT_GATEWAY',
+          action: 'PAYMENT_VERIFIED_AND_POSTED',
+          entity: 'payment_requests',
+          entity_id: payment.order_id,
+          new_values: { transaction_no: transactionNo, amount: payment.amount, channel: payment.payment_channel },
+        },
+      ]);
+
+      await supabaseAdmin.from('user_notifications').insert([
+        {
+          user_id: payment.member_id || 'ALL',
+          title: 'Pembayaran Online Berhasil Terposting',
+          message: `Pembayaran ${payment.order_id} sebesar Rp ${payment.amount.toLocaleString('id-ID')} telah sukses diverifikasi dan masuk ke pembukuan resmi.`,
+          category: 'TRANSACTION',
+          metadata: { order_id: payment.order_id, transaction_id: transactionNo },
+        },
+      ]);
+    } catch (dbErr) {
+      console.warn('[Server Payment] Supabase persistence warning:', dbErr);
+    }
+  }
+
+  serverAuditLogs.push({
+    action: 'PAYMENT_VERIFIED_AND_POSTED',
+    entity: 'payment_requests',
+    entity_id: payment.order_id,
+    details: {
+      transaction_id: transactionNo,
+      amount: payment.amount,
+      member: payment.member_name,
+      channel: payment.payment_channel,
+    },
+    timestamp: nowIso,
+  });
+
+  const notifJob: ServerNotificationJob = {
+    id: crypto.randomUUID(),
+    type: 'PAYMENT_POSTED',
+    recipient: payment.member_id,
+    recipient_name: payment.member_name,
+    channel: 'WHATSAPP',
+    provider: 'WHATSAPP_FONNTE_SERVER',
+    payload: {
+      order_id: payment.order_id,
+      amount: payment.amount,
+      channel: payment.payment_channel,
+      transaction_id: transactionNo,
+      title: 'Pembayaran Sukses Terposting',
+      message: `Pembayaran ${payment.order_id} sebesar Rp ${payment.amount.toLocaleString('id-ID')} telah sukses diverifikasi dan terposting ke buku kas KOPSIM.`,
+    },
+    status: 'PENDING',
+    attempts: 0,
+    max_attempts: 3,
+    idempotency_key: `notif-pay-${payment.order_id}`,
+    created_at: nowIso,
+  };
+  serverNotificationJobs.unshift(notifJob);
+  dispatchProviderNotification(notifJob);
+
+  return transactionNo;
 }
 
 // ==============================================================================
@@ -109,11 +277,62 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     app: 'KOPSIM Mandiri Platform',
-    version: '2.4.0',
+    version: '2.5.0',
+    supabase_connected: Boolean(supabaseAdmin),
+    service_role_active: hasServiceRoleKey,
     timestamp: new Date().toISOString(),
-    payments_tracked: serverPayments.size,
-    notification_jobs_queued: serverNotificationJobs.length,
   });
+});
+
+// 1B. Controlled Server-Side Storage Upload Fallback for Member Proofs
+app.post('/api/storage/upload-proof', async (req: Request, res: Response) => {
+  try {
+    if (!supabaseAdmin) {
+      return res.status(503).json({ success: false, error: 'Supabase storage belum dikonfigurasi di server.' });
+    }
+
+    const { path: rawPath, mimeType = 'image/webp', dataUrl } = req.body || {};
+    const cleanPath = String(rawPath || '').trim().replace(/^\/+/, '');
+    const allowedPrefixes = ['pendaftaran/', 'investasi/', 'setoran/', 'avatar/'];
+
+    if (!cleanPath || !allowedPrefixes.some((p) => cleanPath.startsWith(p))) {
+      return res.status(400).json({ success: false, error: 'Path penyimpanan tidak diizinkan.' });
+    }
+
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.includes(',')) {
+      return res.status(400).json({ success: false, error: 'Payload berkas tidak valid.' });
+    }
+
+    const base64Data = dataUrl.split(',')[1];
+    const buffer = Buffer.from(base64Data, 'base64');
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ success: false, error: 'Ukuran berkas melebihi batas 10 MB.' });
+    }
+
+    const { data, error } = await supabaseAdmin.storage
+      .from('bukti_transfer')
+      .upload(cleanPath, buffer, {
+        contentType: mimeType,
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (error || !data) {
+      return res.status(403).json({
+        success: false,
+        error: error?.message || 'Gagal mengunggah berkas ke Supabase Storage.',
+      });
+    }
+
+    const { data: urlData } = supabaseAdmin.storage.from('bukti_transfer').getPublicUrl(data.path || cleanPath);
+    return res.json({
+      success: true,
+      path: data.path || cleanPath,
+      publicUrl: urlData?.publicUrl,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Storage upload server error' });
+  }
 });
 
 // 2. Feature 1: Server-Authoritative Loan Simulator
@@ -124,10 +343,8 @@ app.post('/api/loans/simulate', (req: Request, res: Response) => {
     const validTenor = Math.max(1, Math.min(60, Number(tenor_months) || 12));
     const validRate = Math.max(0, Number(margin_rate_pa) || 6.0);
 
-    // Flat Islamic Margin: Principal * (Rate / 100) * (Tenor / 12)
     const marginAmount = Math.round(validAmount * (validRate / 100.0) * (validTenor / 12.0));
     const totalPayment = validAmount + marginAmount;
-
     const monthlyPrincipal = Math.round(validAmount / validTenor);
     const monthlyMargin = Math.round(marginAmount / validTenor);
     const monthlyInstallment = monthlyPrincipal + monthlyMargin;
@@ -182,7 +399,6 @@ app.post('/api/notifications/queue', async (req: Request, res: Response) => {
     const { type, recipient, recipient_name, channel = 'WHATSAPP', payload, idempotency_key } = req.body;
     const idKey = idempotency_key || `job-${type}-${recipient}-${Date.now()}`;
 
-    // Idempotency Check
     const existingJob = serverNotificationJobs.find((j) => j.idempotency_key === idKey);
     if (existingJob) {
       return res.json({
@@ -193,7 +409,7 @@ app.post('/api/notifications/queue', async (req: Request, res: Response) => {
     }
 
     const newJob: ServerNotificationJob = {
-      id: crypto.randomUUID ? crypto.randomUUID() : `job-${Date.now()}`,
+      id: crypto.randomUUID(),
       type,
       recipient,
       recipient_name: recipient_name || '',
@@ -209,6 +425,28 @@ app.post('/api/notifications/queue', async (req: Request, res: Response) => {
 
     serverNotificationJobs.unshift(newJob);
 
+    if (supabaseAdmin) {
+      try {
+        await supabaseAdmin.from('notification_jobs').insert([
+          {
+            id: newJob.id,
+            type: newJob.type,
+            recipient: newJob.recipient,
+            recipient_name: newJob.recipient_name,
+            channel: newJob.channel,
+            provider: newJob.provider,
+            payload: newJob.payload,
+            status: newJob.status,
+            attempts: newJob.attempts,
+            max_attempts: newJob.max_attempts,
+            idempotency_key: newJob.idempotency_key,
+          },
+        ]);
+      } catch {
+        // Ignore if table RLS denies without service role
+      }
+    }
+
     // Immediately process in background worker
     (async () => {
       newJob.attempts += 1;
@@ -223,14 +461,21 @@ app.post('/api/notifications/queue', async (req: Request, res: Response) => {
         newJob.error = dispatchResult.error;
       }
 
-      // Record Audit
-      serverAuditLogs.push({
-        action: 'NOTIFICATION_DISPATCH',
-        entity: 'notification_jobs',
-        entity_id: newJob.id,
-        details: { type: newJob.type, recipient: newJob.recipient, status: newJob.status, attempts: newJob.attempts },
-        timestamp: new Date().toISOString(),
-      });
+      if (supabaseAdmin) {
+        try {
+          await supabaseAdmin
+            .from('notification_jobs')
+            .update({
+              status: newJob.status,
+              attempts: newJob.attempts,
+              sent_at: newJob.sent_at || null,
+              error: newJob.error || null,
+            })
+            .eq('id', newJob.id);
+        } catch {
+          // ignore
+        }
+      }
     })();
 
     res.json({ success: true, data: newJob });
@@ -239,7 +484,6 @@ app.post('/api/notifications/queue', async (req: Request, res: Response) => {
   }
 });
 
-// Trigger Notification Worker Processing (Batch / Retry)
 app.post('/api/notifications/process', async (req: Request, res: Response) => {
   try {
     const { job_id } = req.body;
@@ -271,24 +515,48 @@ app.post('/api/notifications/process', async (req: Request, res: Response) => {
   }
 });
 
-// List Notification Jobs
-app.get('/api/notifications/list', (req: Request, res: Response) => {
+app.get('/api/notifications/list', async (_req: Request, res: Response) => {
+  if (supabaseAdmin) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('notification_jobs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return res.json({ success: true, data });
+      }
+    } catch {
+      // Fallback to in-memory
+    }
+  }
   res.json({ success: true, data: serverNotificationJobs.slice(0, 100) });
 });
 
 // 4. Feature 4: Payment Gateway Integration & Webhook Handler
-// Create Payment Request
-app.post('/api/payments/create', (req: Request, res: Response) => {
+app.post('/api/payments/create', async (req: Request, res: Response) => {
   try {
-    const { member_id, member_name, amount, payment_type = 'QRIS', payment_channel = 'QRIS_STATIC', category = 'Simpanan Wajib Anggota', description } = req.body;
+    const {
+      order_id: providedOrderId,
+      idempotency_key: providedIdemp,
+      member_id,
+      member_name,
+      amount,
+      payment_type = 'QRIS',
+      payment_channel = 'QRIS_STATIC',
+      category = 'Simpanan Wajib Anggota',
+      description,
+    } = req.body;
 
     const validAmount = Number(amount) || 0;
     if (validAmount <= 0) {
       return res.status(400).json({ success: false, error: 'Jumlah pembayaran harus lebih besar dari 0' });
     }
 
-    const orderId = `INV-KOPSIM-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const idempotencyKey = `idemp-${orderId}-${Date.now()}`;
+    const orderId =
+      providedOrderId ||
+      `INV-KOPSIM-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const idempotencyKey = providedIdemp || `idemp-${orderId}-${Date.now()}`;
     const fee = payment_type === 'QRIS' ? 0 : 2500;
     const totalAmount = validAmount + fee;
     const expiryTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
@@ -300,19 +568,24 @@ app.post('/api/payments/create', (req: Request, res: Response) => {
       qrString = `00020101021226600016ID.CO.KOPSIM.WWW0118936009990001234567520458125303360540${totalAmount}5802ID5914KOPSIM MANDIRI6007JAKARTA62070703A016304`;
     } else {
       const bankCode = payment_channel.startsWith('BSI') ? '900' : payment_channel.startsWith('MANDIRI') ? '887' : '807';
-      vaNumber = `${bankCode}${String(member_id).replace(/[^0-9]/g, '').slice(-8) || '202608'}${Math.floor(100 + Math.random() * 900)}`;
+      vaNumber = `${bankCode}${String(member_id || '').replace(/[^0-9]/g, '').slice(-8) || '202608'}${Math.floor(100 + Math.random() * 900)}`;
     }
 
     const paymentRecord: ServerPaymentRecord = {
       order_id: orderId,
       idempotency_key: idempotencyKey,
-      member_id,
-      member_name,
+      member_id: member_id || 'GUEST',
+      member_name: member_name || 'Anggota KOPSIM',
       amount: validAmount,
       fee,
       total_amount: totalAmount,
       payment_type,
       payment_channel,
+      va_number: vaNumber,
+      qr_string: qrString,
+      payment_url: `/pay/${orderId}`,
+      category,
+      description: description || `Pembayaran ${category} - KOPSIM Mandiri`,
       status: 'PENDING',
       expiry_time: expiryTime,
       webhook_attempts: 0,
@@ -322,40 +595,60 @@ app.post('/api/payments/create', (req: Request, res: Response) => {
 
     serverPayments.set(orderId, paymentRecord);
 
-    res.json({
-      success: true,
-      data: {
-        ...paymentRecord,
-        va_number: vaNumber,
-        qr_string: qrString,
-        payment_url: `/pay/${orderId}`,
-        category,
-        description: description || `Pembayaran ${category} - KOPSIM Mandiri`,
-      },
-    });
+    if (supabaseAdmin) {
+      try {
+        await supabaseAdmin.from('payment_requests').insert([
+          {
+            order_id: paymentRecord.order_id,
+            idempotency_key: paymentRecord.idempotency_key,
+            member_id: paymentRecord.member_id,
+            member_name: paymentRecord.member_name,
+            amount: paymentRecord.amount,
+            fee: paymentRecord.fee,
+            total_amount: paymentRecord.total_amount,
+            payment_type: paymentRecord.payment_type,
+            payment_channel: paymentRecord.payment_channel,
+            va_number: paymentRecord.va_number,
+            qr_string: paymentRecord.qr_string,
+            payment_url: paymentRecord.payment_url,
+            category: paymentRecord.category,
+            description: paymentRecord.description,
+            status: 'PENDING',
+            expiry_time: paymentRecord.expiry_time,
+            settlement_status: 'UNSETTLED',
+          },
+        ]);
+      } catch {
+        // Ignore if table RLS denies without service role
+      }
+    }
+
+    res.json({ success: true, data: paymentRecord });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Verified Payment Gateway Webhook Endpoint
-// Enforces HMAC validation, Idempotency, Ledger Auto-Posting, Audit, and Notifications.
+// Verified Payment Gateway Webhook Endpoint (Strict HMAC SHA256 validation)
 app.post('/api/payments/webhook', async (req: Request, res: Response) => {
   try {
-    const rawSignature = (req.headers['x-kopsim-signature'] as string) || (req.headers['x-signature'] as string) || req.body.signature;
-    const rawPayloadString = JSON.stringify(req.body);
-    const { order_id, status = 'PAID', channel, signature } = req.body;
+    const rawSignature = (req.headers['x-kopsim-signature'] as string) || (req.headers['x-signature'] as string) || '';
+    const { order_id, status = 'PAID', signature: bodySignature, ...restBody } = req.body || {};
+    const signatureToVerify = rawSignature || bodySignature || '';
+    const canonicalPayload = JSON.stringify({ order_id, status, ...restBody });
+    const fullPayload = JSON.stringify(req.body);
 
-    const signatureToVerify = rawSignature || signature;
+    // Verify against either full payload or payload without signature field
+    const isSignatureValid =
+      verifyWebhookSignature(fullPayload, signatureToVerify) ||
+      verifyWebhookSignature(canonicalPayload, signatureToVerify);
 
-    // 1. Webhook Signature Validation (HMAC SHA256)
-    const isSignatureValid = verifyWebhookSignature(rawPayloadString, signatureToVerify);
     if (!isSignatureValid) {
       serverAuditLogs.push({
         action: 'WEBHOOK_UNAUTHORIZED_ATTEMPT',
         entity: 'payment_webhook',
         entity_id: order_id || 'UNKNOWN',
-        details: { signature_provided: signatureToVerify, ip: req.ip },
+        details: { signature_provided: Boolean(signatureToVerify), ip: req.ip },
         timestamp: new Date().toISOString(),
       });
       return res.status(401).json({
@@ -365,8 +658,15 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
       });
     }
 
-    // 2. Fetch Payment Record
-    const payment = serverPayments.get(order_id);
+    let payment = serverPayments.get(order_id);
+    if (!payment && supabaseAdmin) {
+      const { data } = await supabaseAdmin.from('payment_requests').select('*').eq('order_id', order_id).maybeSingle();
+      if (data) {
+        payment = data as ServerPaymentRecord;
+        serverPayments.set(order_id, payment);
+      }
+    }
+
     if (!payment) {
       return res.status(404).json({
         success: false,
@@ -375,9 +675,8 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
       });
     }
 
-    payment.webhook_attempts += 1;
+    payment.webhook_attempts = (payment.webhook_attempts || 0) + 1;
 
-    // 3. Idempotency Check: Prevent duplicate transaction posting!
     const idempotencyKey = `webhook-processed-${order_id}`;
     if (processedWebhookIdempotencyKeys.has(idempotencyKey) || payment.status === 'PAID' || payment.status === 'POSTED') {
       return res.json({
@@ -390,7 +689,6 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
       });
     }
 
-    // 4. Check for Expiry
     if (new Date() > new Date(payment.expiry_time)) {
       payment.status = 'EXPIRED';
       return res.json({
@@ -402,56 +700,8 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     }
 
     if (status === 'PAID') {
-      // 5. Atomic state transition: PENDING -> PAID -> POSTED
-      const transactionId = `TRX-PG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-      payment.status = 'POSTED';
-      payment.paid_at = new Date().toISOString();
-      payment.posted_at = new Date().toISOString();
-      payment.posted_transaction_id = transactionId;
-      payment.settlement_status = 'SETTLED';
-      payment.raw_signature = signatureToVerify;
-
-      // Mark idempotency key as processed
+      const transactionId = await processPaymentPosting(payment, signatureToVerify, req.body);
       processedWebhookIdempotencyKeys.add(idempotencyKey);
-
-      // 6. Audit Trail Logging
-      serverAuditLogs.push({
-        action: 'PAYMENT_VERIFIED_AND_POSTED',
-        entity: 'payment_requests',
-        entity_id: order_id,
-        details: {
-          transaction_id: transactionId,
-          amount: payment.amount,
-          member: payment.member_name,
-          channel: payment.payment_channel,
-        },
-        timestamp: new Date().toISOString(),
-      });
-
-      // 7. Enqueue Automated Notification Job (WhatsApp / Email)
-      const notifJob: ServerNotificationJob = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `notif-${Date.now()}`,
-        type: 'PAYMENT_POSTED',
-        recipient: payment.member_id,
-        recipient_name: payment.member_name,
-        channel: 'WHATSAPP',
-        provider: 'WHATSAPP_FONNTE_SERVER',
-        payload: {
-          order_id,
-          amount: payment.amount,
-          channel: payment.payment_channel,
-          transaction_id: transactionId,
-          title: 'Pembayaran Sukses Terposting',
-          message: `Pembayaran ${order_id} sebesar Rp ${payment.amount.toLocaleString('id-ID')} telah sukses diverifikasi dan terposting ke buku kas KOPSIM.`,
-        },
-        status: 'PENDING',
-        attempts: 0,
-        max_attempts: 3,
-        idempotency_key: `notif-pay-${order_id}`,
-        created_at: new Date().toISOString(),
-      };
-      serverNotificationJobs.unshift(notifJob);
-      dispatchProviderNotification(notifJob);
 
       return res.json({
         success: true,
@@ -476,9 +726,74 @@ app.post('/api/payments/webhook', async (req: Request, res: Response) => {
   }
 });
 
+// Admin / Dev Sandbox Simulator Endpoint (Server signs payload with backend secret internally)
+app.post('/api/payments/sandbox-simulate', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({
+      success: false,
+      error: 'SANDBOX_DISABLED',
+      message: 'Simulasi pembayaran tidak diizinkan pada environment produksi.',
+    });
+  }
+
+  try {
+    const { order_id, status = 'PAID' } = req.body || {};
+    if (!order_id) {
+      return res.status(400).json({ success: false, error: 'order_id wajib diisi' });
+    }
+
+    let payment = serverPayments.get(order_id);
+    if (!payment && supabaseAdmin) {
+      const { data } = await supabaseAdmin.from('payment_requests').select('*').eq('order_id', order_id).maybeSingle();
+      if (data) {
+        payment = data as ServerPaymentRecord;
+        serverPayments.set(order_id, payment);
+      }
+    }
+
+    if (!payment) {
+      return res.status(404).json({ success: false, error: `Order ${order_id} tidak ditemukan di server gateway.` });
+    }
+
+    const idempotencyKey = `webhook-processed-${order_id}`;
+    if (processedWebhookIdempotencyKeys.has(idempotencyKey) || payment.status === 'POSTED') {
+      return res.json({
+        success: true,
+        status: payment.status,
+        message: 'Idempotent replay: pembayaran sudah terposting sebelumnya.',
+        order_id,
+        transaction_id: payment.posted_transaction_id,
+        is_duplicate: true,
+      });
+    }
+
+    const payloadObj = { order_id, status, channel: payment.payment_channel };
+    const serverSignedHmac = generateWebhookSignature(JSON.stringify(payloadObj));
+    const transactionId = await processPaymentPosting(payment, serverSignedHmac, payloadObj);
+    processedWebhookIdempotencyKeys.add(idempotencyKey);
+
+    return res.json({
+      success: true,
+      status: 'POSTED',
+      message: 'Simulasi webhook server-signed berhasil memposting transaksi ke buku kas.',
+      order_id,
+      transaction_id: transactionId,
+      amount: payment.amount,
+      member_name: payment.member_name,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Check Payment Status
-app.get('/api/payments/status/:orderId', (req: Request, res: Response) => {
-  const payment = serverPayments.get(req.params.orderId);
+app.get('/api/payments/status/:orderId', async (req: Request, res: Response) => {
+  const { orderId } = req.params;
+  let payment = serverPayments.get(orderId);
+  if (!payment && supabaseAdmin) {
+    const { data } = await supabaseAdmin.from('payment_requests').select('*').eq('order_id', orderId).maybeSingle();
+    if (data) payment = data as ServerPaymentRecord;
+  }
   if (!payment) {
     return res.status(404).json({ success: false, error: 'Payment not found' });
   }
@@ -486,18 +801,26 @@ app.get('/api/payments/status/:orderId', (req: Request, res: Response) => {
 });
 
 // Reconcile Payment Gateway Records
-app.get('/api/payments/reconcile', (req: Request, res: Response) => {
-  const payments = Array.from(serverPayments.values());
+app.get('/api/payments/reconcile', async (_req: Request, res: Response) => {
+  let payments = Array.from(serverPayments.values());
+  if (supabaseAdmin) {
+    try {
+      const { data, error } = await supabaseAdmin.from('payment_requests').select('*').limit(500);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        payments = data as ServerPaymentRecord[];
+      }
+    } catch {
+      // fallback
+    }
+  }
   const postedPayments = payments.filter((p) => p.status === 'POSTED');
-
-  const totalGatewayAmount = postedPayments.reduce((acc, curr) => acc + curr.amount, 0);
-  const matchedCount = postedPayments.length;
+  const totalGatewayAmount = postedPayments.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 
   res.json({
     success: true,
     total_gateway_amount: totalGatewayAmount,
     total_posted_amount: totalGatewayAmount,
-    matched_count: matchedCount,
+    matched_count: postedPayments.length,
     discrepancy_count: 0,
     payments_count: payments.length,
     reconciled_at: new Date().toISOString(),
@@ -517,7 +840,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
