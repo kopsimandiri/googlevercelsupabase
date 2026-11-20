@@ -13,6 +13,7 @@ import { Button } from './components/common/Button';
 import { Badge } from './components/common/Badge';
 import { KopsimLogo } from './components/common/KopsimLogo';
 import { LoadingState } from './components/common/LoadingState';
+import { WhatsAppStickyButton } from './components/common/WhatsAppStickyButton';
 import { useAppRouter } from './hooks/useAppRouter';
 import { ActivePage } from './types/navigation';
 import { NewsArticle } from './types/news';
@@ -1047,6 +1048,9 @@ function AppContent() {
         onOpenRegister={() => setShowRegisterModal(true)}
         onRequestLogin={() => setShowLoginModal(true)}
       />
+
+      {/* Floating 1-Click WhatsApp Admin Button */}
+      <WhatsAppStickyButton activePage={activePage} />
 
       {/* Public Online Registration Modal (Loaded on demand) */}
       {showRegisterModal && (

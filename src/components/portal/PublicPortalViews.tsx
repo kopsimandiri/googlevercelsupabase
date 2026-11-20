@@ -14,6 +14,13 @@ import {
 import { ProjectExposureCard } from './ProjectExposureCard';
 import { ProjectExposureDetail } from './ProjectExposureDetail';
 import {
+  ADMIN_ADDRESS,
+  ADMIN_EMAIL,
+  ADMIN_OFFICE_PHONE,
+  ADMIN_WHATSAPP_DISPLAY,
+  buildAdminWhatsAppUrl,
+} from '../../constants/contact';
+import {
   Package,
   Layers,
   ShoppingBag,
@@ -926,7 +933,7 @@ export const TeamView: React.FC = () => {
             <div>
               <span className="font-bold text-stone-900 block">Kantor Pusat</span>
               <span className="leading-snug block">
-                Jl. Taman Amir Hamzah No.6A Pegangsaan, Kec. Menteng, Jakarta Pusat
+                {ADMIN_ADDRESS}
               </span>
             </div>
           </div>
@@ -935,7 +942,7 @@ export const TeamView: React.FC = () => {
             <Mail className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold text-stone-900 block">Email Resmi</span>
-              <span>koperasi.simandiri@gmail.com</span>
+              <span>{ADMIN_EMAIL}</span>
             </div>
           </div>
 
@@ -943,7 +950,17 @@ export const TeamView: React.FC = () => {
             <Phone className="w-4 h-4 text-emerald-800 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold text-stone-900 block">Layanan Anggota</span>
-              <span className="font-semibold block">021 - 23599354 | 082148988520</span>
+              <span className="font-semibold block">
+                {ADMIN_OFFICE_PHONE} |{' '}
+                <a
+                  href={buildAdminWhatsAppUrl("Assalamu'alaikum Admin KOPSIM Mandiri")}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-800 hover:text-emerald-950 underline font-mono inline-flex items-center gap-1"
+                >
+                  {ADMIN_WHATSAPP_DISPLAY} (WA)
+                </a>
+              </span>
             </div>
           </div>
         </div>

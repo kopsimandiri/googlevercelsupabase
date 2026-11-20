@@ -11,6 +11,11 @@ import {
   getPublicProofUrl,
   hasTransactionProof,
 } from '../src/services/storageService';
+import {
+  ADMIN_WHATSAPP_DISPLAY,
+  formatWhatsAppInternational,
+  buildAdminWhatsAppUrl,
+} from '../src/constants/contact';
 
 let passed = 0;
 let failed = 0;
@@ -190,6 +195,21 @@ async function runE2ECriticalFlows() {
   assert(
     cleanedKnownDriveRow.filelink === validSupabaseUrl,
     'mapAndCleanTransactionRow mengganti URL Google Drive dengan URL Supabase Storage dari registry untuk transaksi terdaftar'
+  );
+
+  // ----------------------------------------------------------------------------
+  // FLOW 9: Admin WhatsApp Contact & 1-Click Direct URL Builder
+  // ----------------------------------------------------------------------------
+  console.log('\n▶ [CRITICAL FLOW 9] Admin WhatsApp Contact & 1-Click Direct URL Builder');
+  assert(ADMIN_WHATSAPP_DISPLAY === '082148988520', 'Nomor WhatsApp admin sesuai: 082148988520');
+  assert(
+    formatWhatsAppInternational('082148988520') === '6282148988520',
+    'Konversi nomor 082148988520 menjadi format internasional 6282148988520'
+  );
+  const directWaUrl = buildAdminWhatsAppUrl("Assalamu'alaikum Admin KOPSIM");
+  assert(
+    directWaUrl.startsWith('https://wa.me/6282148988520?text='),
+    'URL 1-klik WhatsApp mengarah langsung ke https://wa.me/6282148988520?text=...'
   );
 
   // ----------------------------------------------------------------------------

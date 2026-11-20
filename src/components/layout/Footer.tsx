@@ -2,6 +2,13 @@ import React from 'react';
 import { ShieldCheck, HeartHandshake, Phone, Mail, MapPin, ArrowRight } from 'lucide-react';
 import { KopsimLogo } from '../common/KopsimLogo';
 import { ActivePage } from '../../types/navigation';
+import {
+  ADMIN_ADDRESS,
+  ADMIN_EMAIL,
+  ADMIN_OFFICE_PHONE,
+  ADMIN_WHATSAPP_DISPLAY,
+  buildAdminWhatsAppUrl,
+} from '../../constants/contact';
 
 interface FooterProps {
   onNavigate?: (page: ActivePage) => void;
@@ -76,24 +83,24 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <div className="flex items-start gap-2">
                 <MapPin className="w-4 h-4 text-accent-gold shrink-0 mt-0.5" />
                 <span className="leading-snug">
-                  Jl. Taman Amir Hamzah No.6A Pegangsaan, Kec. Menteng, Jakarta Pusat
+                  {ADMIN_ADDRESS}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <Mail className="w-4 h-4 text-accent-gold shrink-0" />
-                <span>koperasi.simandiri@gmail.com</span>
+                <span>{ADMIN_EMAIL}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Phone className="w-4 h-4 text-accent-gold shrink-0" />
                 <span>
-                  021 - 23599354 |{' '}
+                  {ADMIN_OFFICE_PHONE} |{' '}
                   <a
-                    href="https://wa.me/6282148988520?text=Assalamu%27alaikum%20CS%20KOPSIM%20Mandiri"
+                    href={buildAdminWhatsAppUrl("Assalamu'alaikum CS KOPSIM Mandiri")}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-emerald-400 hover:text-emerald-300 underline font-mono font-medium inline-flex items-center gap-1"
                   >
-                    082148988520 (WA)
+                    {ADMIN_WHATSAPP_DISPLAY} (WA)
                   </a>
                 </span>
               </div>
