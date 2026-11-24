@@ -6,6 +6,8 @@ import { transactionService } from '../../services/transactionService';
 import { getSupabaseClient } from '../../lib/supabase';
 import {
   getPublicProofUrl,
+  getSignedProofUrl,
+  findProofInBucketByTransactionNo,
   isImageFile,
   isPdfFile,
   KNOWN_STORAGE_PROOFS,
@@ -76,7 +78,7 @@ import {
 type MemberTabType = 'SIMPANAN' | 'INVESTASIKU' | 'TRANSAKSI' | 'SHU' | 'KTA' | 'PROFIL' | 'DOKUMEN' | 'NOTIFIKASI';
 
 export const MemberPortalView: React.FC = () => {
-  const { user, logout, updateUser } = useAuth();
+  const { user, role, isLoading: isAuthLoading, isAuthenticated, logout, updateUser } = useAuth();
   const { showToast } = useNotification();
 
   const [activeTab, setActiveTab] = useState<MemberTabType>('SIMPANAN');
@@ -98,6 +100,8 @@ export const MemberPortalView: React.FC = () => {
     categoryBreakdown: {},
   });
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string>('');
+  const [avatarLoadError, setAvatarLoadError] = useState<boolean>(false);
   const [showKtaModal, setShowKtaModal] = useState<boolean>(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState<boolean>(false);
@@ -147,6 +151,15 @@ export const MemberPortalView: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
+
+    // Pastikan role & sesi auth selesai dimuat sebelum meminta data riwayat transaksi
+    if (isAuthLoading) {
+      return;
+    }
+    if (!isAuthenticated || (!memberNo && !user?.name)) {
+      setIsLoading(false);
+      return;
+    }
 
     async function loadMemberDetails() {
       setIsLoading(true);
@@ -207,11 +220,25 @@ export const MemberPortalView: React.FC = () => {
           proofUrl = getMemberDefaultProof(memberNo);
         }
 
-        const resolvedAvatarUrl =
+        const rawAvatarUrl =
           found?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo) || '';
 
+        if (isMounted) {
+          setAvatarLoadError(false);
+          if (rawAvatarUrl) {
+            const signedAvatar = await getSignedProofUrl(rawAvatarUrl, {
+              expiresIn: 3600,
+              memberNo,
+              memberName: memberName || found?.nama || '',
+            });
+            setResolvedAvatarUrl(signedAvatar || rawAvatarUrl);
+          } else {
+            setResolvedAvatarUrl('');
+          }
+        }
+
         if (found) {
-          found = { ...found, transfer_proof_url: proofUrl, avatar_url: resolvedAvatarUrl };
+          found = { ...found, transfer_proof_url: proofUrl, avatar_url: rawAvatarUrl };
           if (isMounted) setMemberData(found);
         } else {
           // Fallback constructed record from user session
@@ -311,7 +338,7 @@ export const MemberPortalView: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [memberNo, user]);
+  }, [isAuthLoading, isAuthenticated, role, memberNo, user]);
 
   const memberTabs: TabItem<MemberTabType>[] = [
     { id: 'SIMPANAN', label: 'Buku Simpanan', icon: <Coins className="w-4 h-4" /> },
@@ -344,16 +371,17 @@ export const MemberPortalView: React.FC = () => {
     };
   }, [savingsData.total]);
 
-  // Handler to open and resolve proof image from Supabase Storage
+  // Handler to open and resolve proof image from private Supabase Storage bucket (1-hour Signed URL)
   const handleViewProof = async (trx: TransactionRecord) => {
     const trxId = (trx.id || '').trim();
     const baseId = trxId.replace(/[-_.]\d+$/, '');
     const title = `Bukti Transaksi - ${trx.kategori || 'Setoran'}`;
+    const rawProofSource = (trx.bukti_url || trx.filelink || '').trim();
 
     // Set modal to loading state immediately
     setSelectedProof({
       url: null,
-      originalPath: trx.filelink || '',
+      originalPath: rawProofSource,
       title,
       trx,
       isLoading: true,
@@ -362,51 +390,95 @@ export const MemberPortalView: React.FC = () => {
       errorMessage: null,
     });
 
-    // 1. Validasi ketat hanya menerima URL / path Supabase Storage (tolak Google Drive)
-    let resolvedUrl = getPublicProofUrl(trx.filelink);
+    // 1. Validasi ketat hanya menerima URL / path Supabase Storage (tolak Google Drive & base64)
+    let rawStorageRef = getPublicProofUrl(rawProofSource);
 
     // 2. Lookup in verified storage registry
-    if (!resolvedUrl) {
+    if (!rawStorageRef) {
       const knownPath = KNOWN_STORAGE_PROOFS[trxId] || KNOWN_STORAGE_PROOFS[baseId];
       if (knownPath) {
-        resolvedUrl = getPublicProofUrl(knownPath);
+        rawStorageRef = getPublicProofUrl(knownPath);
       }
     }
 
-    // 3. Fallback auto-recovery: cari berkas fisik di Supabase Storage bucket 'bukti_transfer'
-    if (!resolvedUrl && trxId && !trxId.startsWith('REG-')) {
+    // 3. Fallback auto-recovery: cari berkas fisik di Supabase Storage bucket 'bukti-transfer'
+    if (!rawStorageRef && trxId && !trxId.startsWith('REG-')) {
       try {
-        const res = await transactionService.findAndLinkTransactionProof(trxId, trx.tanggal);
-        if (res.found && res.publicUrl) {
-          resolvedUrl = res.publicUrl;
-          trx.filelink = res.publicUrl;
+        if (role === 'ANGGOTA') {
+          const matchedFile = await findProofInBucketByTransactionNo(trxId, trx.tanggal);
+          if (matchedFile?.publicUrl) {
+            rawStorageRef = matchedFile.publicUrl;
+          }
+        } else {
+          const res = await transactionService.findAndLinkTransactionProof(trxId, trx.tanggal);
+          if (res.found && res.publicUrl) {
+            rawStorageRef = res.publicUrl;
+            trx.filelink = res.publicUrl;
+          }
         }
       } catch (err) {
-        console.warn('Gagal mencari berkas fisik transaksi di bucket:', err);
+        console.error('[MemberPortalView] Gagal mencari berkas fisik transaksi di bucket:', err);
       }
     }
 
-    // 4. Fallback ke bukti registrasi anggota (wajib lolos validasi Supabase Storage) HANYA untuk Simpanan Pokok / Pendaftaran
+    // 4. Fallback ke bukti registrasi anggota HANYA untuk Simpanan Pokok / Pendaftaran
     const isRegistrationOrPokok =
       (trx.kategori || '').toLowerCase().includes('pokok') ||
       (trx.kategori || '').toLowerCase().includes('pendaftaran') ||
       trxId.startsWith('T251229');
-    if (!resolvedUrl && isRegistrationOrPokok) {
-      resolvedUrl =
+    if (!rawStorageRef && isRegistrationOrPokok) {
+      rawStorageRef =
         getPublicProofUrl(memberData?.transfer_proof_url) ||
         getPublicProofUrl(user?.transferProofUrl) ||
         getMemberDefaultProof(trx.member_id || memberNo);
     }
 
+    if (!rawStorageRef) {
+      console.error('[MemberPortalView] Berkas bukti tidak ditemukan untuk transaksi:', trxId);
+      setSelectedProof({
+        url: null,
+        originalPath: rawProofSource,
+        title,
+        trx,
+        isLoading: false,
+        imageLoaded: false,
+        imageError: true,
+        errorMessage: 'Bukti tidak dapat dimuat (berkas belum tersedia di penyimpanan server).',
+      });
+      return;
+    }
+
+    // 5. Buat Signed URL berjangka 1 jam (3600 detik) untuk bucket privat
+    const signedUrl = await getSignedProofUrl(rawStorageRef, {
+      expiresIn: 3600,
+      memberNo,
+      memberName: memberData?.nama || user?.name || '',
+    });
+
+    if (!signedUrl) {
+      console.error('[MemberPortalView] Gagal membuat Signed URL untuk bukti transaksi:', trxId, rawStorageRef);
+      setSelectedProof({
+        url: null,
+        originalPath: rawStorageRef,
+        title,
+        trx,
+        isLoading: false,
+        imageLoaded: false,
+        imageError: true,
+        errorMessage: 'Bukti tidak dapat dimuat. Gagal memverifikasi akses lampiran di server.',
+      });
+      return;
+    }
+
     setSelectedProof({
-      url: resolvedUrl || null,
-      originalPath: resolvedUrl || '',
+      url: signedUrl,
+      originalPath: rawStorageRef,
       title,
       trx,
       isLoading: false,
       imageLoaded: false,
       imageError: false,
-      errorMessage: resolvedUrl ? null : 'Berkas bukti belum tersedia di Supabase Storage.',
+      errorMessage: null,
     });
   };
 
@@ -415,12 +487,12 @@ export const MemberPortalView: React.FC = () => {
     await handleViewProof(selectedProof.trx);
   };
 
-  if (isLoading) {
+  if (isAuthLoading || isLoading) {
     return (
       <div className="p-8 max-w-6xl mx-auto">
         <LoadingState
           message="Memuat Buku Simpanan & Profil Anggota..."
-          subMessage="Menghubungkan data identitas keanggotaan terverifikasi"
+          subMessage="Memverifikasi role akses & menghubungkan data keanggotaan"
         />
       </div>
     );
@@ -438,14 +510,15 @@ export const MemberPortalView: React.FC = () => {
             {/* Foto Profil Anggota dengan Tombol Ganti Cepat */}
             <div className="relative group shrink-0">
               <div className="w-16 h-20 sm:w-20 sm:h-24 bg-emerald-950/90 rounded-2xl border-2 border-amber-400/70 shadow-lg overflow-hidden flex items-center justify-center">
-                {memberData?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo) ? (
+                {resolvedAvatarUrl && !avatarLoadError ? (
                   <img
-                    src={memberData?.avatar_url || user?.avatarUrl || memberService.getMemberAvatar(memberNo) || ''}
+                    src={resolvedAvatarUrl}
                     alt={memberData?.nama || 'Foto Anggota'}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    onError={() => {
+                      console.error('[MemberPortal] Gagal memuat foto profil anggota:', resolvedAvatarUrl);
+                      setAvatarLoadError(true);
                     }}
                   />
                 ) : (
@@ -823,7 +896,11 @@ export const MemberPortalView: React.FC = () => {
                         getMemberDefaultProof(memberNo);
 
                       const hasProof = Boolean(
-                        hasTransactionProof(trx) ||
+                        hasTransactionProof({
+                          id: trx.id,
+                          filelink: trx.filelink,
+                          bukti_url: trx.bukti_url,
+                        }) ||
                         (isPokokTrx && memberRegistrationProof)
                       );
 
@@ -1561,41 +1638,51 @@ export const MemberPortalView: React.FC = () => {
                     onLoad={() =>
                       setSelectedProof((p) => (p ? { ...p, imageLoaded: true } : null))
                     }
-                    onError={() =>
-                      setSelectedProof((p) => (p ? { ...p, imageError: true } : null))
-                    }
+                    onError={() => {
+                      console.error('[MemberPortal] Bukti tidak dapat dimuat pada elemen gambar:', {
+                        url: selectedProof.url,
+                        originalPath: selectedProof.originalPath,
+                        trxId: selectedProof.trx?.id,
+                      });
+                      setSelectedProof((p) =>
+                        p
+                          ? {
+                              ...p,
+                              imageError: true,
+                              errorMessage: 'Bukti tidak dapat dimuat',
+                            }
+                          : null
+                      );
+                    }}
                   />
                 </div>
               ) : selectedProof.url ? (
                 <div className="text-center p-6 text-stone-300 space-y-3 max-w-md">
-                  <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+                  <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
                   <div>
-                    <h4 className="font-bold text-white text-sm">Tautan Berkas Bukti Tersedia</h4>
+                    <h4 className="font-bold text-white text-sm">Bukti tidak dapat dimuat</h4>
                     <p className="text-[11px] text-stone-300 mt-0.5">
-                      Berkas lampiran sah tersimpan di server. Klik tombol di bawah untuk membuka berkas asli:
+                      Gambar bukti transfer gagal dimuat atau tautan Signed URL telah kedaluwarsa. Silakan muat ulang untuk membuat Signed URL baru.
                     </p>
                   </div>
-                  <code className="text-[10px] text-emerald-400 bg-stone-950 px-2 py-1.5 rounded block break-all font-mono border border-stone-800">
-                    {selectedProof.url}
-                  </code>
                   <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRetryProof}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Muat Ulang Bukti</span>
+                    </button>
                     <a
                       href={selectedProof.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-semibold transition-colors cursor-pointer shadow"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-800 text-stone-200 hover:bg-stone-700 text-xs font-semibold transition-colors cursor-pointer border border-stone-700"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Buka Berkas di Tab Baru</span>
+                      <span>Buka di Tab Baru</span>
                     </a>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedProof((p) => p ? { ...p, imageError: false } : null)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-stone-800 text-stone-200 hover:bg-stone-700 text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Coba Lagi</span>
-                    </button>
                   </div>
                 </div>
               ) : (

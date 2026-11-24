@@ -404,16 +404,36 @@ export const investmentService = {
     let result: InvestmentTransaction[] = [];
 
     if (isSupabaseConfigured && client && cleanNo) {
-      const { data, error } = await client
-        .from('investment_transactions')
-        .select('*')
-        .ilike('member_no', cleanNo)
-        .order('created_at', { ascending: false });
+      let directRows: any[] | null = null;
+      let directErr: any = null;
 
-      if (error) {
-        throw new Error(`Gagal memuat riwayat investasi anggota dari Supabase: ${error.message}`);
+      try {
+        const res = await client
+          .from('investment_transactions')
+          .select('*')
+          .ilike('member_no', cleanNo)
+          .order('created_at', { ascending: false });
+        directRows = res.data;
+        directErr = res.error;
+      } catch (e) {
+        directErr = e;
       }
-      result = (data || []).map(mapInvestmentTransactionRow);
+
+      if (!directErr && Array.isArray(directRows) && directRows.length > 0) {
+        result = directRows.map(mapInvestmentTransactionRow);
+      } else {
+        // Fallback aman via RPC get_member_investment_transactions untuk sesi anggota
+        const { data: rpcData, error: rpcErr } = await client.rpc('get_member_investment_transactions', {
+          p_member_no: cleanNo,
+        });
+        if (!rpcErr && Array.isArray(rpcData)) {
+          result = rpcData.map(mapInvestmentTransactionRow);
+        } else if (directErr) {
+          throw new Error(`Gagal memuat riwayat investasi anggota dari Supabase: ${directErr.message || directErr}`);
+        } else if (rpcErr) {
+          throw new Error(`Gagal memuat riwayat investasi anggota dari Supabase: ${rpcErr.message}`);
+        }
+      }
     } else {
       const list = inMemoryInvTransactions || INITIAL_DEMO_TRANSACTIONS;
       result = list.filter(
@@ -422,8 +442,31 @@ export const investmentService = {
       );
     }
 
-    const campaigns = await this.getAllCampaigns();
-    const agreements = await this.getAllDigitalAgreements();
+    let campaigns: ProjectInvestmentCampaign[] = [];
+    try {
+      campaigns = await this.getAllCampaigns();
+    } catch {
+      campaigns = INITIAL_DEMO_CAMPAIGNS;
+    }
+
+    let agreements: DigitalAgreement[] = [];
+    try {
+      agreements = await this.getAllDigitalAgreements();
+    } catch {
+      agreements = [];
+    }
+    if (agreements.length === 0 && isSupabaseConfigured && client && cleanNo) {
+      try {
+        const { data: rpcAgr } = await client.rpc('get_member_digital_agreements', {
+          p_member_no: cleanNo,
+        });
+        if (Array.isArray(rpcAgr)) {
+          agreements = rpcAgr as DigitalAgreement[];
+        }
+      } catch {
+        // abaikan jika RPC belum terpasang
+      }
+    }
 
     return result.map((tx) => ({
       ...tx,

@@ -339,15 +339,314 @@ app.post('/api/storage/upload-proof', async (req: Request, res: Response) => {
       });
     }
 
-    const { data: urlData } = supabaseAdmin.storage.from(usedBucket).getPublicUrl(data.path || cleanPath);
+    const finalPath = data.path || cleanPath;
+    const { data: urlData } = supabaseAdmin.storage.from(usedBucket).getPublicUrl(finalPath);
+    let signedUrl: string | null = null;
+    try {
+      const { data: signedData } = await supabaseAdmin.storage.from(usedBucket).createSignedUrl(finalPath, 3600);
+      signedUrl = signedData?.signedUrl || null;
+    } catch {
+      signedUrl = null;
+    }
+
     return res.json({
       success: true,
-      path: data.path || cleanPath,
+      path: finalPath,
       publicUrl: urlData?.publicUrl,
+      signedUrl,
       bucket: usedBucket,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Storage upload server error' });
+  }
+});
+
+// Helper: Extract bucket & clean object path from Supabase URL or relative path
+function parseStorageRef(rawInput: string, preferredBucket?: string): { bucket: string; objectPath: string } | null {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return null;
+  if (
+    trimmed.toLowerCase().includes('drive.google.com') ||
+    trimmed.toLowerCase().includes('docs.google.com') ||
+    trimmed.toLowerCase().includes('googleusercontent.com')
+  ) {
+    return null;
+  }
+
+  let bucket = preferredBucket === 'bukti_transfer' ? 'bukti_transfer' : 'bukti-transfer';
+  let objectPath = trimmed;
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const u = new URL(trimmed);
+      const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\/(.*)/);
+      if (match && match[1] && match[2]) {
+        bucket = match[1];
+        objectPath = decodeURIComponent(match[2]);
+      } else {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  } else {
+    objectPath = objectPath.replace(/^\/+/, '');
+    if (objectPath.startsWith('bukti-transfer/')) {
+      bucket = 'bukti-transfer';
+      objectPath = objectPath.replace(/^bukti-transfer\/+/, '');
+    } else if (objectPath.startsWith('bukti_transfer/')) {
+      bucket = 'bukti_transfer';
+      objectPath = objectPath.replace(/^bukti_transfer\/+/, '');
+    }
+  }
+
+  objectPath = objectPath.replace(/^\/+|\/+$/g, '');
+  if (!objectPath || objectPath.includes('..')) return null;
+  if (bucket !== 'bukti-transfer' && bucket !== 'bukti_transfer') return null;
+
+  return { bucket, objectPath };
+}
+
+// 1C. Signed URL Endpoint (1 Jam / 3600 detik) untuk Bucket Privat
+app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
+  try {
+    if (!supabaseAdmin) {
+      return res.status(503).json({ success: false, error: 'Supabase storage belum dikonfigurasi di server.' });
+    }
+
+    const { pathOrUrl, bucket: preferredBucket, expiresIn = 3600, memberNo, memberName } = req.body || {};
+    const parsed = parseStorageRef(String(pathOrUrl || ''), preferredBucket);
+    if (!parsed) {
+      return res.status(400).json({ success: false, error: 'Referensi berkas storage tidak valid.' });
+    }
+
+    // Verifikasi otorisasi pemohon: harus memiliki JWT authenticated ATAU identitas anggota terverifikasi yang memiliki objek tsb
+    let isAuthorized = false;
+    let isAdminOrDir = false;
+    const authHeader = String(req.headers.authorization || '');
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+
+    if (token) {
+      try {
+        const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
+        if (!userErr && userData?.user) {
+          isAuthorized = true;
+          const email = (userData.user.email || '').toLowerCase();
+          const metaRole = String(
+            userData.user.app_metadata?.role || userData.user.user_metadata?.role || ''
+          ).toUpperCase();
+          if (
+            email === 'koperasi.simandiri@gmail.com' ||
+            email.startsWith('admin@') ||
+            ['ADMIN', 'SUPERADMIN', 'DIRECTOR', 'PENGURUS'].includes(metaRole)
+          ) {
+            isAdminOrDir = true;
+          }
+        }
+      } catch {
+        // lanjut cek identitas anggota di bawah
+      }
+    }
+
+    // Jika bukan admin/director JWT, wajib verifikasi kepemilikan objek oleh memberNo / memberName di DB
+    if (!isAdminOrDir && hasServiceRoleKey) {
+      const cleanMemberNo = String(memberNo || '').trim().toLowerCase();
+      const cleanMemberName = String(memberName || '').trim().toLowerCase();
+      const obj = parsed.objectPath;
+
+      if (!cleanMemberNo && !cleanMemberName) {
+        if (!isAuthorized) {
+          return res.status(401).json({ success: false, error: 'Autentikasi diperlukan untuk mengakses bukti transfer.' });
+        }
+      } else {
+        // Cek apakah objek terkait dengan transaksi / investasi / registrasi / avatar anggota tersebut
+        let owned = false;
+        if (
+          cleanMemberNo &&
+          (obj.toLowerCase().startsWith(`avatar/${cleanMemberNo}`) ||
+            obj.toLowerCase().startsWith(`setoran/${cleanMemberNo}`) ||
+            obj.toLowerCase().startsWith(`investasi/${cleanMemberNo}`))
+        ) {
+          owned = true;
+        }
+
+        if (!owned && (cleanMemberNo || cleanMemberName)) {
+          const { data: trxRows } = await supabaseAdmin.rpc('get_member_portal_transactions', {
+            p_member_no: cleanMemberNo,
+            p_member_name: cleanMemberName,
+          });
+          if (
+            Array.isArray(trxRows) &&
+            trxRows.some(
+              (r: any) =>
+                String(r?.bukti_url || '').includes(obj) || String(r?.file_url || '').includes(obj)
+            )
+          ) {
+            owned = true;
+          }
+        }
+
+        if (!owned && cleanMemberNo) {
+          const { data: invRows } = await supabaseAdmin
+            .from('investment_transactions')
+            .select('bukti_url, payment_proof_url')
+            .ilike('member_no', cleanMemberNo);
+          if (
+            Array.isArray(invRows) &&
+            invRows.some(
+              (r: any) =>
+                String(r?.bukti_url || '').includes(obj) ||
+                String(r?.payment_proof_url || '').includes(obj)
+            )
+          ) {
+            owned = true;
+          }
+        }
+
+        if (!owned && (cleanMemberNo || cleanMemberName)) {
+          const { data: regProof } = await supabaseAdmin.rpc('get_member_registration_proof', {
+            p_member_no: cleanMemberNo,
+            p_member_name: cleanMemberName,
+          });
+          if (typeof regProof === 'string' && regProof.includes(obj)) {
+            owned = true;
+          }
+        }
+
+        if (!owned && cleanMemberNo) {
+          const { data: mRow } = await supabaseAdmin
+            .from('members')
+            .select('avatar_url')
+            .or(`member_no.ilike.${cleanMemberNo},id.eq.${cleanMemberNo}`)
+            .limit(1)
+            .maybeSingle();
+          if (mRow?.avatar_url && String(mRow.avatar_url).includes(obj)) {
+            owned = true;
+          }
+        }
+
+        if (owned) {
+          isAuthorized = true;
+        } else if (!isAuthorized) {
+          return res.status(403).json({
+            success: false,
+            error: 'Akses ditolak: Anda tidak berhak mengakses berkas bukti transaksi ini.',
+          });
+        }
+      }
+    }
+
+    if (!isAuthorized && !hasServiceRoleKey) {
+      return res.status(401).json({
+        success: false,
+        error: 'Autentikasi diperlukan atau SUPABASE_SERVICE_ROLE_KEY belum dikonfigurasi di server.',
+      });
+    }
+
+    const ttl = Math.max(60, Math.min(86400, Number(expiresIn) || 3600));
+    const bucketsToTry = Array.from(new Set([parsed.bucket, 'bukti-transfer', 'bukti_transfer']));
+
+    for (const b of bucketsToTry) {
+      const { data, error } = await supabaseAdmin.storage
+        .from(b)
+        .createSignedUrl(parsed.objectPath, ttl);
+      if (!error && data?.signedUrl) {
+        return res.json({
+          success: true,
+          signedUrl: data.signedUrl,
+          bucket: b,
+          path: parsed.objectPath,
+          expiresIn: ttl,
+        });
+      }
+    }
+
+    return res.status(404).json({
+      success: false,
+      error: `Berkas bukti "${parsed.objectPath}" tidak ditemukan di Supabase Storage.`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Gagal membuat Signed URL.' });
+  }
+});
+
+// 1D. Sinkronisasi Sesi Supabase Auth untuk Anggota yang Login via RPC verify_member_login
+app.post('/api/auth/member-ensure-auth', async (req: Request, res: Response) => {
+  try {
+    if (!supabaseAdmin || !hasServiceRoleKey) {
+      return res.json({ success: false, skipped: true });
+    }
+
+    const { username, password } = req.body || {};
+    const cleanUser = String(username || '').trim();
+    const cleanPass = String(password || '').trim();
+    if (!cleanUser || !cleanPass) {
+      return res.status(400).json({ success: false, error: 'Username dan password wajib diisi.' });
+    }
+
+    const { data: verifyData, error: verifyErr } = await supabaseAdmin.rpc('verify_member_login', {
+      p_username: cleanUser,
+      p_password: cleanPass,
+    });
+
+    if (verifyErr || !verifyData?.success || !verifyData?.member) {
+      return res.status(401).json({ success: false, error: 'Kredensial anggota tidak valid.' });
+    }
+
+    const m = verifyData.member;
+    const memberNo = String(m.member_no || m.id || cleanUser).trim();
+    const memberEmail = `${memberNo.toLowerCase()}@anggota.kopsim.id`;
+
+    const { data: existingList } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const usersArr: any[] = Array.isArray((existingList as any)?.users) ? (existingList as any).users : [];
+    const existingUser = usersArr.find(
+      (u: any) => String(u?.email || '').toLowerCase() === memberEmail
+    );
+
+    if (!existingUser) {
+      const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        email: memberEmail,
+        password: cleanPass,
+        email_confirm: true,
+        user_metadata: {
+          role: 'ANGGOTA',
+          member_no: memberNo,
+          member_id: m.id,
+          full_name: m.full_name,
+        },
+        app_metadata: {
+          role: 'ANGGOTA',
+          member_no: memberNo,
+        },
+      });
+      if (createErr) {
+        return res.json({ success: false, error: createErr.message });
+      }
+      if (created?.user?.id) {
+        await supabaseAdmin.from('profiles').upsert({
+          id: created.user.id,
+          full_name: m.full_name,
+          role: 'ANGGOTA',
+          member_id: memberNo,
+          username: m.username || memberNo,
+        });
+      }
+    } else {
+      await supabaseAdmin.auth.admin.updateUserById(existingUser.id, {
+        password: cleanPass,
+        user_metadata: {
+          ...(existingUser.user_metadata || {}),
+          role: 'ANGGOTA',
+          member_no: memberNo,
+          member_id: m.id,
+          full_name: m.full_name,
+        },
+      });
+    }
+
+    return res.json({ success: true, email: memberEmail, memberNo });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Auth sync error' });
   }
 });
 

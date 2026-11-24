@@ -26,6 +26,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Restore session on mount directly from Supabase Auth & database or member session
   useEffect(() => {
     let isMounted = true;
+    let initialResolved = false;
 
     async function initAuth() {
       try {
@@ -36,6 +37,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (err) {
         console.error('Session initialization error:', err);
       } finally {
+        initialResolved = true;
         if (isMounted) {
           setIsLoading(false);
         }
@@ -44,12 +46,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initAuth();
 
-    // Subscribe to real-time auth state changes
+    // Subscribe to real-time auth state changes (skip INITIAL_SESSION until initAuth finishes to avoid race condition)
     const unsubscribe = authService.onAuthStateChange((updatedSession) => {
-      if (isMounted) {
-        setUser(updatedSession);
-        setIsLoading(false);
-      }
+      if (!isMounted || !initialResolved) return;
+      setUser(updatedSession);
+      setIsLoading(false);
     });
 
     return () => {

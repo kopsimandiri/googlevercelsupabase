@@ -67,7 +67,9 @@ CREATE POLICY "Allow authenticated read transactions"
     TO authenticated
     USING (
         public.is_director_or_admin()
-        OR member_id = public.current_user_member_id()
+        OR LOWER(COALESCE(member_id, '')) = LOWER(COALESCE(public.current_user_member_id(), ''))
+        OR LOWER(COALESCE(customer_name, '')) LIKE '%' || LOWER(COALESCE(public.current_user_member_id(), '___none___')) || '%'
+        OR LOWER(COALESCE(description, '')) LIKE '%' || LOWER(COALESCE(public.current_user_member_id(), '___none___')) || '%'
     );
 
 DROP POLICY IF EXISTS "Allow admin insert transactions" ON public.transactions;
@@ -1730,10 +1732,10 @@ export const transactionService = {
         if (!error && Array.isArray(data)) {
           return data.map(mapAndCleanTransactionRow);
         } else if (error) {
-          console.warn('getMemberTransactions Supabase query warning:', error.message);
+          console.error('[TransactionService] Gagal memuat transaksi anggota dari Supabase:', error.message);
         }
       } catch (err) {
-        console.warn('getMemberTransactions Supabase error:', err);
+        console.error('[TransactionService] Exception saat memuat transaksi anggota:', err);
       }
     }
 
@@ -1938,9 +1940,11 @@ export const transactionService = {
     }
 
     const client = getSupabaseClient();
+    const activeRole = authService.getCurrentUser()?.role;
     let updated = false;
 
-    if (client) {
+    // Hanya ADMIN / DIRECTOR yang boleh mengubah kolom file_url/bukti_url di database (ANGGOTA read-only)
+    if (client && activeRole !== 'ANGGOTA') {
       try {
         let { error } = await client
           .from(TRANSACTIONS_TABLE_NAME)

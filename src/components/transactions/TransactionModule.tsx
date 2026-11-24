@@ -10,6 +10,7 @@ import {
   uploadTransactionProof,
   deleteTransactionProof,
   getPublicProofUrl,
+  getSignedProofUrl,
   isImageFile,
   isPdfFile,
   ProofOptimizationResult,
@@ -71,7 +72,7 @@ import {
 } from 'lucide-react';
 
 export const TransactionModule: React.FC = () => {
-  const { role, user } = useAuth();
+  const { role, user, isLoading: isAuthLoading, isAuthenticated } = useAuth();
   const { showToast } = useNotification();
 
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
@@ -111,6 +112,7 @@ export const TransactionModule: React.FC = () => {
   const [viewingTrx, setViewingTrx] = useState<TransactionRecord | null>(null);
   const [viewingProofSignedUrl, setViewingProofSignedUrl] = useState<string | null>(null);
   const [isLoadingProofSignedUrl, setIsLoadingProofSignedUrl] = useState<boolean>(false);
+  const [viewingProofError, setViewingProofError] = useState<boolean>(false);
   const [quickProofTrx, setQuickProofTrx] = useState<TransactionRecord | null>(null);
   const [quickProofUrl, setQuickProofUrl] = useState<string | null>(null);
   const [isLoadingQuickProof, setIsLoadingQuickProof] = useState<boolean>(false);
@@ -411,11 +413,17 @@ export const TransactionModule: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || !role) {
+      return;
+    }
     executeSearch(isLoading);
-  }, [debouncedSearchQuery, activeTab, jenisFilter, currentPage, pageSize]);
+  }, [isAuthLoading, isAuthenticated, role, debouncedSearchQuery, activeTab, jenisFilter, currentPage, pageSize]);
 
-  // Load auxiliary master data (members, customers, suppliers) on mount
+  // Load auxiliary master data (members, customers, suppliers) after auth ready
   useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || !role) {
+      return;
+    }
     const loadAuxData = async () => {
       try {
         const memberList = await memberService.getMembers();
@@ -427,7 +435,7 @@ export const TransactionModule: React.FC = () => {
       }
     };
     loadAuxData();
-  }, []);
+  }, [isAuthLoading, isAuthenticated, role]);
 
   const handleSeedData = async () => {
     setIsSeeding(true);
@@ -790,48 +798,108 @@ export const TransactionModule: React.FC = () => {
     }
   };
 
-  // Load public URL when viewing transaction detail (strictly Supabase Storage)
+  // Load 1-hour Signed URL when viewing transaction detail (private Supabase Storage bucket)
   useEffect(() => {
-    if (viewingTrx) {
-      const url = getPublicProofUrl(viewingTrx.filelink) || resolveKnownStorageProofUrl(viewingTrx.id);
-      setViewingProofSignedUrl(url || null);
+    let cancelled = false;
+    const resolveViewingProof = async () => {
+      if (!viewingTrx) {
+        setViewingProofSignedUrl(null);
+        setIsLoadingProofSignedUrl(false);
+        setViewingProofError(false);
+        return;
+      }
+
+      const rawRef =
+        getPublicProofUrl(viewingTrx.bukti_url || viewingTrx.filelink) ||
+        resolveKnownStorageProofUrl(viewingTrx.id);
+
+      if (!rawRef) {
+        setViewingProofSignedUrl(null);
+        setIsLoadingProofSignedUrl(false);
+        setViewingProofError(Boolean(viewingTrx.bukti_url || viewingTrx.filelink));
+        return;
+      }
+
+      setIsLoadingProofSignedUrl(true);
+      setViewingProofError(false);
+      const signed = await getSignedProofUrl(rawRef, {
+        expiresIn: 3600,
+        memberNo: viewingTrx.member_id || user?.memberNo,
+        memberName: viewingTrx.akun || user?.name,
+      });
+
+      if (cancelled) return;
+      if (!signed) {
+        console.error('[TransactionModule] Gagal membuat Signed URL detail transaksi:', viewingTrx.id, rawRef);
+        setViewingProofSignedUrl(null);
+        setViewingProofError(true);
+      } else {
+        setViewingProofSignedUrl(signed);
+        setViewingProofError(false);
+      }
       setIsLoadingProofSignedUrl(false);
-    } else {
-      setViewingProofSignedUrl(null);
-      setIsLoadingProofSignedUrl(false);
-    }
-  }, [viewingTrx]);
+    };
+
+    resolveViewingProof();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewingTrx, user?.memberNo, user?.name]);
 
   const handleOpenQuickProof = async (t: TransactionRecord) => {
     setQuickProofTrx(t);
+    setQuickProofUrl(null);
     setIsLoadingQuickProof(true);
     setProofLoadError(false);
 
     // 1. Resolusi ketat hanya menerima URL/path Supabase Storage (URL Google Drive ditolak menjadi '')
-    let resolvedUrl = getPublicProofUrl(t.filelink);
+    let rawRef = getPublicProofUrl(t.bukti_url || t.filelink);
 
-    // 2. Jika belum valid atau berasal dari URL legacy (mis. Google Drive), cek registry terverifikasi
-    if (!resolvedUrl) {
-      resolvedUrl = resolveKnownStorageProofUrl(t.id);
+    // 2. Jika belum valid atau berasal dari URL legacy, cek registry terverifikasi
+    if (!rawRef) {
+      rawRef = resolveKnownStorageProofUrl(t.id);
     }
 
-    // 3. Fallback pencarian berkas fisik langsung di Supabase Storage bucket 'bukti_transfer'
-    if (!resolvedUrl) {
+    // 3. Fallback pencarian berkas fisik langsung di Supabase Storage bucket 'bukti-transfer'
+    if (!rawRef) {
       try {
         const res = await transactionService.findAndLinkTransactionProof(t.id, t.tanggal);
         if (res.found && res.publicUrl) {
-          resolvedUrl = res.publicUrl;
+          rawRef = res.publicUrl;
           t.filelink = res.publicUrl;
-          setQuickProofTrx({ ...t, filelink: res.publicUrl });
-          showToast(`Bukti transaksi ditemukan di bucket Supabase Storage dan otomatis dihubungkan ke ${t.id}!`, 'success');
-          executeSearch(false);
+          setQuickProofTrx({ ...t, filelink: res.publicUrl, bukti_url: res.publicUrl });
+          if (canEdit) {
+            showToast(`Bukti transaksi ditemukan di bucket Supabase Storage dan otomatis dihubungkan ke ${t.id}!`, 'success');
+            executeSearch(false);
+          }
         }
       } catch (err) {
-        console.warn('Gagal auto-recover proof saat preview:', err);
+        console.error('[TransactionModule] Gagal auto-recover proof saat preview:', err);
       }
     }
 
-    setQuickProofUrl(resolvedUrl || null);
+    if (!rawRef) {
+      setQuickProofUrl(null);
+      setProofLoadError(true);
+      setIsLoadingQuickProof(false);
+      return;
+    }
+
+    // 4. Buat Signed URL berjangka 1 jam (3600 detik) untuk bucket privat
+    const signedUrl = await getSignedProofUrl(rawRef, {
+      expiresIn: 3600,
+      memberNo: t.member_id || user?.memberNo,
+      memberName: t.akun || user?.name,
+    });
+
+    if (!signedUrl) {
+      console.error('[TransactionModule] Gagal membuat Signed URL lampiran:', t.id, rawRef);
+      setQuickProofUrl(null);
+      setProofLoadError(true);
+    } else {
+      setQuickProofUrl(signedUrl);
+      setProofLoadError(false);
+    }
     setIsLoadingQuickProof(false);
   };
 
@@ -1027,7 +1095,11 @@ export const TransactionModule: React.FC = () => {
         const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
         const matchedMember =
           formReferal === 'KOPERASI'
-            ? members.find((m) => m.nama === finalAkun || m.id === finalAkun)
+            ? members.find(
+                (m) =>
+                  (m.nama || '').trim().toLowerCase() === finalAkun.trim().toLowerCase() ||
+                  (m.id || '').trim().toLowerCase() === finalAkun.trim().toLowerCase()
+              )
             : undefined;
         const targetTrxId = await transactionService.generateTransactionId(formReferal, formTanggal);
         let finalFileUrl = formFilelink;
@@ -1130,7 +1202,11 @@ export const TransactionModule: React.FC = () => {
       const finalAkun = formReferal === 'PROJECT' ? 'DANA PROJECT' : (formAkun || 'Kas Umum Koperasi (Non-Anggota)');
       const matchedMember =
         formReferal === 'KOPERASI'
-          ? members.find((m) => m.nama === finalAkun || m.id === finalAkun)
+          ? members.find(
+              (m) =>
+                (m.nama || '').trim().toLowerCase() === finalAkun.trim().toLowerCase() ||
+                (m.id || '').trim().toLowerCase() === finalAkun.trim().toLowerCase()
+            )
           : undefined;
       const targetTrxId = editingTrx?.id || (await transactionService.generateTransactionId(formReferal, formTanggal));
       
@@ -1590,49 +1666,53 @@ export const TransactionModule: React.FC = () => {
                     </td>
                     <td className="py-3 px-3 text-center">
                       {(() => {
-                        const hasProof = hasTransactionProof(t);
-                        const pubUrl = getPublicProofUrl(t.filelink) || resolveKnownStorageProofUrl(t.id);
+                        const rawProofRef =
+                          getPublicProofUrl(t.bukti_url || t.filelink) ||
+                          resolveKnownStorageProofUrl(t.id);
+                        const hasProof = hasTransactionProof(t) || Boolean(rawProofRef);
 
-                        if (!hasProof || !pubUrl) {
+                        if (!hasProof || !rawProofRef) {
                           return <span className="text-stone-400 font-medium text-xs select-none">-</span>;
                         }
 
-                        const isPdf = isPdfFile(pubUrl);
+                        const isPdf = isPdfFile(rawProofRef);
 
-                        if (isPdf && pubUrl) {
+                        if (isPdf) {
                           return (
-                            <a
-                              href={pubUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-blue-700"
-                              title="Buka Dokumen PDF di Tab Baru"
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const signed = await getSignedProofUrl(rawProofRef, {
+                                  expiresIn: 3600,
+                                  memberNo: t.member_id || user?.memberNo,
+                                  memberName: t.akun || user?.name,
+                                });
+                                if (!signed) {
+                                  console.error('[TransactionModule] Gagal membuka PDF bukti transaksi:', t.id, rawProofRef);
+                                  showToast('Bukti tidak dapat dimuat.', 'error');
+                                  return;
+                                }
+                                window.open(signed, '_blank', 'noopener,noreferrer');
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all border border-blue-700 cursor-pointer"
+                              title="Buka Dokumen PDF via Signed URL"
                             >
                               <FileText className="w-3.5 h-3.5 shrink-0" />
                               <span>Lihat Lampiran</span>
-                            </a>
+                            </button>
                           );
                         }
 
-                        // Default for images or any registered filelink: open internal Quick Proof Modal (with auto-recovery)
+                        // Buka Quick Proof Modal yang memuat Signed URL (1 jam) dari bucket privat
                         return (
                           <button
                             type="button"
-                            onClick={() => handleOpenQuickProof({ ...t, filelink: pubUrl })}
+                            onClick={() => handleOpenQuickProof({ ...t, filelink: rawProofRef })}
                             className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs hover:shadow active:scale-[0.98] transition-all cursor-pointer border border-emerald-700"
                             title="Klik untuk melihat bukti transaksi"
                           >
                             <Eye className="w-3.5 h-3.5 shrink-0" />
-                            {pubUrl && (
-                              <img
-                                src={pubUrl}
-                                alt="Bukti"
-                                className="w-4 h-4 object-cover rounded bg-white/20"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = 'none';
-                                }}
-                              />
-                            )}
+                            <ImageIcon className="w-3.5 h-3.5 shrink-0 opacity-90" />
                             <span className="hidden sm:inline">Lihat Bukti</span>
                           </button>
                         );
@@ -1790,7 +1870,7 @@ export const TransactionModule: React.FC = () => {
                 </div>
               )}
 
-              {viewingTrx.filelink && (
+              {(viewingTrx.bukti_url || viewingTrx.filelink) && (
                 <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2">
                   <span className="text-stone-700 font-semibold flex items-center gap-1.5">
                     <Paperclip className="w-3.5 h-3.5 text-emerald-800" />
@@ -1798,26 +1878,29 @@ export const TransactionModule: React.FC = () => {
                   </span>
                   
                   <div className="text-[10px] font-mono text-stone-600 bg-white p-2 rounded border border-stone-200 truncate">
-                    Object Path: {viewingTrx.filelink}
+                    Object Path: {viewingTrx.bukti_url || viewingTrx.filelink}
                   </div>
 
                   {isLoadingProofSignedUrl ? (
                     <div className="flex items-center gap-2 py-4 text-stone-500 justify-center">
                       <Loader2 className="w-4 h-4 animate-spin text-emerald-800" />
-                      <span className="text-xs">Memuat URL gambar dari Supabase Storage (bukti-transfer)...</span>
+                      <span className="text-xs">Menyiapkan Signed URL (1 jam) dari Supabase Storage...</span>
                     </div>
-                  ) : viewingProofSignedUrl ? (
+                  ) : viewingProofSignedUrl && !viewingProofError ? (
                     <div className="space-y-2">
-                      <div className="rounded-lg overflow-hidden border border-stone-200 max-h-56 bg-stone-100 flex items-center justify-center">
-                        <img
-                          src={viewingProofSignedUrl}
-                          alt="Bukti Transaksi"
-                          className="max-h-56 object-contain w-full"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                      </div>
+                      {!isPdfFile(viewingTrx.bukti_url || viewingTrx.filelink) && (
+                        <div className="rounded-lg overflow-hidden border border-stone-200 max-h-56 bg-stone-100 flex items-center justify-center">
+                          <img
+                            src={viewingProofSignedUrl}
+                            alt="Bukti Transaksi"
+                            className="max-h-56 object-contain w-full"
+                            onError={() => {
+                              console.error('[TransactionModule] Gambar bukti gagal dimuat pada detail transaksi:', viewingTrx.id, viewingProofSignedUrl);
+                              setViewingProofError(true);
+                            }}
+                          />
+                        </div>
+                      )}
                       <a
                         href={viewingProofSignedUrl}
                         target="_blank"
@@ -1829,8 +1912,9 @@ export const TransactionModule: React.FC = () => {
                       </a>
                     </div>
                   ) : (
-                    <div className="text-[11px] text-stone-500 bg-white p-2.5 rounded border border-stone-200">
-                      File terdaftar: <span className="font-mono text-emerald-950">{viewingTrx.filelink}</span>
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                      <span className="font-semibold">Bukti tidak dapat dimuat</span>
                     </div>
                   )}
                 </div>
@@ -1906,35 +1990,27 @@ export const TransactionModule: React.FC = () => {
                         className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-lg border border-stone-800"
                         referrerPolicy="no-referrer"
                         onError={() => {
+                          console.error('[TransactionModule] Gambar bukti gagal dimuat pada Quick Proof Modal:', quickProofTrx.id, quickProofUrl);
                           setProofLoadError(true);
                         }}
                       />
                     ) : (
-                      <div className="text-center p-6 text-stone-400 space-y-3 max-w-md">
-                        <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
-                        <p className="text-xs text-stone-300 font-medium">
-                          Tautan bukti tersedia dari kolom database, klik tombol di bawah untuk membuka gambar:
+                      <div className="text-center p-6 text-stone-300 space-y-3 max-w-md">
+                        <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
+                        <p className="text-sm text-rose-300 font-semibold">
+                          Bukti tidak dapat dimuat
                         </p>
-                        <code className="text-[10px] text-emerald-400 bg-stone-950 px-2 py-1.5 rounded block break-all font-mono border border-stone-800">
-                          {quickProofUrl}
-                        </code>
+                        <p className="text-xs text-stone-400">
+                          Pastikan Anda login dengan akun yang berhak atau coba muat ulang Signed URL.
+                        </p>
                         <div className="pt-2 flex justify-center gap-2">
-                          <a
-                            href={quickProofUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span>Buka Gambar di Tab Baru</span>
-                          </a>
                           <Button
                             type="button"
                             size="xs"
                             variant="outline"
-                            onClick={() => setProofLoadError(false)}
+                            onClick={() => handleOpenQuickProof(quickProofTrx)}
                           >
-                            Coba Lagi
+                            Muat Ulang Signed URL
                           </Button>
                         </div>
                       </div>

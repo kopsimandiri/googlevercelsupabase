@@ -5,7 +5,7 @@ import {
   InvestmentDividendDistribution,
 } from '../../types/investment';
 import { investmentService } from '../../services/investmentService';
-import { getPublicProofUrl } from '../../services/storageService';
+import { getSignedProofUrl, hasTransactionProof, isPdfFile } from '../../services/storageService';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatRupiah, formatDateIndo } from '../../utils/formatters';
@@ -46,6 +46,30 @@ export const AdminInvestmentManager: React.FC<AdminInvestmentManagerProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'CAMPAIGN' | 'TRANSACTIONS' | 'DIVIDENDS'>('CAMPAIGN');
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
+  const [slipModal, setSlipModal] = useState<{
+    txId: string;
+    signedUrl: string | null;
+    rawRef: string;
+    isLoading: boolean;
+    error: string | null;
+  } | null>(null);
+
+  const handleOpenSlip = async (tx: InvestmentTransaction) => {
+    const rawRef = (tx as any).bukti_url || tx.payment_proof_url || '';
+    setSlipModal({ txId: tx.id, signedUrl: null, rawRef, isLoading: true, error: null });
+    const signedUrl = await getSignedProofUrl(rawRef, {
+      expiresIn: 3600,
+      memberNo: tx.member_no,
+      memberName: tx.investor_name,
+    });
+    if (!signedUrl) {
+      console.error('[AdminInvestmentManager] Gagal membuat Signed URL slip investasi:', tx.id, rawRef);
+      showToast('Bukti tidak dapat dimuat', 'error');
+      setSlipModal({ txId: tx.id, signedUrl: null, rawRef, isLoading: false, error: 'Bukti tidak dapat dimuat' });
+      return;
+    }
+    setSlipModal({ txId: tx.id, signedUrl, rawRef, isLoading: false, error: null });
+  };
 
   // Form states for campaign
   const [isInvestmentEnabled, setIsInvestmentEnabled] = useState<boolean>(true);
@@ -485,16 +509,16 @@ export const AdminInvestmentManager: React.FC<AdminInvestmentManagerProps> = ({
                             : 'Potong Simpanan'}
                         </span>
                         {(() => {
-                          const resolvedProofUrl = getPublicProofUrl(t.payment_proof_url);
-                          return resolvedProofUrl ? (
-                            <a
-                              href={resolvedProofUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[10px] text-emerald-700 block underline mt-0.5"
+                          const rawProof = (t as any).bukti_url || t.payment_proof_url || '';
+                          const hasProof = hasTransactionProof({ id: t.id, filelink: rawProof, bukti_url: rawProof });
+                          return hasProof ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSlip(t)}
+                              className="text-[10px] text-emerald-700 hover:text-emerald-900 font-semibold block underline mt-0.5 cursor-pointer"
                             >
                               Lihat Slip
-                            </a>
+                            </button>
                           ) : (
                             <span className="text-[10px] text-stone-400 block mt-0.5">Slip: -</span>
                           );
@@ -632,6 +656,52 @@ export const AdminInvestmentManager: React.FC<AdminInvestmentManagerProps> = ({
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {slipModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div>
+                <h4 className="font-bold text-stone-900 text-sm">Slip Transfer Investasi</h4>
+                <p className="text-[11px] font-mono text-stone-500">ID: {slipModal.txId}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSlipModal(null)}
+                className="text-xs font-semibold text-stone-500 hover:text-stone-800 px-2 py-1"
+              >
+                Tutup
+              </button>
+            </div>
+            <div className="min-h-48 bg-stone-50 border border-stone-200 rounded-xl flex items-center justify-center p-3">
+              {slipModal.isLoading ? (
+                <p className="text-xs text-stone-500">Menyiapkan Signed URL (1 jam)...</p>
+              ) : slipModal.error || !slipModal.signedUrl ? (
+                <p className="text-xs font-semibold text-rose-700">{slipModal.error || 'Bukti tidak dapat dimuat'}</p>
+              ) : isPdfFile(slipModal.rawRef) ? (
+                <a
+                  href={slipModal.signedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold text-emerald-800 underline"
+                >
+                  Buka Slip PDF Investasi
+                </a>
+              ) : (
+                <img
+                  src={slipModal.signedUrl}
+                  alt={`Slip ${slipModal.txId}`}
+                  className="max-h-72 w-auto object-contain rounded-lg"
+                  onError={() => {
+                    console.error('[AdminInvestmentManager] Slip investasi gagal dimuat:', slipModal.txId, slipModal.signedUrl);
+                    setSlipModal((prev) => (prev ? { ...prev, error: 'Bukti tidak dapat dimuat' } : prev));
+                  }}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -773,6 +773,14 @@ export const memberService = {
         if (!error && data && data.length > 0) {
           return mapSupabaseMemberRowToMemberRecord(data[0]);
         }
+
+        // Fallback aman via SECURITY DEFINER RPC (untuk sesi anggota tanpa JWT GoTrue)
+        const { data: rpcProf, error: rpcErr } = await client.rpc('get_member_profile_self', {
+          p_identifier: cleanId,
+        });
+        if (!rpcErr && rpcProf && typeof rpcProf === 'object') {
+          return mapSupabaseMemberRowToMemberRecord(rpcProf);
+        }
       } catch (err) {
         console.warn('[memberService] Direct single member query fallback:', err);
       }

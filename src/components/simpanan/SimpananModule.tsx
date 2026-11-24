@@ -15,6 +15,8 @@ import {
   uploadMemberProof,
   hasTransactionProof,
   getPublicProofUrl,
+  getSignedProofUrl,
+  isPdfFile,
   resolveKnownStorageProofUrl,
 } from '../../services/storageService';
 import {
@@ -35,7 +37,7 @@ import {
 } from 'lucide-react';
 
 export const SimpananModule: React.FC = () => {
-  const { role, user } = useAuth();
+  const { role, user, isLoading: isAuthLoading, isAuthenticated } = useAuth();
   const { showToast } = useNotification();
 
   const [members, setMembers] = useState<MemberRecord[]>([]);
@@ -43,6 +45,13 @@ export const SimpananModule: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'REKAP' | 'MUTASI'>('REKAP');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [proofModal, setProofModal] = useState<{
+    trxId: string;
+    signedUrl: string | null;
+    rawRef: string;
+    isLoading: boolean;
+    error: string | null;
+  } | null>(null);
   const [koperasiSummary, setKoperasiSummary] = useState<{
     totalSimpananPokok: number;
     totalSimpananWajib: number;
@@ -94,8 +103,44 @@ export const SimpananModule: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || !role) {
+      return;
+    }
     loadData();
-  }, []);
+  }, [isAuthLoading, isAuthenticated, role]);
+
+  const handleOpenSavingsProof = async (trx: TransactionRecord, rawRef: string) => {
+    setProofModal({
+      trxId: trx.id,
+      signedUrl: null,
+      rawRef,
+      isLoading: true,
+      error: null,
+    });
+    const signedUrl = await getSignedProofUrl(rawRef, {
+      expiresIn: 3600,
+      memberNo: trx.member_id || user?.memberNo,
+      memberName: trx.akun || user?.name,
+    });
+    if (!signedUrl) {
+      console.error('[SimpananModule] Gagal membuat Signed URL bukti simpanan:', trx.id, rawRef);
+      setProofModal({
+        trxId: trx.id,
+        signedUrl: null,
+        rawRef,
+        isLoading: false,
+        error: 'Bukti tidak dapat dimuat',
+      });
+      return;
+    }
+    setProofModal({
+      trxId: trx.id,
+      signedUrl,
+      rawRef,
+      isLoading: false,
+      error: null,
+    });
+  };
 
   // Per-member savings dynamically calculated from public.transactions query aggregation
   const memberSavingsMap = useMemo(() => {
@@ -504,8 +549,8 @@ export const SimpananModule: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-stone-100">
                     {savingsTransactions.map((trx) => {
-                      const proofUrl = hasTransactionProof(trx)
-                        ? (getPublicProofUrl(trx.filelink) || resolveKnownStorageProofUrl(trx.id))
+                      const rawProofRef = hasTransactionProof(trx)
+                        ? (getPublicProofUrl(trx.bukti_url || trx.filelink) || resolveKnownStorageProofUrl(trx.id))
                         : '';
                       return (
                         <tr key={trx.id} className="hover:bg-stone-50">
@@ -515,16 +560,15 @@ export const SimpananModule: React.FC = () => {
                           <td className="py-3 px-3 text-stone-600">{trx.metode_bayar}</td>
                           <td className="py-3 px-3 text-stone-600">{trx.keterangan}</td>
                           <td className="py-3 px-3 text-center">
-                            {proofUrl ? (
-                              <a
-                                href={proofUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md"
+                            {rawProofRef ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSavingsProof(trx, rawProofRef)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md cursor-pointer"
                               >
                                 <Eye className="w-3 h-3" />
                                 <span>Lihat Bukti</span>
-                              </a>
+                              </button>
                             ) : (
                               <span className="text-stone-400 select-none">-</span>
                             )}
@@ -542,6 +586,53 @@ export const SimpananModule: React.FC = () => {
           </div>
         )}
       </Card>
+
+      {/* Modal Preview Bukti Simpanan (Signed URL 1 Jam) */}
+      {proofModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div>
+                <h3 className="font-bold text-stone-900 text-sm">Bukti Transfer Simpanan</h3>
+                <p className="text-[11px] font-mono text-stone-500">ID: {proofModal.trxId}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProofModal(null)}
+                className="p-1 text-stone-400 hover:text-stone-700 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="min-h-48 bg-stone-50 border border-stone-200 rounded-xl flex items-center justify-center p-3">
+              {proofModal.isLoading ? (
+                <p className="text-xs text-stone-500">Menyiapkan Signed URL (1 jam)...</p>
+              ) : proofModal.error || !proofModal.signedUrl ? (
+                <p className="text-xs font-semibold text-rose-700">{proofModal.error || 'Bukti tidak dapat dimuat'}</p>
+              ) : isPdfFile(proofModal.rawRef) ? (
+                <a
+                  href={proofModal.signedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold text-emerald-800 underline"
+                >
+                  Buka Dokumen PDF Bukti Transfer
+                </a>
+              ) : (
+                <img
+                  src={proofModal.signedUrl}
+                  alt={`Bukti ${proofModal.trxId}`}
+                  className="max-h-72 w-auto object-contain rounded-lg"
+                  onError={() => {
+                    console.error('[SimpananModule] Gambar bukti simpanan gagal dimuat:', proofModal.trxId, proofModal.signedUrl);
+                    setProofModal((prev) => (prev ? { ...prev, error: 'Bukti tidak dapat dimuat' } : prev));
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Setor Simpanan Modal */}
       {isDepositOpen && (

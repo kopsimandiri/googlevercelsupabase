@@ -47,18 +47,21 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
   }
 
   let fullName = defaultName;
-  let memberId = user.user_metadata?.member_id;
+  let memberId = user.user_metadata?.member_id as string | undefined;
+  let memberNo = (user.user_metadata?.member_no || user.app_metadata?.member_no) as string | undefined;
 
   try {
     // 1. Query public.profiles
     const { data: profile } = await client
       .from('profiles')
-      .select('id, full_name, role, phone, avatar_url')
+      .select('id, full_name, role, phone, avatar_url, member_id, username')
       .eq('id', user.id)
       .maybeSingle();
 
     if (profile) {
       if (profile.full_name) fullName = profile.full_name;
+      if (profile.member_id && !memberNo) memberNo = profile.member_id;
+      if (profile.member_id && !memberId) memberId = profile.member_id;
       if (profile.role) {
         const pRole = String(profile.role).toUpperCase();
         if (pRole === 'ADMIN' || pRole === 'SUPERADMIN') role = 'ADMIN';
@@ -89,12 +92,65 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
     role = 'ADMIN';
   }
 
+  // Untuk ANGGOTA: pastikan memberNo & profil anggota lengkap (dari email, inMemoryMemberSession, atau RPC)
+  if (role === 'ANGGOTA') {
+    if (!memberNo && emailLower.endsWith('@anggota.kopsim.id')) {
+      memberNo = emailLower.split('@')[0].toUpperCase();
+    }
+
+    if (
+      inMemoryMemberSession &&
+      ((memberNo && inMemoryMemberSession.memberNo?.toLowerCase() === memberNo.toLowerCase()) ||
+        inMemoryMemberSession.email?.toLowerCase() === emailLower)
+    ) {
+      return {
+        ...inMemoryMemberSession,
+        role: 'ANGGOTA',
+        loginTime: inMemoryMemberSession.loginTime || new Date().toISOString(),
+      };
+    }
+
+    const lookupIdent = memberNo || memberId || '';
+    if (lookupIdent) {
+      try {
+        const { data: prof } = await client.rpc('get_member_profile_self', {
+          p_identifier: lookupIdent,
+        });
+        if (prof && typeof prof === 'object') {
+          return {
+            id: prof.id || user.id,
+            name: prof.full_name || fullName,
+            email: user.email || '',
+            role: 'ANGGOTA',
+            memberId: prof.id || memberId,
+            memberNo: prof.member_no || memberNo || prof.id,
+            workArea: prof.work_area || 'PUSAT JAKARTA',
+            nikMasked: maskNik(prof.nik),
+            gender: prof.gender || 'L',
+            address: prof.address || '',
+            city: prof.city || 'Jakarta Pusat',
+            province: prof.province || 'DKI Jakarta',
+            occupation: prof.occupation || 'Anggota Koperasi',
+            birthDate: prof.birth_date || '1990-01-01',
+            birthPlace: prof.birth_place || 'Jakarta',
+            status: prof.status || 'AKTIF',
+            avatarUrl: prof.avatar_url || '',
+            loginTime: new Date().toISOString(),
+          };
+        }
+      } catch {
+        // lanjut fallback minimal
+      }
+    }
+  }
+
   return {
     id: user.id,
     name: fullName,
     email: user.email || '',
     role,
     memberId,
+    memberNo,
     loginTime: new Date().toISOString(),
   };
 }
@@ -230,17 +286,35 @@ export const authService = {
               loginTime: new Date().toISOString(),
             };
 
-            // Opsional: jika akun anggota sudah terhubung ke Supabase Auth, peroleh JWT authenticated secara diam-diam
+            // Simpan sesi anggota di memori sebelum signInWithPassword agar onAuthStateChange tidak menimpa memberNo
+            inMemoryMemberSession = memberSession;
+
+            // Sinkronisasi sesi Supabase Auth agar anggota memperoleh JWT authenticated untuk RLS & Signed URL
             try {
-              await client.auth.signInWithPassword({
+              const { error: authErr } = await client.auth.signInWithPassword({
                 email: memberSession.email,
                 password: cleanPassword,
               });
+              if (authErr && typeof fetch !== 'undefined' && typeof window !== 'undefined') {
+                const syncResp = await fetch('/api/auth/member-ensure-auth', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
+                }).catch(() => null);
+                if (syncResp?.ok) {
+                  const syncJson = await syncResp.json().catch(() => null);
+                  if (syncJson?.success && syncJson?.email) {
+                    await client.auth.signInWithPassword({
+                      email: syncJson.email,
+                      password: cleanPassword,
+                    });
+                  }
+                }
+              }
             } catch {
-              // Abaikan jika member belum memiliki akun auth.users (tetap jalan via RPC session)
+              // Tetap berjalan via RPC session + server signed-url endpoint jika belum terhubung ke auth.users
             }
 
-            inMemoryMemberSession = memberSession;
             return memberSession;
           }
         }
@@ -310,6 +384,7 @@ export const authService = {
                 loginTime: new Date().toISOString(),
               };
 
+              inMemoryMemberSession = memberSession;
               try {
                 await client.auth.signInWithPassword({
                   email: memberSession.email,
@@ -319,7 +394,6 @@ export const authService = {
                 // Abaikan jika member belum terhubung ke auth.users
               }
 
-              inMemoryMemberSession = memberSession;
               return memberSession;
             } else {
               throw new Error('Password anggota yang Anda masukkan tidak sesuai.');

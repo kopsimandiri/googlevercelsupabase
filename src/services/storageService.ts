@@ -57,15 +57,15 @@ export async function resolveActiveBucket(): Promise<string> {
       }
     }
 
-    // Attempt to auto-create public bucket 'bukti-transfer' if permitted
+    // Attempt to auto-create private bucket 'bukti-transfer' if permitted
     try {
       const { data: newBucket, error: createErr } = await client.storage.createBucket(BUKTI_TRANSFER_BUCKET, {
-        public: true,
+        public: false,
         fileSizeLimit: 10485760, // 10MB
         allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
       });
       if (!createErr && newBucket) {
-        console.info('[Storage] Created new public bucket:', BUKTI_TRANSFER_BUCKET);
+        console.info('[Storage] Created new private bucket:', BUKTI_TRANSFER_BUCKET);
         _resolvedActiveBucket = BUKTI_TRANSFER_BUCKET;
         return BUKTI_TRANSFER_BUCKET;
       }
@@ -81,28 +81,29 @@ export async function resolveActiveBucket(): Promise<string> {
 }
 
 export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
--- KOPSIM MANDIRI: SUPABASE STORAGE BUCKET 'bukti-transfer' & POLICY KEAMANAN
+-- KOPSIM MANDIRI: SUPABASE STORAGE BUCKET PRIVAT 'bukti-transfer' & POLICY RLS
 -- ==============================================================================
 
--- 1. Buat / Pastikan bucket 'bukti-transfer' tersedia (serta dukung bucket lama 'bukti_transfer')
+-- 1. Pastikan bucket 'bukti-transfer' & 'bukti_transfer' bersifat PRIVAT (public = FALSE)
+--    Sehingga akses URL langsung tanpa login ditolak oleh Supabase Storage.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES
   (
     'bukti-transfer',
     'bukti-transfer',
-    TRUE,
+    FALSE,
     10485760, -- 10MB
     ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
   ),
   (
     'bukti_transfer',
     'bukti_transfer',
-    TRUE,
+    FALSE,
     10485760,
     ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
   )
 ON CONFLICT (id) DO UPDATE SET
-  public = TRUE,
+  public = FALSE,
   file_size_limit = 10485760,
   allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
@@ -110,42 +111,34 @@ ON CONFLICT (id) DO UPDATE SET
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- 3. Bersihkan policy lama
+DROP POLICY IF EXISTS "Public Read bukti_transfer" ON storage.objects;
+DROP POLICY IF EXISTS "bukti_transfer_select_public" ON storage.objects;
 DROP POLICY IF EXISTS "bukti-transfer_auth_select" ON storage.objects;
 DROP POLICY IF EXISTS "bukti-transfer_auth_insert" ON storage.objects;
 DROP POLICY IF EXISTS "bukti-transfer_auth_update" ON storage.objects;
 DROP POLICY IF EXISTS "bukti-transfer_auth_delete" ON storage.objects;
 
--- 4. Policy SELECT: Pengguna login dapat mengakses metadata/objek bukti transfer
+-- 4. Policy SELECT: Pengguna login dapat membaca/membuat Signed URL (Admin semua; Anggota miliknya saja)
 CREATE POLICY "bukti-transfer_auth_select"
   ON storage.objects FOR SELECT
   TO authenticated
-  USING (bucket_id IN ('bukti-transfer', 'bukti_transfer'));
+  USING (public.can_access_bukti_object(bucket_id, name));
 
--- 5. Policy INSERT: Admin/Direktur bebas upload; Anggota dapat upload ke folder miliknya (investasi/setoran/avatar)
+-- 5. Policy INSERT: Admin/Direktur bebas upload; Anggota hanya ke folder setoran/investasi/avatar
 CREATE POLICY "bukti-transfer_auth_insert"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (
     bucket_id IN ('bukti-transfer', 'bukti_transfer')
     AND (
-      LOWER(COALESCE(auth.jwt() ->> 'email', '')) IN ('koperasi.simandiri@gmail.com', 'admin@kopsim.id')
-      OR LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%'
-      OR UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) IN ('ADMIN', 'DIRECTOR')
-      OR UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) IN ('ADMIN', 'DIRECTOR')
-      OR EXISTS (
-        SELECT 1 FROM public.user_roles ur
-        LEFT JOIN public.roles r ON r.id = ur.role_id
-        WHERE ur.user_id = auth.uid()
-          AND (UPPER(r.name) IN ('ADMIN', 'DIRECTOR') OR UPPER(ur.role) IN ('ADMIN', 'DIRECTOR'))
-      )
+      public.is_director_or_admin()
       OR name LIKE 'investasi/%'
       OR name LIKE 'setoran/%'
       OR name LIKE 'avatar/%'
-      OR name LIKE 'pendaftaran/%'
     )
   );
 
--- 6. Policy UPDATE & DELETE: Khusus Pengurus / Admin
+-- 6. Policy UPDATE & DELETE: Khusus Pengurus / Admin (Anggota dilarang mengubah/menghapus)
 CREATE POLICY "bukti-transfer_auth_update"
   ON storage.objects FOR UPDATE
   TO authenticated
@@ -636,9 +629,10 @@ export function getMemberDefaultProof(memberNo?: string): string {
  * Memeriksa apakah transaksi memiliki berkas bukti transfer / lampiran Supabase Storage yang valid
  * (Menolak URL legacy Google Drive dan nilai kosong/'-')
  */
-export function hasTransactionProof(trx?: { id?: string; filelink?: string } | null): boolean {
+export function hasTransactionProof(trx?: { id?: string; filelink?: string; bukti_url?: string } | null): boolean {
   if (!trx) return false;
-  const resolved = getPublicProofUrl(trx.filelink);
+  const rawLink = trx.bukti_url || trx.filelink;
+  const resolved = getPublicProofUrl(rawLink);
   if (resolved) {
     return true;
   }
@@ -983,11 +977,116 @@ export function isPdfFile(urlOrPath?: string | null): boolean {
 }
 
 /**
- * Legacy compatibility alias that returns the public URL.
+ * Membuat Signed URL sementara (default 1 jam = 3600 detik) untuk bucket privat 'bukti-transfer' / 'bukti_transfer'.
+ * Menggunakan Supabase Storage createSignedUrl() jika user memiliki sesi authenticated,
+ * dengan fallback ke endpoint server (/api/storage/signed-url) agar role ANGGOTA tetap dapat
+ * melihat bukti miliknya secara aman di bucket privat.
  */
-export async function getSignedProofUrl(storagePath: string): Promise<string | null> {
-  const url = getPublicProofUrl(storagePath);
-  return url || null;
+export async function getSignedProofUrl(
+  storagePathOrUrl?: string | null,
+  options?: { expiresIn?: number; memberNo?: string; memberName?: string }
+): Promise<string | null> {
+  if (!storagePathOrUrl) return null;
+  const trimmed = storagePathOrUrl.trim();
+  if (!trimmed || trimmed === '-' || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'none') {
+    return null;
+  }
+
+  // Tolak URL legacy Google Drive & Base64 Data URI
+  if (isGoogleDriveUrl(trimmed) || trimmed.startsWith('data:')) {
+    console.error('[Storage] Menolak referensi bukti non-Supabase (Google Drive / Base64):', trimmed.slice(0, 60));
+    return null;
+  }
+
+  // Izinkan preview blob lokal atau aset statis aplikasi
+  if (trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
+    return trimmed;
+  }
+
+  // Jika sudah berupa Signed URL aktif yang memiliki token
+  if (trimmed.includes('/storage/v1/object/sign/') && trimmed.includes('token=')) {
+    return trimmed;
+  }
+
+  const expiresIn = Math.max(60, Math.min(86400, options?.expiresIn || 3600));
+  const extractedPath = extractStoragePath(trimmed);
+  if (!extractedPath) {
+    console.error('[Storage] Gagal mengekstrak object path dari referensi bukti:', trimmed);
+    return null;
+  }
+
+  const bucketMatch = trimmed.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\//);
+  const urlBucket = bucketMatch?.[1];
+  const bucketsToTry = Array.from(
+    new Set([urlBucket, _resolvedActiveBucket, BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET].filter(Boolean) as string[])
+  );
+
+  const client = getSupabaseClient();
+  let accessToken = '';
+
+  // 1. Prioritas: gunakan Supabase client createSignedUrl jika user memiliki sesi authenticated
+  if (client) {
+    try {
+      const { data: sessionData } = await client.auth.getSession();
+      accessToken = sessionData?.session?.access_token || '';
+
+      if (sessionData?.session?.user) {
+        for (const bucket of bucketsToTry) {
+          const { data, error } = await client.storage
+            .from(bucket)
+            .createSignedUrl(extractedPath, expiresIn);
+
+          if (!error && data?.signedUrl) {
+            return data.signedUrl;
+          }
+          if (error) {
+            console.warn(`[Storage] createSignedUrl("${bucket}/${extractedPath}") gagal:`, error.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Storage] Exception saat createSignedUrl via client:', err);
+    }
+  }
+
+  // 2. Fallback terkontrol via endpoint backend (/api/storage/signed-url) untuk sesi anggota / cross-bucket
+  if (typeof fetch !== 'undefined' && typeof window !== 'undefined') {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+      const resp = await fetch('/api/storage/signed-url', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          pathOrUrl: trimmed,
+          bucket: urlBucket || BUKTI_TRANSFER_BUCKET,
+          expiresIn,
+          memberNo: options?.memberNo || '',
+          memberName: options?.memberName || '',
+        }),
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json?.success && json?.signedUrl) {
+          return json.signedUrl;
+        }
+      } else {
+        const errBody = await resp.text().catch(() => '');
+        console.error('[Storage] Endpoint /api/storage/signed-url menolak permintaan:', resp.status, errBody);
+      }
+    } catch (apiErr) {
+      console.warn('[Storage] Gagal memanggil /api/storage/signed-url:', apiErr);
+    }
+  }
+
+  console.error('[Storage] Bukti transfer tidak dapat dibuatkan Signed URL yang valid:', {
+    input: trimmed,
+    extractedPath,
+    bucketsTried: bucketsToTry,
+  });
+  return null;
 }
 
 /**

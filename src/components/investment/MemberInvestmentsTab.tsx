@@ -7,7 +7,8 @@ import { Badge } from '../common/Badge';
 import { Button } from '../common/Button';
 import { InvestmentCampaignCard } from './InvestmentCampaignCard';
 import { InvestmentCheckoutModal } from './InvestmentCheckoutModal';
-import { getPublicProofUrl, isPdfFile } from '../../services/storageService';
+import { useAuth } from '../../context/AuthContext';
+import { getSignedProofUrl, hasTransactionProof, isPdfFile } from '../../services/storageService';
 import {
   Coins,
   TrendingUp,
@@ -24,6 +25,8 @@ import {
   Printer,
   Sparkles,
   Eye,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 
 interface MemberInvestmentsTabProps {
@@ -35,6 +38,7 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
   memberNo,
   onExploreProjects,
 }) => {
+  const { user, isLoading: isAuthLoading, isAuthenticated } = useAuth();
   const [subTab, setSubTab] = useState<'PORTOFOLIO' | 'PELUANG_PROYEK'>('PORTOFOLIO');
   const [transactions, setTransactions] = useState<InvestmentTransaction[]>([]);
   const [campaigns, setCampaigns] = useState<ProjectInvestmentCampaign[]>([]);
@@ -43,10 +47,18 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedAgreement, setSelectedAgreement] = useState<DigitalAgreement | null>(null);
   const [selectedProofUrl, setSelectedProofUrl] = useState<string | null>(null);
+  const [selectedProofRaw, setSelectedProofRaw] = useState<string | null>(null);
+  const [isProofLoading, setIsProofLoading] = useState<boolean>(false);
+  const [proofLoadError, setProofLoadError] = useState<boolean>(false);
 
   useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAuthenticated || !memberNo) {
+      setIsLoading(false);
+      return;
+    }
     loadMemberInvestments();
-  }, [memberNo]);
+  }, [isAuthLoading, isAuthenticated, memberNo]);
 
   const loadMemberInvestments = async () => {
     setIsLoading(true);
@@ -62,6 +74,27 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleOpenInvestmentProof = async (rawRef: string) => {
+    setSelectedProofRaw(rawRef);
+    setSelectedProofUrl(null);
+    setProofLoadError(false);
+    setIsProofLoading(true);
+
+    const signed = await getSignedProofUrl(rawRef, {
+      expiresIn: 3600,
+      memberNo,
+      memberName: user?.name || '',
+    });
+
+    if (!signed) {
+      console.error('[MemberInvestmentsTab] Bukti tidak dapat dimuat:', { rawRef, memberNo });
+      setProofLoadError(true);
+    } else {
+      setSelectedProofUrl(signed);
+    }
+    setIsProofLoading(false);
   };
 
   // Calculations
@@ -320,12 +353,13 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
 
                   <div className="flex items-center gap-3 mt-2 flex-wrap justify-end">
                     {(() => {
-                      const resolvedProofUrl = getPublicProofUrl(tx.payment_proof_url);
-                      return resolvedProofUrl ? (
+                      const rawProof = tx.bukti_url || tx.payment_proof_url || '';
+                      const hasProof = hasTransactionProof({ id: tx.id, filelink: rawProof, bukti_url: rawProof });
+                      return hasProof ? (
                         <button
                           type="button"
-                          onClick={() => setSelectedProofUrl(resolvedProofUrl)}
-                          className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2"
+                          onClick={() => handleOpenInvestmentProof(rawProof)}
+                          className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 underline underline-offset-2 cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           Lihat Bukti
@@ -475,7 +509,7 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
       )}
 
       {/* Modal Pratinjau Bukti Pembayaran Investasi */}
-      {selectedProofUrl && (
+      {(selectedProofRaw || selectedProofUrl) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/75 backdrop-blur-xs">
           <div className="bg-surface rounded-2xl border border-stone-200 shadow-2xl max-w-lg w-full p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-stone-100 pb-3">
@@ -484,7 +518,11 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => setSelectedProofUrl(null)}
+                onClick={() => {
+                  setSelectedProofUrl(null);
+                  setSelectedProofRaw(null);
+                  setProofLoadError(false);
+                }}
                 aria-label="Tutup pratinjau bukti"
                 className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100"
               >
@@ -493,7 +531,30 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
             </div>
 
             <div className="bg-stone-900 rounded-xl p-3 flex items-center justify-center min-h-56">
-              {isPdfFile(selectedProofUrl) ? (
+              {isProofLoading ? (
+                <div className="flex flex-col items-center gap-2 text-stone-300 py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
+                  <span className="text-xs">Membuat Signed URL bukti transfer...</span>
+                </div>
+              ) : proofLoadError || !selectedProofUrl ? (
+                <div className="text-center p-6 text-stone-300 space-y-3">
+                  <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
+                  <h4 className="font-bold text-white text-sm">Bukti tidak dapat dimuat</h4>
+                  <p className="text-[11px] text-stone-400">
+                    Gambar bukti pembayaran gagal dimuat dari Supabase Storage atau sesi akses kedaluwarsa.
+                  </p>
+                  {selectedProofRaw && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenInvestmentProof(selectedProofRaw)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-600 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Muat Ulang Bukti</span>
+                    </button>
+                  )}
+                </div>
+              ) : isPdfFile(selectedProofUrl) ? (
                 <a
                   href={selectedProofUrl}
                   target="_blank"
@@ -509,21 +570,35 @@ export const MemberInvestmentsTab: React.FC<MemberInvestmentsTabProps> = ({
                   alt="Bukti Pembayaran Investasi"
                   className="max-h-[55vh] w-auto max-w-full object-contain rounded-lg"
                   referrerPolicy="no-referrer"
+                  onError={() => {
+                    console.error('[MemberInvestmentsTab] Bukti tidak dapat dimuat pada elemen gambar:', selectedProofUrl);
+                    setProofLoadError(true);
+                  }}
                 />
               )}
             </div>
 
             <div className="flex justify-end gap-2">
-              <a
-                href={selectedProofUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-800 text-white text-xs font-semibold hover:bg-emerald-900"
+              {selectedProofUrl && (
+                <a
+                  href={selectedProofUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-800 text-white text-xs font-semibold hover:bg-emerald-900"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Buka Berkas Asli
+                </a>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedProofUrl(null);
+                  setSelectedProofRaw(null);
+                  setProofLoadError(false);
+                }}
               >
-                <ExternalLink className="w-3.5 h-3.5" />
-                Buka Berkas Asli
-              </a>
-              <Button variant="outline" size="sm" onClick={() => setSelectedProofUrl(null)}>
                 Tutup
               </Button>
             </div>
