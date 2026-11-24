@@ -21,7 +21,7 @@ export interface ProductItem {
 }
 
 const PRODUCTS_TABLE_NAME = 'products';
-const STORAGE_PRODUCTS_KEY = 'kopsim_master_products_v2';
+let inMemoryProducts: ProductItem[] | null = null;
 
 export const DEFAULT_PROJECT_PRODUCTS: ProductItem[] = [
   // 1. TRADING IKAN
@@ -484,56 +484,38 @@ export function mapSupabaseProductRow(row: any): ProductItem {
 
 export const productService = {
   /**
-   * Get cached products from local storage fallback
+   * In-memory products fallback strictly for offline/test mode
    */
   getStoredProducts(): ProductItem[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_PRODUCTS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map(mapSupabaseProductRow);
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to parse cached products:', e);
+    if (!inMemoryProducts) {
+      inMemoryProducts = [...DEFAULT_PROJECT_PRODUCTS];
     }
-    return DEFAULT_PROJECT_PRODUCTS;
+    return inMemoryProducts;
   },
 
   /**
-   * Save products to local storage cache
+   * Update in-memory products strictly for offline/test mode
    */
   saveStoredProducts(products: ProductItem[]) {
-    try {
-      localStorage.setItem(STORAGE_PRODUCTS_KEY, JSON.stringify(products));
-    } catch (e) {
-      console.warn('Failed to cache products:', e);
-    }
+    inMemoryProducts = products;
   },
 
   /**
-   * Fetch all products from Supabase public.products with fallback
+   * Fetch all products from Supabase public.products authoritatively when configured
    */
   async getAllProducts(): Promise<{ data: ProductItem[]; source: 'SUPABASE' | 'LOCAL' }> {
     const client = getSupabaseClient();
     if (client && isSupabaseConfigured) {
-      try {
-        const { data, error } = await client
-          .from(PRODUCTS_TABLE_NAME)
-          .select('*')
-          .order('group_name', { ascending: true });
+      const { data, error } = await client
+        .from(PRODUCTS_TABLE_NAME)
+        .select('*')
+        .order('group_name', { ascending: true });
 
-        if (!error && data && data.length > 0) {
-          const mapped = data.map(mapSupabaseProductRow);
-          this.saveStoredProducts(mapped);
-          return { data: mapped, source: 'SUPABASE' };
-        } else if (error) {
-          console.warn('[productService.getAllProducts] Supabase error:', error.message);
-        }
-      } catch (err) {
-        console.warn('[productService.getAllProducts] Exception:', err);
+      if (error) {
+        throw new Error(`Gagal memuat data produk dari Supabase: ${error.message}`);
       }
+      const mapped = (data || []).map(mapSupabaseProductRow);
+      return { data: mapped, source: 'SUPABASE' };
     }
 
     return { data: this.getStoredProducts(), source: 'LOCAL' };
@@ -548,23 +530,18 @@ export const productService = {
 
     const client = getSupabaseClient();
     if (client && isSupabaseConfigured) {
-      try {
-        // Match group_name (or category) ILIKE %projectName%
-        const { data, error } = await client
-          .from(PRODUCTS_TABLE_NAME)
-          .select('*')
-          .or(`group_name.ilike.%${cleanProject}%,category.ilike.%${cleanProject}%`)
-          .order('sku_name', { ascending: true });
+      const { data, error } = await client
+        .from(PRODUCTS_TABLE_NAME)
+        .select('*')
+        .or(`group_name.ilike.%${cleanProject}%,category.ilike.%${cleanProject}%`)
+        .order('sku_name', { ascending: true });
 
-        if (!error && data && data.length > 0) {
-          return data.map(mapSupabaseProductRow);
-        }
-      } catch (err) {
-        console.warn(`[productService.getProductsByProject] Error for ${projectName}:`, err);
+      if (error) {
+        throw new Error(`Gagal memuat komoditas proyek dari Supabase: ${error.message}`);
       }
+      return (data || []).map(mapSupabaseProductRow);
     }
 
-    // Local fallback matching group_name
     const all = this.getStoredProducts();
     const matched = all.filter((p) => {
       const g = p.group_name.toUpperCase();
@@ -575,7 +552,6 @@ export const productService = {
       return matched;
     }
 
-    // If still empty, find any default product for this group
     return DEFAULT_PROJECT_PRODUCTS.filter((p) => {
       const g = p.group_name.toUpperCase();
       return g.includes(cleanProject) || cleanProject.includes(g);

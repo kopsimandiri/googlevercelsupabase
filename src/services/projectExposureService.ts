@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 export interface ProjectImpact {
   label: string;
@@ -110,29 +110,16 @@ CREATE POLICY "Public Read Access for Project Updates"
   USING (true);
 
 -- Policy 2: Admin dapat menambah, mengubah, dan menghapus update proyek
+DROP POLICY IF EXISTS "Admin Full Access for Project Updates" ON public.project_updates;
 CREATE POLICY "Admin Full Access for Project Updates"
   ON public.project_updates
   FOR ALL
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.user_roles ur
-      JOIN public.roles r ON ur.role_id = r.id
-      WHERE ur.user_id = auth.uid()
-        AND r.name IN ('ADMIN', 'SUPER_ADMIN', 'PENGURUS')
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.user_roles ur
-      JOIN public.roles r ON ur.role_id = r.id
-      WHERE ur.user_id = auth.uid()
-        AND r.name IN ('ADMIN', 'SUPER_ADMIN', 'PENGURUS')
-    )
-  );
+  USING (public.is_admin_only())
+  WITH CHECK (public.is_admin_only());
 `;
 
-const STORAGE_UPDATES_KEY = 'kopsim_project_updates_cache';
+let inMemoryProjectUpdates: ProjectUpdate[] | null = null;
 
 const INITIAL_DEMO_UPDATES: ProjectUpdate[] = [
   {
@@ -167,47 +154,38 @@ export const projectExposureService = {
   },
 
   getStoredUpdates(): ProjectUpdate[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_UPDATES_KEY);
-      if (raw) {
-        return JSON.parse(raw);
-      }
-    } catch (e) {
-      console.warn('Failed to parse local project updates cache:', e);
+    if (!inMemoryProjectUpdates) {
+      inMemoryProjectUpdates = [...INITIAL_DEMO_UPDATES];
     }
-    localStorage.setItem(STORAGE_UPDATES_KEY, JSON.stringify(INITIAL_DEMO_UPDATES));
-    return INITIAL_DEMO_UPDATES;
+    return inMemoryProjectUpdates;
   },
 
   async getProjectUpdates(projectId?: string): Promise<ProjectUpdate[]> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        let query = client
-          .from('project_updates')
-          .select('*')
-          .order('tanggal', { ascending: false });
+    if (isSupabaseConfigured && client) {
+      let query = client
+        .from('project_updates')
+        .select('*')
+        .order('tanggal', { ascending: false });
 
-        if (projectId) {
-          query = query.eq('project_id', projectId);
-        }
-
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          return data.map((d: any) => ({
-            id: d.id,
-            project_id: d.project_id,
-            judul: d.judul,
-            narasi: d.narasi,
-            foto_url: d.foto_url,
-            tanggal: d.tanggal,
-            dibuat_oleh: d.dibuat_oleh,
-            created_at: d.created_at,
-          }));
-        }
-      } catch (err) {
-        console.warn('Failed to fetch project updates from Supabase, using local cache:', err);
+      if (projectId) {
+        query = query.eq('project_id', projectId);
       }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Gagal memuat update proyek dari Supabase: ${error.message}`);
+      }
+      return (data || []).map((d: any) => ({
+        id: d.id,
+        project_id: d.project_id,
+        judul: d.judul,
+        narasi: d.narasi,
+        foto_url: d.foto_url,
+        tanggal: d.tanggal,
+        dibuat_oleh: d.dibuat_oleh,
+        created_at: d.created_at,
+      }));
     }
 
     const local = this.getStoredUpdates();
@@ -248,61 +226,54 @@ export const projectExposureService = {
     };
 
     const client = getSupabaseClient();
-    let savedToSupabase = false;
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from('project_updates')
+        .insert({
+          project_id: record.project_id,
+          judul: record.judul,
+          narasi: record.narasi,
+          foto_url: record.foto_url,
+          tanggal: record.tanggal,
+          dibuat_oleh: record.dibuat_oleh,
+        })
+        .select();
 
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('project_updates')
-          .insert({
-            project_id: record.project_id,
-            judul: record.judul,
-            narasi: record.narasi,
-            foto_url: record.foto_url,
-            tanggal: record.tanggal,
-            dibuat_oleh: record.dibuat_oleh,
-          })
-          .select();
-
-        if (!error && data && data.length > 0) {
-          record.id = data[0].id;
-          record.created_at = data[0].created_at;
-          savedToSupabase = true;
-        } else if (error) {
-          console.warn('Supabase project_updates insert warning:', error.message);
-        }
-      } catch (err) {
-        console.warn('Supabase project_updates insert exception:', err);
+      if (error || !data || data.length === 0) {
+        throw new Error(`Gagal memposting update proyek ke Supabase: ${error?.message || 'Tidak ada respons data'}`);
       }
+      record.id = data[0].id;
+      record.created_at = data[0].created_at;
+      return {
+        success: true,
+        data: record,
+        message: 'Update proyek berhasil diposting dan tersimpan di database Supabase.',
+      };
     }
 
-    // Update local cache
-    const current = this.getStoredUpdates();
-    const updatedList = [record, ...current];
-    localStorage.setItem(STORAGE_UPDATES_KEY, JSON.stringify(updatedList));
+    inMemoryProjectUpdates = [record, ...this.getStoredUpdates()];
 
     return {
       success: true,
       data: record,
-      message: savedToSupabase
-        ? 'Update proyek berhasil diposting dan tersimpan di database Supabase.'
-        : 'Update proyek berhasil diposting ke timeline lokal.',
+      message: 'Update proyek berhasil diposting (mode sandbox offline).',
     };
   },
 
   async deleteProjectUpdate(updateId: string): Promise<{ success: boolean; message: string }> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        await client.from('project_updates').delete().eq('id', updateId);
-      } catch (err) {
-        console.warn('Supabase delete project_update error:', err);
+    if (isSupabaseConfigured && client) {
+      const { error } = await client.from('project_updates').delete().eq('id', updateId);
+      if (error) {
+        throw new Error(`Gagal menghapus update proyek dari Supabase: ${error.message}`);
       }
+      return {
+        success: true,
+        message: 'Update proyek berhasil dihapus dari database Supabase.',
+      };
     }
 
-    const current = this.getStoredUpdates();
-    const filtered = current.filter((u) => u.id !== updateId);
-    localStorage.setItem(STORAGE_UPDATES_KEY, JSON.stringify(filtered));
+    inMemoryProjectUpdates = this.getStoredUpdates().filter((u) => u.id !== updateId);
 
     return {
       success: true,

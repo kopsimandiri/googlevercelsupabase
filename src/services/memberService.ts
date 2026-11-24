@@ -2,7 +2,8 @@ import { getSupabaseClient, isSupabaseConfigured, testTableConnection, SupabaseT
 import { MemberRecord, RegistrationPayload } from '../types/database';
 import { auditService } from './auditService';
 
-const STORAGE_MEMBERS_KEY = 'KOPSIM_MEMBERS_DATA';
+let inMemoryMembers: MemberRecord[] | null = null;
+const inMemoryAvatars: Record<string, string> = {};
 
 export const MEMBERS_TABLE_NAME = 'members';
 
@@ -215,6 +216,9 @@ export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extr
     extra.username || (member as any).username || (member.nama ? member.nama.toLowerCase().replace(/[^a-z0-9]/g, '_') : `user_${Date.now()}`)
   ).toLowerCase().trim();
 
+  const rawAvatar = String((member as any).avatar_url || extra.avatar_url || '');
+  const cleanAvatar = rawAvatar.startsWith('data:') ? '' : rawAvatar;
+
   return {
     member_no: memberNoVal,
     registered_at: member.tgl_reg || extra.registered_at || nowStr.split('T')[0],
@@ -230,7 +234,7 @@ export function mapMemberRecordToSupabaseRow(member: Partial<MemberRecord>, extr
     nik: rawNik,
     work_area: (member.plantation || extra.work_area || 'JKT-01').trim(),
     legacy_password_hash: (extra.legacy_password_hash || (member as any).legacy_password_hash || extra.password || '123456').trim(),
-    avatar_url: (member as any).avatar_url || extra.avatar_url || '',
+    avatar_url: cleanAvatar,
     status: extra.status || (member as any).status || 'AKTIF',
     created_at: extra.created_at || nowStr,
     updated_at: nowStr,
@@ -353,34 +357,6 @@ export const memberService = {
       }
     }
 
-    // LocalStorage fallback jika offline
-    try {
-      const stored = localStorage.getItem('KOPSIM_TABLE_AREAS');
-      if (stored) {
-        const areas = JSON.parse(stored);
-        const pusat = areas.find(
-          (a: any) =>
-            a.area_name?.toUpperCase().includes('PUSAT') ||
-            a.id === 'AREA-01' ||
-            a.area_code === 'JKT-01'
-        );
-        if (pusat) {
-          const acc1 = pusat.bank_account_1 ? String(pusat.bank_account_1).trim() : DEFAULT_KOPERASI_PUSAT_ACCOUNTS.bank_account_1;
-          const acc2 = pusat.bank_account_2 ? String(pusat.bank_account_2).trim() : DEFAULT_KOPERASI_PUSAT_ACCOUNTS.bank_account_2;
-          const acc3 = pusat.bank_account_3 ? String(pusat.bank_account_3).trim() : null;
-          return {
-            bank_account_1: acc1,
-            bank_account_2: acc2,
-            bank_account_3: acc3,
-            simpananAnggota: acc2,
-            projectInvestasiOperasional: acc1,
-          };
-        }
-      }
-    } catch {
-      // ignore
-    }
-
     return DEFAULT_KOPERASI_PUSAT_ACCOUNTS;
   },
 
@@ -448,17 +424,6 @@ export const memberService = {
       }
     }
 
-    // Fallback from masterDataService
-    try {
-      const stored = localStorage.getItem('KOPSIM_TABLE_AREAS');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {
-      // fallback
-    }
-
     return [
       {
         id: 'AREA-01',
@@ -520,20 +485,21 @@ export const memberService = {
 
     let maxSeq = 3000;
 
-    // Check local stored members
-    const local = this.getStoredMembers();
-    local.forEach((m) => {
-      const num = m.id || (m as any).member_no || '';
-      if (num && num.includes('-')) {
-        const parts = num.split('-');
-        if (parts.length === 2) {
-          const seq = parseInt(parts[1], 10);
-          if (!isNaN(seq) && seq > maxSeq) {
-            maxSeq = seq;
+    if (!isSupabaseConfigured || !getSupabaseClient()) {
+      const local = this.getStoredMembers();
+      local.forEach((m) => {
+        const num = m.id || (m as any).member_no || '';
+        if (num && num.includes('-')) {
+          const parts = num.split('-');
+          if (parts.length === 2) {
+            const seq = parseInt(parts[1], 10);
+            if (!isNaN(seq) && seq > maxSeq) {
+              maxSeq = seq;
+            }
           }
         }
-      }
-    });
+      });
+    }
 
     // Check Supabase public.members
     const client = getSupabaseClient();
@@ -575,7 +541,22 @@ export const memberService = {
       return { available: false, message: 'Username tidak boleh kosong.' };
     }
 
-    // Check local storage
+    // Check Supabase
+    const client = getSupabaseClient();
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from(MEMBERS_TABLE_NAME)
+        .select('id, username')
+        .ilike('username', cleanUser)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        return { available: false, message: `Username '${cleanUser}' sudah terdaftar di Supabase.` };
+      }
+      return { available: true };
+    }
+
+    // Offline fallback check
     const local = this.getStoredMembers();
     const isLocalTaken = local.some(
       (m) =>
@@ -584,24 +565,6 @@ export const memberService = {
     );
     if (isLocalTaken) {
       return { available: false, message: `Username '${cleanUser}' sudah digunakan.` };
-    }
-
-    // Check Supabase
-    const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .select('id, username')
-          .ilike('username', cleanUser)
-          .limit(1);
-
-        if (!error && data && data.length > 0) {
-          return { available: false, message: `Username '${cleanUser}' sudah terdaftar di Supabase.` };
-        }
-      } catch (err) {
-        console.warn('[memberService] checkUsernameAvailable warning:', err);
-      }
     }
 
     return { available: true };
@@ -698,77 +661,54 @@ export const memberService = {
       status: dbRow.status,
     };
 
-    let savedToSupabase = false;
-    let supabaseErrorMessage: string | undefined;
     const client = getSupabaseClient();
+    if (isSupabaseConfigured && client) {
+      const { error: insertError } = await client
+        .from(MEMBERS_TABLE_NAME)
+        .insert([dbRow]);
 
-    if (client) {
-      try {
-        console.log(`[memberService] Menyimpan anggota baru ke Supabase public.members...`, dbRow);
-        const { error: insertError } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .insert([dbRow]);
-
-        if (!insertError) {
-          savedToSupabase = true;
-          console.log(`[memberService] Berhasil menyimpan ke Supabase public.members.`);
-        } else {
-          console.warn(`[memberService] Supabase insert notice:`, insertError.message);
-          supabaseErrorMessage = insertError.message;
-          // Try update by member_no if already exists
-          const { error: updateErr } = await client
-            .from(MEMBERS_TABLE_NAME)
-            .update(dbRow)
-            .eq('member_no', idVal);
-
-          if (!updateErr) {
-            savedToSupabase = true;
-            supabaseErrorMessage = undefined;
-            console.log(`[memberService] Berhasil update data anggota yang sudah ada di Supabase.`);
-          } else {
-            supabaseErrorMessage = `${insertError.message} / Update: ${updateErr.message}`;
-            console.error(`[memberService] Supabase add member error:`, updateErr.message);
-          }
-        }
-      } catch (err: any) {
-        supabaseErrorMessage = err?.message || String(err);
-        console.error(`[memberService] Supabase insert exception:`, err);
+      if (!insertError) {
+        return {
+          success: true,
+          data: newMemberRecord,
+          source: 'SUPABASE',
+        };
       }
+
+      const { error: updateErr } = await client
+        .from(MEMBERS_TABLE_NAME)
+        .update(dbRow)
+        .eq('member_no', idVal);
+
+      if (!updateErr) {
+        return {
+          success: true,
+          data: newMemberRecord,
+          source: 'SUPABASE',
+        };
+      }
+
+      throw new Error(`Gagal menyimpan anggota baru ke Supabase: ${insertError.message} / ${updateErr.message}`);
     }
 
-    // 3. Save to local storage cache
-    try {
-      const stored = this.getStoredMembers();
-      // remove duplicate if exists
-      const filtered = stored.filter((m) => m.id !== idVal);
-      filtered.unshift(newMemberRecord);
-      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(filtered));
-    } catch (e) {
-      console.warn('Local storage save exception:', e);
-    }
+    // In-memory fallback strictly for offline/test mode
+    const stored = this.getStoredMembers();
+    const filtered = stored.filter((m) => m.id !== idVal);
+    filtered.unshift(newMemberRecord);
+    inMemoryMembers = filtered;
 
     return {
       success: true,
       data: newMemberRecord,
-      source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
-      error: supabaseErrorMessage,
+      source: 'LOCAL',
     };
   },
 
   getStoredMembers(): MemberRecord[] {
-    try {
-      const stored = localStorage.getItem(STORAGE_MEMBERS_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {
-      // Fallback
+    if (!inMemoryMembers) {
+      inMemoryMembers = [...INITIAL_MEMBERS];
     }
-    // Only return initial members if no cache exists
-    return INITIAL_MEMBERS;
+    return inMemoryMembers;
   },
 
   async checkStatus(): Promise<SupabaseTableCheckResult> {
@@ -780,42 +720,32 @@ export const memberService = {
    */
   async getMembersWithMeta(): Promise<MemberFetchResult> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        console.log(`[memberService] Membaca data langsung dari tabel '${MEMBERS_TABLE_NAME}' di Supabase...`);
-        
-        // Query direct from Supabase public.members
-        const { data, error } = await client
-          .from(MEMBERS_TABLE_NAME)
-          .select('*');
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from(MEMBERS_TABLE_NAME)
+        .select('*');
 
-        if (!error && Array.isArray(data)) {
-          console.log(`[memberService] Berhasil memuat ${data.length} baris dari tabel public.members Supabase.`);
-          const mappedData = data.map(mapSupabaseMemberRowToMemberRecord);
-          // Sync to localStorage for fast local caching
-          localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(mappedData));
-          return {
-            data: mappedData,
-            source: 'SUPABASE',
-            message: `Data live real-time dari Supabase public.members (${data.length} anggota ditemukan di database)`,
-          };
-        }
-
-        if (error) {
-          console.warn(`[memberService] Supabase public.members query notice:`, error.message);
-        }
-      } catch (err: any) {
-        console.warn(`[memberService] Supabase connection error:`, err);
+      if (error) {
+        return {
+          data: [],
+          source: 'SUPABASE',
+          message: `Gagal memuat data anggota dari Supabase: ${error.message}`,
+        };
       }
+
+      const mappedData = (data || []).map(mapSupabaseMemberRowToMemberRecord);
+      return {
+        data: mappedData,
+        source: 'SUPABASE',
+        message: `Data live real-time dari Supabase public.members (${mappedData.length} anggota ditemukan di database)`,
+      };
     }
 
     const localData = this.getStoredMembers();
     return {
       data: localData,
       source: 'LOCAL_STORAGE',
-      message: isSupabaseConfigured
-        ? 'Memuat data cache lokal (Supabase belum mengembalikan data public.members)'
-        : 'Mode Offline / Local Storage (Supabase belum dihubungkan)',
+      message: 'Mode Sandbox / Unit Test In-Memory (Supabase belum dikonfigurasi)',
     };
   },
 
@@ -866,6 +796,67 @@ export const memberService = {
     const nowStr = new Date().toISOString();
 
     if (isEdit) {
+      if (isSupabaseConfigured && client) {
+        const { data: existingRow, error: findErr } = await client
+          .from(MEMBERS_TABLE_NAME)
+          .select('*')
+          .or(`member_no.eq.${memberData.id},id.eq.${memberData.id}`)
+          .maybeSingle();
+
+        if (findErr) {
+          return { success: false, error: `Gagal memeriksa data anggota di Supabase: ${findErr.message}`, source: 'SUPABASE' };
+        }
+        if (!existingRow) {
+          return { success: false, error: 'ID Anggota tidak ditemukan di database Supabase.', source: 'SUPABASE' };
+        }
+
+        const oldRecord = mapSupabaseMemberRowToMemberRecord(existingRow);
+        const updatedRecord: MemberRecord = {
+          ...oldRecord,
+          ...memberData,
+        };
+
+        const updatePayload: Record<string, any> = {
+          full_name: updatedRecord.nama,
+          gender: updatedRecord.gender === 'P' ? 'P' : 'L',
+          province: updatedRecord.provinsi || 'DKI Jakarta',
+          city: updatedRecord.kota || 'Jakarta Pusat',
+          address: updatedRecord.alamat || '',
+          occupation: updatedRecord.pekerjaan || 'Anggota Koperasi',
+          work_area: updatedRecord.plantation || 'PUSAT JAKARTA',
+          birth_date: updatedRecord.tgl_lahir || '1990-01-01',
+          updated_at: nowStr,
+        };
+
+        if (updatedRecord.tempat_lahir) {
+          updatePayload.birth_place = updatedRecord.tempat_lahir;
+        }
+
+        const updateRes = await client
+          .from(MEMBERS_TABLE_NAME)
+          .update(updatePayload)
+          .eq('id', existingRow.id);
+
+        if (updateRes.error) {
+          return { success: false, error: `Gagal memperbarui data anggota di Supabase: ${updateRes.error.message}`, source: 'SUPABASE' };
+        }
+
+        await auditService.logActivity(
+          'UPDATE_MEMBER',
+          'members',
+          memberData.id!,
+          oldRecord,
+          updatedRecord
+        );
+
+        return {
+          success: true,
+          id: memberData.id,
+          source: 'SUPABASE',
+        };
+      }
+
+      // In-memory fallback strictly for offline/test mode
       const members = this.getStoredMembers();
       const idx = members.findIndex((m) => m.id === memberData.id);
       if (idx === -1) return { success: false, error: 'ID Anggota tidak ditemukan.', source: 'LOCAL' };
@@ -876,49 +867,9 @@ export const memberService = {
         ...memberData,
       } as MemberRecord;
 
-      let savedToSupabase = false;
-      let supabaseErrorMsg: string | undefined;
-
-      if (client) {
-        try {
-          const updatePayload: Record<string, any> = {
-            full_name: updatedRecord.nama,
-            gender: updatedRecord.gender === 'P' ? 'P' : 'L',
-            province: updatedRecord.provinsi || 'DKI Jakarta',
-            city: updatedRecord.kota || 'Jakarta Pusat',
-            address: updatedRecord.alamat || '',
-            occupation: updatedRecord.pekerjaan || 'Anggota Koperasi',
-            work_area: updatedRecord.plantation || 'PUSAT JAKARTA',
-            birth_date: updatedRecord.tgl_lahir || '1990-01-01',
-            updated_at: nowStr,
-          };
-
-          if (updatedRecord.tempat_lahir) {
-            updatePayload.birth_place = updatedRecord.tempat_lahir;
-          }
-
-          let updateRes = await client
-            .from(MEMBERS_TABLE_NAME)
-            .update(updatePayload)
-            .eq('member_no', memberData.id);
-
-          if (!updateRes.error) {
-            savedToSupabase = true;
-          } else {
-            console.error('SAVE MEMBER SUPABASE ERROR (MEMBER_NO):', updateRes.error);
-            supabaseErrorMsg = updateRes.error.message;
-          }
-        } catch (err: any) {
-          supabaseErrorMsg = err?.message || String(err);
-          console.error('SAVE MEMBER SUPABASE ERROR:', err);
-        }
-      }
-
-      // Update local storage
       members[idx] = updatedRecord;
-      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
+      inMemoryMembers = members;
 
-      // Record audit log
       await auditService.logActivity(
         'UPDATE_MEMBER',
         'members',
@@ -930,8 +881,7 @@ export const memberService = {
       return {
         success: true,
         id: memberData.id,
-        source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
-        error: supabaseErrorMsg,
+        source: 'LOCAL',
       };
     } else {
       // 1. Generate unique Member ID
@@ -957,7 +907,6 @@ export const memberService = {
         simpanan_sukarela: memberData.simpanan_sukarela || 0,
       };
 
-      // Pastikan username unik berbasis lower(namadepan) dan password default 123456
       let assignedUsername = extraPayload.username;
       if (!assignedUsername && newMember.nama) {
         assignedUsername = await this.generateUniqueUsername(newMember.nama);
@@ -975,99 +924,75 @@ export const memberService = {
       newMember.username = dbRow.username;
       newMember.legacy_password_hash = dbRow.legacy_password_hash;
 
-      let savedToSupabase = false;
-      let supabaseErrorMsg: string | undefined;
+      if (isSupabaseConfigured && client) {
+        let insertRes = await client
+          .from(MEMBERS_TABLE_NAME)
+          .insert([dbRow]);
 
-      // 2. Try Supabase INSERT first
-      if (client) {
-        try {
-          let insertRes = await client
-            .from(MEMBERS_TABLE_NAME)
-            .insert([dbRow]);
-
-          if (insertRes.error && dbRow.avatar_url) {
-            const safeRow = { ...dbRow };
-            delete safeRow.avatar_url;
-            insertRes = await client.from(MEMBERS_TABLE_NAME).insert([safeRow]);
-          }
-
-          if (!insertRes.error) {
-            savedToSupabase = true;
-          } else {
-            supabaseErrorMsg = insertRes.error.message;
-            console.error('SAVE MEMBER SUPABASE ERROR:', insertRes.error);
-            // Fallback: try update by member_no if existing
-            const { error: updateErr } = await client
-              .from(MEMBERS_TABLE_NAME)
-              .update(dbRow)
-              .eq('member_no', newId);
-            if (!updateErr) {
-              savedToSupabase = true;
-              supabaseErrorMsg = undefined;
-            } else {
-              console.error('SAVE MEMBER SUPABASE ERROR (UPDATE):', updateErr);
-            }
-          }
-        } catch (err: any) {
-          supabaseErrorMsg = err?.message || String(err);
-          console.error('SAVE MEMBER SUPABASE ERROR:', err);
+        if (insertRes.error && dbRow.avatar_url) {
+          const safeRow = { ...dbRow };
+          delete safeRow.avatar_url;
+          insertRes = await client.from(MEMBERS_TABLE_NAME).insert([safeRow]);
         }
+
+        if (insertRes.error) {
+          const { error: updateErr } = await client
+            .from(MEMBERS_TABLE_NAME)
+            .update(dbRow)
+            .eq('member_no', newId);
+          if (updateErr) {
+            return {
+              success: false,
+              error: `Gagal menyimpan anggota ke Supabase: ${insertRes.error.message}`,
+              source: 'SUPABASE',
+            };
+          }
+        }
+
+        await auditService.logActivity('CREATE_MEMBER', 'members', newId, null, newMember);
+        return {
+          success: true,
+          id: newId,
+          source: 'SUPABASE',
+        };
       }
 
-      // 3. Update local cache
+      // In-memory fallback strictly for offline/test mode
       const members = this.getStoredMembers();
       const filtered = members.filter((m) => m.id !== newId);
       filtered.unshift(newMember);
-      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(filtered));
+      inMemoryMembers = filtered;
 
-      // Record audit log
-      await auditService.logActivity(
-        'CREATE_MEMBER',
-        'members',
-        newId,
-        null,
-        newMember
-      );
+      await auditService.logActivity('CREATE_MEMBER', 'members', newId, null, newMember);
 
       return {
         success: true,
         id: newId,
-        source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
-        error: supabaseErrorMsg,
+        source: 'LOCAL',
       };
     }
   },
 
   async deleteMember(id: string): Promise<{ success: boolean; error?: string }> {
+    const client = getSupabaseClient();
+    if (isSupabaseConfigured && client) {
+      const { error } = await client.from(MEMBERS_TABLE_NAME).delete().or(`member_no.eq.${id},id.eq.${id}`);
+      if (error) {
+        return { success: false, error: `Gagal menghapus anggota dari Supabase: ${error.message}` };
+      }
+      await auditService.logActivity('DELETE_MEMBER', 'members', id, { id }, null);
+      return { success: true };
+    }
+
     let members = this.getStoredMembers();
     const targetIdx = members.findIndex((m) => m.id === id);
     if (targetIdx === -1) return { success: false, error: 'Data anggota tidak ditemukan.' };
 
     const oldRecord = members[targetIdx];
     members = members.filter((m) => m.id !== id);
-    localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
+    inMemoryMembers = members;
 
-    // Record audit log
-    await auditService.logActivity(
-      'DELETE_MEMBER',
-      'members',
-      id,
-      oldRecord,
-      null
-    );
-
-    const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { error } = await client.from(MEMBERS_TABLE_NAME).delete().eq('member_no', id);
-        if (error) {
-          console.warn('Supabase delete member warning:', error);
-        }
-      } catch (err) {
-        console.warn('Supabase delete member fallback:', err);
-      }
-    }
-
+    await auditService.logActivity('DELETE_MEMBER', 'members', id, oldRecord, null);
     return { success: true };
   },
 
@@ -1237,8 +1162,8 @@ export const memberService = {
       }
     }
 
-    // 3. Update local storage cache if exists
-    try {
+    // 3. Update in-memory cache ONLY when offline/test mode
+    if (!isSupabaseConfigured || !client) {
       const stored = this.getStoredMembers();
       const idx = stored.findIndex(
         (m) =>
@@ -1251,10 +1176,7 @@ export const memberService = {
           ...stored[idx],
           legacy_password_hash: cleanPassword,
         };
-        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(stored));
       }
-    } catch (localErr) {
-      console.warn('Local member cache update error:', localErr);
     }
 
     await auditService.logActivity(
@@ -1269,7 +1191,7 @@ export const memberService = {
       success: true,
       message: supabaseSuccess
         ? 'Password berhasil diperbarui dan disinkronkan ke server database untuk semua perangkat.'
-        : 'Password anggota berhasil diperbarui secara lokal.',
+        : 'Password anggota berhasil diperbarui.',
     };
   },
 
@@ -1484,9 +1406,9 @@ export const memberService = {
       }
     }
 
-    // 2. Update local storage cache
+    // 2. Fallback in-memory ONLY when offline/test mode
     let updatedRecord: MemberRecord | null = null;
-    try {
+    if (!isSupabaseConfigured || !client) {
       const stored = this.getStoredMembers();
       const idx = stored.findIndex(
         (m) =>
@@ -1509,7 +1431,6 @@ export const memberService = {
           ...(payload.avatar_url !== undefined ? { avatar_url: payload.avatar_url } : {}),
         };
         updatedRecord = stored[idx];
-        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(stored));
       } else {
         const created: MemberRecord = {
           id: cleanId,
@@ -1532,22 +1453,17 @@ export const memberService = {
         };
         stored.push(created);
         updatedRecord = created;
-        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(stored));
       }
-
-      if (payload.avatar_url) {
-        localStorage.setItem(`KOPSIM_AVATAR_${cleanId.toUpperCase()}`, payload.avatar_url);
-        if (targetRow?.member_no) {
-          localStorage.setItem(`KOPSIM_AVATAR_${targetRow.member_no.toUpperCase()}`, payload.avatar_url);
-        }
+      if (payload.avatar_url && !payload.avatar_url.startsWith('data:')) {
+        inMemoryAvatars[cleanId.toUpperCase()] = payload.avatar_url;
       }
-    } catch (localErr) {
-      console.warn('Local member cache update error:', localErr);
+    } else if (!savedToSupabase) {
+      throw new Error('Gagal menyimpan perubahan data pribadi ke server database Supabase.');
     }
 
     if (dbReturnedRow) {
       const fromDb = mapSupabaseMemberRowToMemberRecord(dbReturnedRow);
-      if (payload.avatar_url && !fromDb.avatar_url) {
+      if (payload.avatar_url && !fromDb.avatar_url && !payload.avatar_url.startsWith('data:')) {
         fromDb.avatar_url = payload.avatar_url;
       }
       updatedRecord = fromDb;
@@ -1568,20 +1484,23 @@ export const memberService = {
    */
   async updateMemberAvatar(
     memberNoOrId: string,
-    avatarDataUrl: string
+    avatarUrl: string
   ): Promise<{ success: boolean; avatarUrl: string; message: string; source: 'SUPABASE' | 'LOCAL' }> {
     const cleanId = (memberNoOrId || '').trim();
     if (!cleanId) {
       throw new Error('ID atau Nomor Anggota tidak valid.');
     }
+    if (avatarUrl.startsWith('data:')) {
+      throw new Error('Format base64 tidak diperbolehkan. Unggah foto ke Supabase Storage terlebih dahulu.');
+    }
 
     let savedToSupabase = false;
     const client = getSupabaseClient();
-    if (client) {
+    if (isSupabaseConfigured && client) {
       try {
         const { data: rpcRes, error: rpcErr } = await client.rpc('update_member_profile_self', {
           p_member_no: cleanId,
-          p_avatar_url: avatarDataUrl,
+          p_avatar_url: avatarUrl,
         });
         if (!rpcErr && rpcRes?.success) {
           savedToSupabase = true;
@@ -1591,70 +1510,60 @@ export const memberService = {
       }
 
       if (!savedToSupabase) {
-        try {
-          const updateRes = await client
+        const updateRes = await client
+          .from(MEMBERS_TABLE_NAME)
+          .update({
+            avatar_url: avatarUrl,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('member_no', cleanId)
+          .select('id');
+
+        if (!updateRes.error && updateRes.data && updateRes.data.length > 0) {
+          savedToSupabase = true;
+        } else {
+          const byIdRes = await client
             .from(MEMBERS_TABLE_NAME)
             .update({
-              avatar_url: avatarDataUrl,
+              avatar_url: avatarUrl,
               updated_at: new Date().toISOString(),
             })
-            .eq('member_no', cleanId)
+            .eq('id', cleanId)
             .select('id');
 
-          if (!updateRes.error && updateRes.data && updateRes.data.length > 0) {
-            savedToSupabase = true;
-          } else {
-            const byIdRes = await client
-              .from(MEMBERS_TABLE_NAME)
-              .update({
-                avatar_url: avatarDataUrl,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', cleanId)
-              .select('id');
-
-            if (!byIdRes.error && byIdRes.data && byIdRes.data.length > 0) savedToSupabase = true;
-          }
-        } catch (err) {
-          console.warn('Supabase updateMemberAvatar warning:', err);
+          if (!byIdRes.error && byIdRes.data && byIdRes.data.length > 0) savedToSupabase = true;
         }
       }
-    }
 
-    // Update local cache
-    try {
-      const stored = this.getStoredMembers();
-      const idx = stored.findIndex(
-        (m) =>
-          m.id.toLowerCase() === cleanId.toLowerCase() ||
-          (m.member_no && m.member_no.toLowerCase() === cleanId.toLowerCase()) ||
-          (m.username && m.username.toLowerCase() === cleanId.toLowerCase())
-      );
-      if (idx !== -1) {
-        stored[idx] = {
-          ...stored[idx],
-          avatar_url: avatarDataUrl,
-        };
-        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(stored));
+      if (!savedToSupabase) {
+        throw new Error('Gagal menyimpan URL foto profil ke database Supabase.');
       }
-    } catch (localErr) {
-      console.warn('Local member avatar cache error:', localErr);
+
+      return {
+        success: true,
+        avatarUrl,
+        source: 'SUPABASE',
+        message: 'Foto profil berhasil disimpan ke tabel Supabase public.members.',
+      };
     }
 
-    // Also store standalone avatar storage key
-    try {
-      localStorage.setItem(`KOPSIM_AVATAR_${cleanId.toUpperCase()}`, avatarDataUrl);
-    } catch (e) {
-      // quota safeguard
+    const stored = this.getStoredMembers();
+    const idx = stored.findIndex(
+      (m) =>
+        m.id.toLowerCase() === cleanId.toLowerCase() ||
+        (m.member_no && m.member_no.toLowerCase() === cleanId.toLowerCase()) ||
+        (m.username && m.username.toLowerCase() === cleanId.toLowerCase())
+    );
+    if (idx !== -1) {
+      stored[idx] = { ...stored[idx], avatar_url: avatarUrl };
     }
+    inMemoryAvatars[cleanId.toUpperCase()] = avatarUrl;
 
     return {
       success: true,
-      avatarUrl: avatarDataUrl,
-      source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
-      message: savedToSupabase
-        ? 'Foto profil berhasil disimpan ke tabel Supabase public.members.'
-        : 'Pas foto anggota berhasil diperbarui.',
+      avatarUrl,
+      source: 'LOCAL',
+      message: 'Pas foto anggota berhasil diperbarui.',
     };
   },
 
@@ -1662,21 +1571,15 @@ export const memberService = {
     const cleanId = (memberNoOrId || '').trim().toUpperCase();
     if (!cleanId) return null;
 
-    try {
-      const direct = localStorage.getItem(`KOPSIM_AVATAR_${cleanId}`);
-      if (direct) return direct;
-
-      const stored = this.getStoredMembers();
-      const match = stored.find(
-        (m) =>
-          m.id.toUpperCase() === cleanId ||
-          (m.member_no && m.member_no.toUpperCase() === cleanId) ||
-          (m.username && m.username.toUpperCase() === cleanId)
-      );
-      return match?.avatar_url || null;
-    } catch {
-      return null;
-    }
+    if (inMemoryAvatars[cleanId]) return inMemoryAvatars[cleanId];
+    const stored = this.getStoredMembers();
+    const match = stored.find(
+      (m) =>
+        m.id.toUpperCase() === cleanId ||
+        (m.member_no && m.member_no.toUpperCase() === cleanId) ||
+        (m.username && m.username.toUpperCase() === cleanId)
+    );
+    return match?.avatar_url || null;
   },
 
   async pushSeedToSupabase(): Promise<{ success: boolean; count: number; error?: string }> {

@@ -9,6 +9,7 @@ import {
   newsService,
   NEWS_ARTICLES_SQL_DDL,
 } from '../../services/newsService';
+import { uploadMemberProof } from '../../services/storageService';
 import {
   NewsArticle,
   NewsCategory,
@@ -41,6 +42,7 @@ import {
   Info,
   ImageIcon,
   Globe,
+  Loader2,
 } from 'lucide-react';
 
 const PRESET_ASSETS = [
@@ -88,6 +90,7 @@ export const NewsAdminModule: React.FC = () => {
 
   // Form State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [isUploadingCover, setIsUploadingCover] = useState<boolean>(false);
   const [editingArticle, setEditingArticle] = useState<NewsArticle | null>(null);
   const [deletingArticle, setDeletingArticle] = useState<{ id: string; judul: string } | null>(null);
   const [formData, setFormData] = useState<{
@@ -291,7 +294,7 @@ export const NewsAdminModule: React.FC = () => {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -300,15 +303,28 @@ export const NewsAdminModule: React.FC = () => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (uploadEvent) => {
-      const dataUrl = uploadEvent.target?.result as string;
-      if (dataUrl) {
-        setFormData((prev) => ({ ...prev, foto_url: dataUrl }));
-        showToast('Foto sampul berhasil dipilih dan dimuat!', 'success');
+    try {
+      setIsUploadingCover(true);
+      showToast('Mengunggah foto sampul ke Supabase Storage...', 'info');
+      const uploadRes = await uploadMemberProof(
+        file,
+        'berita',
+        formData.project_id || 'NEWS',
+        file.name
+      );
+
+      if (!uploadRes.success || !uploadRes.fileUrl) {
+        throw new Error(uploadRes.error || 'Gagal mengunggah foto ke Supabase Storage.');
       }
-    };
-    reader.readAsDataURL(file);
+
+      setFormData((prev) => ({ ...prev, foto_url: uploadRes.fileUrl || '' }));
+      showToast('Foto sampul berhasil diunggah ke Supabase Storage!', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengunggah foto sampul berita.', 'error');
+    } finally {
+      setIsUploadingCover(false);
+      e.target.value = '';
+    }
   };
 
   const handleCopySql = () => {
@@ -842,12 +858,17 @@ export const NewsAdminModule: React.FC = () => {
                     </span>
                   </div>
 
-                  <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-xs font-semibold text-white cursor-pointer shadow-xs hover:shadow active:scale-95 transition-all border border-emerald-700">
-                    <Upload className="w-3.5 h-3.5 text-white" />
-                    <span>Unggah Foto</span>
+                  <label className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-xs font-semibold text-white cursor-pointer shadow-xs hover:shadow active:scale-95 transition-all border border-emerald-700 ${isUploadingCover ? 'opacity-70 pointer-events-none' : ''}`}>
+                    {isUploadingCover ? (
+                      <Loader2 className="w-3.5 h-3.5 text-white animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5 text-white" />
+                    )}
+                    <span>{isUploadingCover ? 'Mengunggah...' : 'Unggah Foto'}</span>
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={isUploadingCover}
                       onChange={handleFileUpload}
                       className="hidden"
                     />

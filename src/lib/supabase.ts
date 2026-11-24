@@ -4,8 +4,8 @@ const metaEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.m
 
 const supabaseUrl = (metaEnv.VITE_SUPABASE_URL || '').trim();
 const supabasePublishableKey = (
-  metaEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
   metaEnv.VITE_SUPABASE_ANON_KEY ||
+  metaEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
   ''
 ).trim();
 
@@ -14,7 +14,8 @@ export const isSupabaseConfigured = Boolean(
   supabasePublishableKey &&
   supabaseUrl !== 'https://your-project.supabase.co' &&
   supabasePublishableKey !== 'your-publishable-key' &&
-  supabasePublishableKey !== 'your-anon-key'
+  supabasePublishableKey !== 'your-anon-key' &&
+  supabasePublishableKey !== 'sb_publishable_your-key'
 );
 
 export function getSupabaseUrl(): string {
@@ -28,8 +29,8 @@ export function validateEnvironment(): void {
 
   if (!isSupabaseConfigured) {
     const errorMsg =
-      'KOPSIM: Supabase URL atau Publishable Key belum dikonfigurasi. ' +
-      'Pastikan VITE_SUPABASE_URL dan VITE_SUPABASE_PUBLISHABLE_KEY telah diatur di Environment Variables.';
+      'KOPSIM: VITE_SUPABASE_URL atau VITE_SUPABASE_ANON_KEY belum dikonfigurasi. ' +
+      'Pastikan kedua variabel tersebut telah diatur di Environment Variables.';
     if (mode === 'production') {
       throw new Error(errorMsg);
     } else {
@@ -84,7 +85,7 @@ export async function testTableConnection(tableName: string): Promise<SupabaseTa
       tableName,
       isConfigured: false,
       isConnected: false,
-      statusMessage: 'Supabase URL belum dikonfigurasi. Pastikan VITE_SUPABASE_URL dan VITE_SUPABASE_PUBLISHABLE_KEY telah diisi di Environment Variables.',
+      statusMessage: 'Supabase belum dikonfigurasi. Pastikan VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY telah diisi di Environment Variables.',
       url: supabaseUrl || 'Belum Dikonfigurasi',
       keyMasked: maskedKey,
     };

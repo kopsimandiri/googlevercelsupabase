@@ -1,34 +1,11 @@
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 import { AuthCredentials, MemberLoginCredentials, UserRole, UserSession } from '../types/auth';
 import { maskNik } from '../utils/formatters';
 import { mapSupabaseMemberRowToMemberRecord, memberService } from './memberService';
 
-const STORAGE_MEMBER_SESSION_KEY = 'KOPSIM_MEMBER_SESSION';
-
-const safeStorage = {
-  getItem: (key: string): string | null => {
-    if (typeof window === 'undefined') return null;
-    return window.sessionStorage?.getItem(key) || window.localStorage?.getItem(key) || null;
-  },
-  setItem: (key: string, value: string): void => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.sessionStorage?.setItem(key, value);
-      window.localStorage?.setItem(key, value);
-    } catch {
-      // Storage unavailable or disabled
-    }
-  },
-  removeItem: (key: string): void => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.sessionStorage?.removeItem(key);
-      window.localStorage?.removeItem(key);
-    } catch {
-      // Storage unavailable or disabled
-    }
-  },
-};
+// Sesi anggota aktif disimpan di memori aplikasi (bukan localStorage/sessionStorage).
+// Untuk persistensi lintas reload yang aman, hubungkan akun anggota ke Supabase Auth.
+let inMemoryMemberSession: UserSession | null = null;
 
 /**
  * Resolves user profile and role details securely from Supabase database tables (profiles, user_roles, roles)
@@ -149,7 +126,7 @@ export const authService = {
     }
 
     // Clear any previous member session
-    safeStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
+    inMemoryMemberSession = null;
 
     if (client) {
       // Call Supabase Auth signInWithPassword
@@ -194,7 +171,7 @@ export const authService = {
       loginTime: new Date().toISOString(),
     };
 
-    safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(localSession));
+    inMemoryMemberSession = localSession;
     return localSession;
   },
 
@@ -253,7 +230,17 @@ export const authService = {
               loginTime: new Date().toISOString(),
             };
 
-            safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+            // Opsional: jika akun anggota sudah terhubung ke Supabase Auth, peroleh JWT authenticated secara diam-diam
+            try {
+              await client.auth.signInWithPassword({
+                email: memberSession.email,
+                password: cleanPassword,
+              });
+            } catch {
+              // Abaikan jika member belum memiliki akun auth.users (tetap jalan via RPC session)
+            }
+
+            inMemoryMemberSession = memberSession;
             return memberSession;
           }
         }
@@ -323,7 +310,16 @@ export const authService = {
                 loginTime: new Date().toISOString(),
               };
 
-              safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+              try {
+                await client.auth.signInWithPassword({
+                  email: memberSession.email,
+                  password: cleanPassword,
+                });
+              } catch {
+                // Abaikan jika member belum terhubung ke auth.users
+              }
+
+              inMemoryMemberSession = memberSession;
               return memberSession;
             } else {
               throw new Error('Password anggota yang Anda masukkan tidak sesuai.');
@@ -338,9 +334,10 @@ export const authService = {
       }
     }
 
-    // 3. Local cached or initial member verification (for offline sandbox & test environments)
-    const localMembers = memberService.getStoredMembers();
-    const normalizedInput = cleanUsername.toLowerCase().trim();
+    // 3. Offline / Unit Test fallback ONLY when Supabase is not configured
+    if (!isSupabaseConfigured || !client) {
+      const localMembers = memberService.getStoredMembers();
+      const normalizedInput = cleanUsername.toLowerCase().trim();
 
     const match = localMembers.find((m: any) => {
       const userMatch = (m.username || '').trim().toLowerCase() === normalizedInput;
@@ -374,9 +371,10 @@ export const authService = {
           loginTime: new Date().toISOString(),
         };
 
-        safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(memberSession));
+        inMemoryMemberSession = memberSession;
         return memberSession;
       }
+    }
     }
 
     // If verification fails, throw clear error without leaking internal details
@@ -387,20 +385,14 @@ export const authService = {
    * Synchronously returns the currently cached user session info (if available)
    */
   getCurrentUser(): { id?: string; email?: string; username?: string; role?: UserRole; name?: string } | null {
-    try {
-      const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
-      if (storedMember) {
-        const parsed = JSON.parse(storedMember);
-        return {
-          id: parsed.id,
-          email: parsed.email || undefined,
-          username: parsed.username || parsed.memberNo,
-          role: parsed.role || 'ANGGOTA',
-          name: parsed.name,
-        };
-      }
-    } catch {
-      // Ignored
+    if (inMemoryMemberSession) {
+      return {
+        id: inMemoryMemberSession.id,
+        email: inMemoryMemberSession.email || undefined,
+        username: inMemoryMemberSession.memberNo || inMemoryMemberSession.memberId,
+        role: inMemoryMemberSession.role || 'ANGGOTA',
+        name: inMemoryMemberSession.name,
+      };
     }
     return null;
   },
@@ -417,11 +409,11 @@ export const authService = {
         console.warn('Supabase signOut error:', err);
       }
     }
-    safeStorage.removeItem(STORAGE_MEMBER_SESSION_KEY);
+    inMemoryMemberSession = null;
   },
 
   /**
-   * Updates the active member user profile in memory and session cache
+   * Updates the active member user profile in memory
    */
   updateActiveMemberProfile(updated: {
     name?: string;
@@ -434,36 +426,30 @@ export const authService = {
     birthPlace?: string;
     avatarUrl?: string;
   }): UserSession | null {
-    try {
-      const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
-      if (storedMember) {
-        const parsed = JSON.parse(storedMember);
-        const newSession: UserSession = {
-          ...parsed,
-          ...(updated.name ? { name: updated.name } : {}),
-          ...(updated.gender ? { gender: updated.gender } : {}),
-          ...(updated.address !== undefined ? { address: updated.address } : {}),
-          ...(updated.city !== undefined ? { city: updated.city } : {}),
-          ...(updated.province !== undefined ? { province: updated.province } : {}),
-          ...(updated.occupation !== undefined ? { occupation: updated.occupation } : {}),
-          ...(updated.birthDate !== undefined ? { birthDate: updated.birthDate } : {}),
-          ...(updated.birthPlace !== undefined ? { birthPlace: updated.birthPlace } : {}),
-          ...(updated.avatarUrl !== undefined ? { avatarUrl: updated.avatarUrl } : {}),
-        };
-        safeStorage.setItem(STORAGE_MEMBER_SESSION_KEY, JSON.stringify(newSession));
-        return newSession;
-      }
-    } catch (err) {
-      console.warn('Failed to update active member session:', err);
+    if (inMemoryMemberSession) {
+      const newSession: UserSession = {
+        ...inMemoryMemberSession,
+        ...(updated.name ? { name: updated.name } : {}),
+        ...(updated.gender ? { gender: updated.gender } : {}),
+        ...(updated.address !== undefined ? { address: updated.address } : {}),
+        ...(updated.city !== undefined ? { city: updated.city } : {}),
+        ...(updated.province !== undefined ? { province: updated.province } : {}),
+        ...(updated.occupation !== undefined ? { occupation: updated.occupation } : {}),
+        ...(updated.birthDate !== undefined ? { birthDate: updated.birthDate } : {}),
+        ...(updated.birthPlace !== undefined ? { birthPlace: updated.birthPlace } : {}),
+        ...(updated.avatarUrl !== undefined ? { avatarUrl: updated.avatarUrl } : {}),
+      };
+      inMemoryMemberSession = newSession;
+      return newSession;
     }
     return null;
   },
 
   /**
-   * Gets the stored or restored user session from Supabase Auth & database or member session
+   * Gets the stored or restored user session from Supabase Auth & database or in-memory member session
    */
   async getSession(): Promise<UserSession | null> {
-    // 1. Check for active Supabase GoTrue admin/director session first
+    // 1. Check for active Supabase GoTrue session first
     const client = getSupabaseClient();
     if (client) {
       try {
@@ -476,27 +462,16 @@ export const authService = {
       }
     }
 
-    // 2. Check for active member session
-    const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
-    if (storedMember) {
-      try {
-        const parsed = JSON.parse(storedMember);
-        if (parsed) {
-          const emailLower = (parsed.email || '').toLowerCase();
-          if (emailLower === 'koperasi.simandiri@gmail.com' || emailLower.includes('admin')) {
-            return {
-              ...parsed,
-              role: 'ADMIN',
-            };
-          }
-          if (parsed.role === 'ANGGOTA' && parsed.memberNo) {
-            return parsed;
-          }
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse member session:', e);
+    // 2. Check for active in-memory member session
+    if (inMemoryMemberSession) {
+      const emailLower = (inMemoryMemberSession.email || '').toLowerCase();
+      if (emailLower === 'koperasi.simandiri@gmail.com' || emailLower.includes('admin')) {
+        return {
+          ...inMemoryMemberSession,
+          role: 'ADMIN',
+        };
       }
+      return inMemoryMemberSession;
     }
 
     return null;
@@ -524,9 +499,7 @@ export const authService = {
     if (client) {
       const { data } = client.auth.onAuthStateChange(async (event, sbSession) => {
         if (event === 'SIGNED_OUT' || !sbSession?.user) {
-          // If not a member session, reset
-          const storedMember = safeStorage.getItem(STORAGE_MEMBER_SESSION_KEY);
-          if (!storedMember) {
+          if (!inMemoryMemberSession) {
             callback(null);
           }
         } else if (sbSession.user) {

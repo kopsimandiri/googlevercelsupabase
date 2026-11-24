@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 import { NewsArticle, NewsCategory, NewsStatus } from '../types/news';
 import { normalizeImageUrl } from '../utils/formatters';
 
@@ -44,22 +44,8 @@ CREATE POLICY "Admin Full Access for News Articles"
   ON public.news_articles
   FOR ALL
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.user_roles ur
-      JOIN public.roles r ON ur.role_id = r.id
-      WHERE ur.user_id = auth.uid()
-        AND r.name IN ('ADMIN', 'SUPER_ADMIN', 'PENGURUS')
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.user_roles ur
-      JOIN public.roles r ON ur.role_id = r.id
-      WHERE ur.user_id = auth.uid()
-        AND r.name IN ('ADMIN', 'SUPER_ADMIN', 'PENGURUS')
-    )
-  );
+  USING (public.is_admin_only())
+  WITH CHECK (public.is_admin_only());
 
 -- ====================================================================
 -- TAHAP 2: SEED ARTIKEL BERITA (Kemitraan Strategis Terbit & Draft Warta)
@@ -232,28 +218,15 @@ Penandatanganan dilakukan oleh [ISI: nama & jabatan pihak koperasi] dan [ISI: na
   },
 ];
 
-const LOCAL_STORAGE_KEY = 'kopsim_news_articles_v2';
+let inMemoryArticles: NewsArticle[] = [...INITIAL_ARTICLES];
 
 export class NewsService {
   private getLocalArticles(): NewsArticle[] {
-    try {
-      const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (raw) {
-        return JSON.parse(raw);
-      }
-    } catch {
-      // ignore
-    }
-    this.saveLocalArticles(INITIAL_ARTICLES);
-    return INITIAL_ARTICLES;
+    return inMemoryArticles;
   }
 
   private saveLocalArticles(articles: NewsArticle[]): void {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(articles));
-    } catch (e) {
-      console.warn('Failed to persist articles in localStorage:', e);
-    }
+    inMemoryArticles = articles;
   }
 
   /**
@@ -261,25 +234,21 @@ export class NewsService {
    */
   async getPublishedArticles(): Promise<NewsArticle[]> {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('news_articles')
-          .select('*')
-          .eq('status', 'terbit')
-          .order('tanggal', { ascending: false });
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('news_articles')
+        .select('*')
+        .eq('status', 'terbit')
+        .order('tanggal', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          return data as NewsArticle[];
-        }
-      } catch (err) {
-        console.warn('Supabase query error on news_articles:', err);
+      if (error) {
+        throw new Error(`Gagal memuat berita dari server: ${error.message}`);
       }
+      return (data || []) as NewsArticle[];
     }
 
-    // Local fallback
-    const local = this.getLocalArticles();
-    return local
+    // In-memory fallback hanya untuk mode test offline
+    return this.getLocalArticles()
       .filter((a) => a.status === 'terbit')
       .sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
   }
@@ -289,23 +258,19 @@ export class NewsService {
    */
   async getAllArticles(): Promise<NewsArticle[]> {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('news_articles')
-          .select('*')
-          .order('created_at', { ascending: false });
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('news_articles')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          return data as NewsArticle[];
-        }
-      } catch (err) {
-        console.warn('Supabase query all news_articles:', err);
+      if (error) {
+        throw new Error(`Gagal memuat daftar artikel dari server: ${error.message}`);
       }
+      return (data || []) as NewsArticle[];
     }
 
-    const local = this.getLocalArticles();
-    return local.sort(
+    return [...this.getLocalArticles()].sort(
       (a, b) =>
         new Date(b.created_at || b.tanggal).getTime() -
         new Date(a.created_at || a.tanggal).getTime()
@@ -317,24 +282,20 @@ export class NewsService {
    */
   async getArticleById(id: string): Promise<NewsArticle | null> {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('news_articles')
-          .select('*')
-          .eq('id', id)
-          .maybeSingle();
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('news_articles')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
 
-        if (!error && data) {
-          return data as NewsArticle;
-        }
-      } catch (err) {
-        console.warn('Supabase query article by id error:', err);
+      if (error) {
+        throw new Error(`Gagal memuat detail artikel: ${error.message}`);
       }
+      return (data as NewsArticle) || null;
     }
 
-    const local = this.getLocalArticles();
-    return local.find((a) => a.id === id) || null;
+    return this.getLocalArticles().find((a) => a.id === id) || null;
   }
 
   /**
@@ -352,40 +313,33 @@ export class NewsService {
     };
 
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('news_articles')
-          .insert([
-            {
-              kategori: newArticle.kategori,
-              project_id: newArticle.project_id || null,
-              judul: newArticle.judul,
-              ringkasan: newArticle.ringkasan,
-              konten: newArticle.konten,
-              lokasi: newArticle.lokasi || null,
-              foto_url: newArticle.foto_url || null,
-              tanggal: newArticle.tanggal,
-              status: newArticle.status,
-            },
-          ])
-          .select()
-          .single();
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('news_articles')
+        .insert([
+          {
+            kategori: newArticle.kategori,
+            project_id: newArticle.project_id || null,
+            judul: newArticle.judul,
+            ringkasan: newArticle.ringkasan,
+            konten: newArticle.konten,
+            lokasi: newArticle.lokasi || null,
+            foto_url: newArticle.foto_url || null,
+            tanggal: newArticle.tanggal,
+            status: newArticle.status,
+          },
+        ])
+        .select()
+        .single();
 
-        if (!error && data) {
-          const saved = data as NewsArticle;
-          const current = this.getLocalArticles();
-          this.saveLocalArticles([saved, ...current.filter((c) => c.id !== saved.id)]);
-          return saved;
-        }
-      } catch (err) {
-        console.warn('Supabase insert news error:', err);
+      if (error || !data) {
+        throw new Error(`Gagal menyimpan artikel ke Supabase: ${error?.message || 'Tidak ada data kembali'}`);
       }
+      return data as NewsArticle;
     }
 
     const current = this.getLocalArticles();
-    const updated = [newArticle, ...current];
-    this.saveLocalArticles(updated);
+    this.saveLocalArticles([newArticle, ...current]);
     return newArticle;
   }
 
@@ -415,25 +369,18 @@ export class NewsService {
     }
 
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('news_articles')
-          .update(sanitizedUpdates)
-          .eq('id', id)
-          .select()
-          .single();
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('news_articles')
+        .update(sanitizedUpdates)
+        .eq('id', id)
+        .select()
+        .single();
 
-        if (!error && data) {
-          const updatedArt = data as NewsArticle;
-          const current = this.getLocalArticles();
-          const list = current.map((item) => (item.id === id ? updatedArt : item));
-          this.saveLocalArticles(list);
-          return updatedArt;
-        }
-      } catch (err) {
-        console.warn('Supabase update news error:', err);
+      if (error || !data) {
+        throw new Error(`Gagal memperbarui artikel di Supabase: ${error?.message || 'Artikel tidak ditemukan'}`);
       }
+      return data as NewsArticle;
     }
 
     const current = this.getLocalArticles();
@@ -466,17 +413,16 @@ export class NewsService {
    */
   async deleteArticle(id: string): Promise<boolean> {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        await supabase.from('news_articles').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Supabase delete news error:', err);
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase.from('news_articles').delete().eq('id', id);
+      if (error) {
+        throw new Error(`Gagal menghapus artikel dari Supabase: ${error.message}`);
       }
+      return true;
     }
 
     const current = this.getLocalArticles();
-    const filtered = current.filter((item) => item.id !== id);
-    this.saveLocalArticles(filtered);
+    this.saveLocalArticles(current.filter((item) => item.id !== id));
     return true;
   }
 

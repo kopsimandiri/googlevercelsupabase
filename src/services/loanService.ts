@@ -7,6 +7,8 @@ import {
   AmortizationScheduleItem,
 } from '../types/database';
 
+let inMemoryLoanApps: LoanApplicationRecord[] | null = null;
+
 export const loanService = {
   /**
    * Pure mathematical calculation for interactive client-side simulation.
@@ -182,24 +184,19 @@ export const loanService = {
 
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        const { data, error } = await client
-          .from('loan_applications')
-          .insert([newRecord])
-          .select()
-          .single();
+      const { data, error } = await client
+        .from('loan_applications')
+        .insert([newRecord])
+        .select()
+        .single();
 
-        if (error) {
-          console.warn('Failed saving to Supabase, saving to local cache:', error);
-        } else if (data) {
-          return { success: true, data };
-        }
-      } catch (err: any) {
-        console.warn('Supabase loan submit exception:', err);
+      if (error || !data) {
+        return { success: false, error: `Gagal menyimpan pengajuan pembiayaan ke Supabase: ${error?.message || 'Error server'}` };
       }
+      return { success: true, data };
     }
 
-    // LocalStorage fallback for offline resilience
+    // In-memory fallback strictly for offline/test mode
     const existing = this.getLocalApplications();
     existing.unshift(newRecord);
     this.saveLocalApplications(existing);
@@ -213,23 +210,20 @@ export const loanService = {
   async getApplications(memberId?: string): Promise<LoanApplicationRecord[]> {
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        let query = client
-          .from('loan_applications')
-          .select('*')
-          .order('created_at', { ascending: false });
+      let query = client
+        .from('loan_applications')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        if (memberId) {
-          query = query.eq('member_id', memberId);
-        }
-
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          return data;
-        }
-      } catch (err) {
-        console.warn('Error fetching loan applications from Supabase:', err);
+      if (memberId) {
+        query = query.eq('member_id', memberId);
       }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Gagal memuat pengajuan pembiayaan dari Supabase: ${error.message}`);
+      }
+      return data || [];
     }
 
     let local = this.getLocalApplications();
@@ -263,19 +257,18 @@ export const loanService = {
     }
 
     if (isSupabaseConfigured && client) {
-      try {
-        const { error } = await client
-          .from('loan_applications')
-          .update(updatePayload)
-          .eq('id', id);
+      const { error } = await client
+        .from('loan_applications')
+        .update(updatePayload)
+        .eq('id', id);
 
-        if (!error) return { success: true };
-      } catch (err: any) {
-        console.warn('Error updating loan status in Supabase:', err);
+      if (error) {
+        return { success: false, error: `Gagal memperbarui status di Supabase: ${error.message}` };
       }
+      return { success: true };
     }
 
-    // Local fallback
+    // In-memory fallback strictly for offline/test mode
     const local = this.getLocalApplications();
     const idx = local.findIndex((a) => a.id === id || a.application_no === id);
     if (idx !== -1) {
@@ -288,13 +281,8 @@ export const loanService = {
   },
 
   getLocalApplications(): LoanApplicationRecord[] {
-    try {
-      const raw = localStorage.getItem('kopsim_loan_applications');
-      if (raw) return JSON.parse(raw);
-    } catch {
-      // ignore
-    }
-    return [
+    if (inMemoryLoanApps) return inMemoryLoanApps;
+    inMemoryLoanApps = [
       {
         id: 'loan-sample-01',
         application_no: 'PB-202608-1001',
@@ -322,13 +310,10 @@ export const loanService = {
         updated_at: '2026-08-20T10:00:00Z',
       },
     ];
+    return inMemoryLoanApps;
   },
 
   saveLocalApplications(list: LoanApplicationRecord[]): void {
-    try {
-      localStorage.setItem('kopsim_loan_applications', JSON.stringify(list));
-    } catch {
-      // ignore
-    }
+    inMemoryLoanApps = list;
   },
 };

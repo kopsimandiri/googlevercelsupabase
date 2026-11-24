@@ -31,6 +31,7 @@ import { ErrorState } from '../common/ErrorState';
 import { Pagination } from '../common/Pagination';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Modal } from '../common/Modal';
+import { LocalDataMigrationModal } from '../admin/LocalDataMigrationModal';
 import {
   FileSpreadsheet,
   Plus,
@@ -120,6 +121,7 @@ export const TransactionModule: React.FC = () => {
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [isSeeding, setIsSeeding] = useState<boolean>(false);
   const [deletingTrxId, setDeletingTrxId] = useState<string | null>(null);
+  const [showMigrationModal, setShowMigrationModal] = useState<boolean>(false);
 
   // Form inputs (11 Form Fields in exact order matching user specification)
   // 1. Tanggal Transaksi -> transaction_date
@@ -1291,6 +1293,18 @@ export const TransactionModule: React.FC = () => {
             DDL & RLS
           </Button>
 
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowMigrationModal(true)}
+              leftIcon={<Database className="w-3.5 h-3.5 text-emerald-700" />}
+              title="Pindahkan sisa data lama dari browser ke server Supabase & ekspor cadangan JSON"
+            >
+              Migrasi Data Lokal
+            </Button>
+          )}
+
           {canEdit && (
             <Button
               variant="primary"
@@ -1326,7 +1340,7 @@ export const TransactionModule: React.FC = () => {
               <span>
                 {metaInfo.isConnected
                   ? `Terhubung aktif (${metaInfo.totalDbRows} baris di PostgreSQL, latensi: ${metaInfo.latencyMs}ms)`
-                  : 'Mode Offline / Local Storage (Database belum dikonfigurasi / belum disinkronkan)'}
+                  : metaInfo.errorMessage || 'Koneksi Server Supabase Belum Aktif / Terputus (periksa konfigurasi env & login)'}
               </span>
             </div>
           </div>
@@ -1780,7 +1794,7 @@ export const TransactionModule: React.FC = () => {
                 <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2">
                   <span className="text-stone-700 font-semibold flex items-center gap-1.5">
                     <Paperclip className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>10. Bukti Transaksi (Supabase Storage: bukti_transfer)</span>
+                    <span>10. Bukti Transaksi (Supabase Storage: bukti-transfer)</span>
                   </span>
                   
                   <div className="text-[10px] font-mono text-stone-600 bg-white p-2 rounded border border-stone-200 truncate">
@@ -1790,7 +1804,7 @@ export const TransactionModule: React.FC = () => {
                   {isLoadingProofSignedUrl ? (
                     <div className="flex items-center gap-2 py-4 text-stone-500 justify-center">
                       <Loader2 className="w-4 h-4 animate-spin text-emerald-800" />
-                      <span className="text-xs">Memuat URL preview dari storage privat...</span>
+                      <span className="text-xs">Memuat URL gambar dari Supabase Storage (bukti-transfer)...</span>
                     </div>
                   ) : viewingProofSignedUrl ? (
                     <div className="space-y-2">
@@ -1881,7 +1895,7 @@ export const TransactionModule: React.FC = () => {
                 {isLoadingQuickProof ? (
                   <div className="flex flex-col items-center gap-2 text-stone-400 py-12">
                     <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-                    <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti_transfer)...</span>
+                    <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti-transfer)...</span>
                   </div>
                 ) : quickProofUrl ? (
                   <div className="flex flex-col items-center gap-3 py-2 w-full">
@@ -2875,7 +2889,7 @@ export const TransactionModule: React.FC = () => {
                     : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                 }`}
               >
-                1. Table: public.transactions (19 Kolom)
+                1. Table: public.transactions (20 Kolom + bukti_url)
               </button>
               <button
                 type="button"
@@ -2886,7 +2900,7 @@ export const TransactionModule: React.FC = () => {
                     : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                 }`}
               >
-                2. Storage Bucket: bukti_transfer (RLS ADMIN)
+                2. Storage Bucket: bukti-transfer (RLS Authenticated)
               </button>
             </div>
 
@@ -2896,13 +2910,13 @@ export const TransactionModule: React.FC = () => {
                 <span>
                   {activeSqlTab === 'transactions'
                     ? 'Ketentuan RLS Tabel public.transactions'
-                    : 'Keamanan Bucket bukti_transfer (Public Read & Authorized Upload)'}
+                    : 'Keamanan Bucket bukti-transfer (Authenticated Access & Upload)'}
                 </span>
               </div>
               <p className="text-[11px] text-emerald-800 leading-relaxed">
                 {activeSqlTab === 'transactions'
-                  ? 'RLS mengamankan data tabel di tingkat baris. Kebijakan akses lengkap untuk SELECT, INSERT, UPDATE, dan DELETE telah disertakan.'
-                  : 'Bucket berstatus PUBLIC untuk SELECT (preview bukti tanpa signed token), sedangkan INSERT diizinkan untuk ADMIN & DIRECTOR, serta UPDATE/DELETE hanya untuk ADMIN.'}
+                  ? 'RLS mengamankan data tabel di tingkat baris (khusus pengguna login). Admin & Direktur melihat semua; Anggota hanya melihat miliknya.'
+                  : 'Objek lampiran bukti transfer disimpan pada bucket bukti-transfer (bukan base64 di database/browser).'}
               </p>
             </div>
 
@@ -2941,6 +2955,13 @@ export const TransactionModule: React.FC = () => {
         confirmText="Hapus Transaksi"
         cancelText="Batal"
         variant="danger"
+      />
+
+      {/* Admin Local Data Migration & Backup Modal */}
+      <LocalDataMigrationModal
+        isOpen={showMigrationModal}
+        onClose={() => setShowMigrationModal(false)}
+        onMigrationComplete={() => executeSearch(true)}
       />
     </div>
   );

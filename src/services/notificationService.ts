@@ -60,24 +60,29 @@ export const notificationService = {
 
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        const { data, error } = await client
-          .from('notification_jobs')
-          .insert([newJob])
-          .select()
-          .single();
+      const { data, error } = await client
+        .from('notification_jobs')
+        .insert([newJob])
+        .select()
+        .single();
 
-        if (!error && data) {
-          return { success: true, data };
-        }
-      } catch (err) {
-        console.warn('Error inserting notification job into Supabase:', err);
+      if (error || !data) {
+        return { success: false, error: `Gagal mengantrekan notifikasi di Supabase: ${error?.message || 'Error server'}` };
       }
+
+      // Also persist in-app user notification to Supabase
+      this.createInAppNotification({
+        user_id: job.recipient,
+        title: this.getTemplateTitle(job.type),
+        message: this.formatMessageBody(job.type, job.payload),
+        category: this.getCategoryFromType(job.type),
+      });
+
+      return { success: true, data };
     }
 
-    // Local queue fallback
+    // In-memory fallback strictly for offline/test mode
     const local = this.getLocalJobs();
-    // Idempotency check in local cache
     const existing = local.find((j) => j.idempotency_key === idKey);
     if (existing) {
       return { success: true, data: existing };
@@ -86,7 +91,6 @@ export const notificationService = {
     local.unshift(newJob);
     this.saveLocalJobs(local);
 
-    // Also create in-app user notification
     this.createInAppNotification({
       user_id: job.recipient,
       title: this.getTemplateTitle(job.type),
@@ -103,23 +107,20 @@ export const notificationService = {
   async getUserNotifications(userId?: string): Promise<UserNotificationRecord[]> {
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        let query = client
-          .from('user_notifications')
-          .select('*')
-          .order('created_at', { ascending: false });
+      let query = client
+        .from('user_notifications')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        if (userId) {
-          query = query.or(`user_id.eq.${userId},user_id.eq.ALL`);
-        }
-
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          return data;
-        }
-      } catch (err) {
-        console.warn('Error loading user notifications from Supabase:', err);
+      if (userId) {
+        query = query.or(`user_id.eq.${userId},user_id.eq.ALL`);
       }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Gagal memuat notifikasi dari Supabase: ${error.message}`);
+      }
+      return data || [];
     }
 
     let local = this.getLocalUserNotifications();
@@ -135,14 +136,14 @@ export const notificationService = {
   async markAsRead(notificationId: string): Promise<void> {
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        await client
-          .from('user_notifications')
-          .update({ is_read: true, read_at: new Date().toISOString() })
-          .eq('id', notificationId);
-      } catch (err) {
-        console.warn('Error marking notification read in Supabase:', err);
+      const { error } = await client
+        .from('user_notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('id', notificationId);
+      if (error) {
+        throw new Error(`Gagal menandai notifikasi telah dibaca: ${error.message}`);
       }
+      return;
     }
 
     const local = this.getLocalUserNotifications();
@@ -158,6 +159,22 @@ export const notificationService = {
    * Mark all notifications as read
    */
   async markAllAsRead(userId?: string): Promise<void> {
+    const client = getSupabaseClient();
+    if (isSupabaseConfigured && client) {
+      let query = client
+        .from('user_notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('is_read', false);
+      if (userId) {
+        query = query.or(`user_id.eq.${userId},user_id.eq.ALL`);
+      }
+      const { error } = await query;
+      if (error) {
+        throw new Error(`Gagal menandai semua notifikasi telah dibaca: ${error.message}`);
+      }
+      return;
+    }
+
     const local = this.getLocalUserNotifications();
     const updated = local.map((n) => {
       if (!userId || n.user_id === userId || n.user_id === 'ALL') {
@@ -191,6 +208,17 @@ export const notificationService = {
       created_at: new Date().toISOString(),
     };
 
+    const client = getSupabaseClient();
+    if (isSupabaseConfigured && client) {
+      client
+        .from('user_notifications')
+        .insert([record])
+        .then(({ error }) => {
+          if (error) console.warn('createInAppNotification Supabase warning:', error.message);
+        });
+      return record;
+    }
+
     const local = this.getLocalUserNotifications();
     local.unshift(record);
     this.saveLocalUserNotifications(local);
@@ -203,19 +231,16 @@ export const notificationService = {
   async getNotificationJobs(): Promise<NotificationJobRecord[]> {
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        const { data, error } = await client
-          .from('notification_jobs')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100);
+      const { data, error } = await client
+        .from('notification_jobs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-        if (!error && data && data.length > 0) {
-          return data;
-        }
-      } catch (err) {
-        console.warn('Error fetching notification jobs from Supabase:', err);
+      if (error) {
+        throw new Error(`Gagal memuat job notifikasi dari Supabase: ${error.message}`);
       }
+      return data || [];
     }
     return this.getLocalJobs();
   },
@@ -303,17 +328,6 @@ export const notificationService = {
 
   getLocalJobs(): NotificationJobRecord[] {
     if (inMemoryJobs) return inMemoryJobs;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const raw = localStorage.getItem('kopsim_notification_jobs');
-        if (raw) {
-          inMemoryJobs = JSON.parse(raw);
-          return inMemoryJobs!;
-        }
-      }
-    } catch {
-      // ignore
-    }
     inMemoryJobs = [
       {
         id: 'job-init-1',
@@ -364,28 +378,10 @@ export const notificationService = {
 
   saveLocalJobs(jobs: NotificationJobRecord[]): void {
     inMemoryJobs = jobs;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('kopsim_notification_jobs', JSON.stringify(jobs));
-      }
-    } catch {
-      // ignore
-    }
   },
 
   getLocalUserNotifications(): UserNotificationRecord[] {
     if (inMemoryUserNotifs) return inMemoryUserNotifs;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const raw = localStorage.getItem('kopsim_user_notifications');
-        if (raw) {
-          inMemoryUserNotifs = JSON.parse(raw);
-          return inMemoryUserNotifs!;
-        }
-      }
-    } catch {
-      // ignore
-    }
     inMemoryUserNotifs = [
       {
         id: 'user-notif-1',
@@ -421,12 +417,5 @@ export const notificationService = {
 
   saveLocalUserNotifications(notifs: UserNotificationRecord[]): void {
     inMemoryUserNotifs = notifs;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('kopsim_user_notifications', JSON.stringify(notifs));
-      }
-    } catch {
-      // ignore
-    }
   },
 };

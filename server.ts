@@ -175,6 +175,7 @@ async function processPaymentPosting(payment: ServerPaymentRecord, signatureToVe
         payment_method: `Payment Gateway (${payment.payment_channel})`,
         amount: payment.amount,
         file_url: '',
+        bukti_url: '',
         account_name_legacy: payment.member_name || 'Anggota Koperasi',
         description: `Setoran Pembayaran Online ${payment.order_id} - ${payment.member_name} (${payment.member_id})`,
         category_name: payment.category || 'Simpanan Wajib Anggota',
@@ -293,7 +294,7 @@ app.post('/api/storage/upload-proof', async (req: Request, res: Response) => {
 
     const { path: rawPath, mimeType = 'image/webp', dataUrl } = req.body || {};
     const cleanPath = String(rawPath || '').trim().replace(/^\/+/, '');
-    const allowedPrefixes = ['pendaftaran/', 'investasi/', 'setoran/', 'avatar/'];
+    const allowedPrefixes = ['pendaftaran/', 'investasi/', 'setoran/', 'avatar/', 'berita/', 'migrasi/'];
 
     if (!cleanPath || !allowedPrefixes.some((p) => cleanPath.startsWith(p))) {
       return res.status(400).json({ success: false, error: 'Path penyimpanan tidak diizinkan.' });
@@ -309,13 +310,27 @@ app.post('/api/storage/upload-proof', async (req: Request, res: Response) => {
       return res.status(413).json({ success: false, error: 'Ukuran berkas melebihi batas 10 MB.' });
     }
 
-    const { data, error } = await supabaseAdmin.storage
-      .from('bukti_transfer')
+    let usedBucket = 'bukti-transfer';
+    let { data, error } = await supabaseAdmin.storage
+      .from(usedBucket)
       .upload(cleanPath, buffer, {
         contentType: mimeType,
         cacheControl: '3600',
         upsert: false,
       });
+
+    if (error) {
+      usedBucket = 'bukti_transfer';
+      const retry = await supabaseAdmin.storage
+        .from(usedBucket)
+        .upload(cleanPath, buffer, {
+          contentType: mimeType,
+          cacheControl: '3600',
+          upsert: false,
+        });
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error || !data) {
       return res.status(403).json({
@@ -324,11 +339,12 @@ app.post('/api/storage/upload-proof', async (req: Request, res: Response) => {
       });
     }
 
-    const { data: urlData } = supabaseAdmin.storage.from('bukti_transfer').getPublicUrl(data.path || cleanPath);
+    const { data: urlData } = supabaseAdmin.storage.from(usedBucket).getPublicUrl(data.path || cleanPath);
     return res.json({
       success: true,
       path: data.path || cleanPath,
       publicUrl: urlData?.publicUrl,
+      bucket: usedBucket,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Storage upload server error' });

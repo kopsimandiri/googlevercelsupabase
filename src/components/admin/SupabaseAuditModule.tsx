@@ -11,6 +11,7 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { LoadingState } from '../common/LoadingState';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { LocalDataMigrationModal } from './LocalDataMigrationModal';
 import { useAuth } from '../../context/AuthContext';
 import {
   Database,
@@ -58,6 +59,7 @@ export const SupabaseAuditModule: React.FC = () => {
   const [isCreatingNew, setIsCreatingNew] = useState<boolean>(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showMigrationModal, setShowMigrationModal] = useState<boolean>(false);
 
   // Run comprehensive audit on mount
   useEffect(() => {
@@ -76,6 +78,10 @@ export const SupabaseAuditModule: React.FC = () => {
       setAuditResults(results);
     } catch (err: any) {
       console.error('Audit failed:', err);
+      setFeedbackMessage({
+        type: 'error',
+        text: `Gagal menjalankan audit Supabase: ${err?.message || String(err)}`,
+      });
     } finally {
       setIsAuditing(false);
     }
@@ -89,6 +95,10 @@ export const SupabaseAuditModule: React.FC = () => {
       setDataSource(res.source);
     } catch (err: any) {
       console.error('Error loading table records:', err);
+      setFeedbackMessage({
+        type: 'error',
+        text: `Gagal memuat data tabel ${tableName}: ${err?.message || String(err)}`,
+      });
     } finally {
       setIsLoadingTable(false);
     }
@@ -255,6 +265,17 @@ export const SupabaseAuditModule: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowMigrationModal(true)}
+                className="bg-emerald-500/20 text-white border-emerald-400/40 hover:bg-emerald-500/30 text-xs"
+                leftIcon={<UploadCloud className="w-3.5 h-3.5" />}
+              >
+                Migrasi Data Lokal & Cadangan
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -764,6 +785,16 @@ export const SupabaseAuditModule: React.FC = () => {
         confirmText="Hapus Record"
         cancelText="Batal"
         variant="danger"
+      />
+
+      {/* Admin Local Data Migration & Backup Modal */}
+      <LocalDataMigrationModal
+        isOpen={showMigrationModal}
+        onClose={() => setShowMigrationModal(false)}
+        onMigrationComplete={() => {
+          loadTableData(activeTable);
+          runAudit();
+        }}
       />
     </div>
   );

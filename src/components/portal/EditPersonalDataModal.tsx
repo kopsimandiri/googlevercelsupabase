@@ -180,13 +180,14 @@ export const EditPersonalDataModal: React.FC<EditPersonalDataModalProps> = ({
 
     try {
       const targetIdentifier = activeMember.id || (activeMember as any).member_no || (activeMember as any).username || '';
-      let finalAvatarUrl = avatarPreview;
+      let finalAvatarUrl = avatarPreview && !avatarPreview.startsWith('data:') ? avatarPreview : '';
 
       if (avatarBlob && targetIdentifier) {
         const upRes = await uploadMemberProof(avatarBlob, 'avatar', targetIdentifier, 'avatar.jpg');
-        if (upRes.success && upRes.fileUrl) {
-          finalAvatarUrl = upRes.fileUrl;
+        if (!upRes.success || !upRes.fileUrl || upRes.fileUrl.startsWith('data:')) {
+          throw new Error(upRes.error || 'Gagal mengunggah foto profil ke Supabase Storage.');
         }
+        finalAvatarUrl = upRes.fileUrl;
       }
 
       const res = await memberService.updateMemberPersonalData(targetIdentifier, {

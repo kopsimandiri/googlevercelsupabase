@@ -5,6 +5,7 @@ import { notificationService } from '../src/services/notificationService';
 import { auditService } from '../src/services/auditService';
 import { generateWebhookSignature, verifyWebhookSignature } from '../src/utils/cryptoSecurity';
 import {
+  BUKTI_TRANSFER_BUCKET,
   isGoogleDriveUrl,
   isSupabaseStorageUrl,
   extractStoragePath,
@@ -195,6 +196,28 @@ async function runE2ECriticalFlows() {
   assert(
     cleanedKnownDriveRow.filelink === validSupabaseUrl,
     'mapAndCleanTransactionRow mengganti URL Google Drive dengan URL Supabase Storage dari registry untuk transaksi terdaftar'
+  );
+
+  // Server-only storage & bukti_url enforcement
+  assert(
+    BUKTI_TRANSFER_BUCKET === 'bukti-transfer',
+    'Bucket utama penyimpanan bukti transfer ditetapkan sebagai bukti-transfer'
+  );
+  const fakeBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  assert(
+    getPublicProofUrl(fakeBase64) === '',
+    'getPublicProofUrl menolak URI base64 (data:) agar file tidak tersimpan di database/browser'
+  );
+  const validBuktiTransferUrl = 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti-transfer/setoran/sample.webp';
+  const mappedBuktiRow = mapAndCleanTransactionRow({
+    transaction_no: 'T261124001',
+    transaction_date: '2026-11-24',
+    amount: 250000,
+    bukti_url: validBuktiTransferUrl,
+  });
+  assert(
+    mappedBuktiRow.bukti_url === validBuktiTransferUrl && mappedBuktiRow.filelink === validBuktiTransferUrl,
+    'mapAndCleanTransactionRow memetakan kolom bukti_url dari Supabase ke tampilan riwayat transaksi'
   );
 
   // ----------------------------------------------------------------------------

@@ -1,13 +1,14 @@
 import { getSupabaseClient, getSupabaseUrl } from '../lib/supabase';
 
-export const BUKTI_TRANSFER_BUCKET = 'bukti_transfer';
-export const CANDIDATE_BUCKETS = ['bukti_transfer', 'bukti-transfer', 'transaksi', 'bukti_transaksi', 'documents', 'public', 'uploads'];
+export const BUKTI_TRANSFER_BUCKET = 'bukti-transfer';
+export const LEGACY_BUKTI_BUCKET = 'bukti_transfer';
+export const CANDIDATE_BUCKETS = ['bukti-transfer', 'bukti_transfer', 'transaksi', 'bukti_transaksi', 'documents', 'public', 'uploads'];
 
 // In-memory cache for resolved active bucket
 let _resolvedActiveBucket: string | null = null;
 
 /**
- * Automatically discovers the existing active bucket or creates 'bukti_transfer' as public.
+ * Automatically discovers the existing active bucket or creates 'bukti-transfer' as public.
  */
 export async function resolveActiveBucket(): Promise<string> {
   if (_resolvedActiveBucket) return _resolvedActiveBucket;
@@ -18,14 +19,14 @@ export async function resolveActiveBucket(): Promise<string> {
   try {
     const { data: buckets, error } = await client.storage.listBuckets();
     if (!error && buckets && buckets.length > 0) {
-      // 1. Check if 'bukti_transfer' exists
+      // 1. Check if 'bukti-transfer' exists
       const exactMatch = buckets.find((b) => b.name === BUKTI_TRANSFER_BUCKET || b.id === BUKTI_TRANSFER_BUCKET);
       if (exactMatch) {
         _resolvedActiveBucket = exactMatch.name;
         return exactMatch.name;
       }
 
-      // 2. Check candidate names in order
+      // 2. Check candidate names in order (including legacy 'bukti_transfer')
       for (const cand of CANDIDATE_BUCKETS) {
         const match = buckets.find((b) => b.name.toLowerCase() === cand.toLowerCase() || b.id.toLowerCase() === cand.toLowerCase());
         if (match) {
@@ -56,7 +57,7 @@ export async function resolveActiveBucket(): Promise<string> {
       }
     }
 
-    // Attempt to auto-create public bucket 'bukti_transfer' if permitted
+    // Attempt to auto-create public bucket 'bukti-transfer' if permitted
     try {
       const { data: newBucket, error: createErr } = await client.storage.createBucket(BUKTI_TRANSFER_BUCKET, {
         public: true,
@@ -80,22 +81,26 @@ export async function resolveActiveBucket(): Promise<string> {
 }
 
 export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
--- KOPSIM MANDIRI: BUKTI_TRANSFER PUBLIC STORAGE BUCKET & ROBUST RLS POLICIES
--- Migration: 20260826000006_storage_bukti_transfer_public_rls.sql
--- Description: Configures PUBLIC bucket 'bukti_transfer' with multi-layered,
---              bulletproof RBAC verification for ADMIN & DIRECTOR (supporting
---              Super Admin email, JWT metadata, user_roles table, and security definer functions).
+-- KOPSIM MANDIRI: SUPABASE STORAGE BUCKET 'bukti-transfer' & POLICY KEAMANAN
 -- ==============================================================================
 
--- 1. Buat / Pastikan bucket 'bukti_transfer' berstatus PUBLIC
+-- 1. Buat / Pastikan bucket 'bukti-transfer' tersedia (serta dukung bucket lama 'bukti_transfer')
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'bukti_transfer',
-  'bukti_transfer',
-  TRUE, -- PUBLIC BUCKET
-  10485760, -- 10MB
-  ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-)
+VALUES
+  (
+    'bukti-transfer',
+    'bukti-transfer',
+    TRUE,
+    10485760, -- 10MB
+    ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+  ),
+  (
+    'bukti_transfer',
+    'bukti_transfer',
+    TRUE,
+    10485760,
+    ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+  )
 ON CONFLICT (id) DO UPDATE SET
   public = TRUE,
   file_size_limit = 10485760,
@@ -104,67 +109,24 @@ ON CONFLICT (id) DO UPDATE SET
 -- 2. Aktifkan Row Level Security pada storage.objects
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
--- 3. Pastikan user admin terdaftar di public.roles dan public.user_roles
-DO $$
-DECLARE
-  v_admin_role_id uuid;
-  v_user_id uuid;
-BEGIN
-  INSERT INTO public.roles (name, description)
-  VALUES ('ADMIN', 'Administrator Koperasi')
-  ON CONFLICT (name) DO UPDATE SET description = 'Administrator Koperasi'
-  RETURNING id INTO v_admin_role_id;
+-- 3. Bersihkan policy lama
+DROP POLICY IF EXISTS "bukti-transfer_auth_select" ON storage.objects;
+DROP POLICY IF EXISTS "bukti-transfer_auth_insert" ON storage.objects;
+DROP POLICY IF EXISTS "bukti-transfer_auth_update" ON storage.objects;
+DROP POLICY IF EXISTS "bukti-transfer_auth_delete" ON storage.objects;
 
-  IF v_admin_role_id IS NULL THEN
-    SELECT id INTO v_admin_role_id FROM public.roles WHERE name = 'ADMIN' LIMIT 1;
-  END IF;
-
-  FOR v_user_id IN (
-    SELECT id FROM auth.users 
-    WHERE LOWER(email) IN ('koperasi.simandiri@gmail.com', 'admin@kopsim.id', 'admin@simandiri.id')
-       OR LOWER(email) LIKE 'admin@%'
-  ) LOOP
-    INSERT INTO public.user_roles (user_id, role_id, role)
-    VALUES (v_user_id, v_admin_role_id, 'ADMIN')
-    ON CONFLICT (user_id, role_id) DO NOTHING;
-  END LOOP;
-END $$;
-
--- 4. DROP SEMUA POLICY LAMA (Bersihkan policy lama & eksperimental)
-DROP POLICY IF EXISTS "Public Read bukti_transfer" ON storage.objects;
-DROP POLICY IF EXISTS "Public Insert bukti_transfer" ON storage.objects;
-DROP POLICY IF EXISTS "Public Update bukti_transfer" ON storage.objects;
-DROP POLICY IF EXISTS "Public Delete bukti_transfer" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_public_select" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_admin_director_select" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_select" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_admin_insert" ON storage.objects;
-DROP POLICY IF EXISTS "Allow authenticated uploads to bukti_transfer" ON storage.objects;
-DROP POLICY IF EXISTS "Allow authenticated uploads" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_insert" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_authorized_insert" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_public_read" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_select_public" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_insert_authorized" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_admin_update" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_update_admin" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_update" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_admin_delete" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_delete_admin" ON storage.objects;
-DROP POLICY IF EXISTS "bukti_transfer_delete" ON storage.objects;
-
--- 5. POLICY 1: SELECT (Public Read untuk render langsung bukti transfer di UI)
-CREATE POLICY "bukti_transfer_select_public"
+-- 4. Policy SELECT: Pengguna login dapat mengakses metadata/objek bukti transfer
+CREATE POLICY "bukti-transfer_auth_select"
   ON storage.objects FOR SELECT
-  TO public
-  USING (bucket_id = 'bukti_transfer');
+  TO authenticated
+  USING (bucket_id IN ('bukti-transfer', 'bukti_transfer'));
 
--- 6. POLICY 2: INSERT (Multi-layered RBAC: Email Super Admin, Metadata, atau user_roles)
-CREATE POLICY "bukti_transfer_insert_authorized"
+-- 5. Policy INSERT: Admin/Direktur bebas upload; Anggota dapat upload ke folder miliknya (investasi/setoran/avatar)
+CREATE POLICY "bukti-transfer_auth_insert"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (
-    bucket_id = 'bukti_transfer'
+    bucket_id IN ('bukti-transfer', 'bukti_transfer')
     AND (
       LOWER(COALESCE(auth.jwt() ->> 'email', '')) IN ('koperasi.simandiri@gmail.com', 'admin@kopsim.id')
       OR LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%'
@@ -173,66 +135,27 @@ CREATE POLICY "bukti_transfer_insert_authorized"
       OR EXISTS (
         SELECT 1 FROM public.user_roles ur
         LEFT JOIN public.roles r ON r.id = ur.role_id
-        WHERE ur.user_id = auth.uid() 
+        WHERE ur.user_id = auth.uid()
           AND (UPPER(r.name) IN ('ADMIN', 'DIRECTOR') OR UPPER(ur.role) IN ('ADMIN', 'DIRECTOR'))
       )
+      OR name LIKE 'investasi/%'
+      OR name LIKE 'setoran/%'
+      OR name LIKE 'avatar/%'
+      OR name LIKE 'pendaftaran/%'
     )
   );
 
--- 7. POLICY 3: UPDATE (Diperlukan untuk operasi upload upsert / replace file)
-CREATE POLICY "bukti_transfer_update_admin"
+-- 6. Policy UPDATE & DELETE: Khusus Pengurus / Admin
+CREATE POLICY "bukti-transfer_auth_update"
   ON storage.objects FOR UPDATE
   TO authenticated
-  USING (
-    bucket_id = 'bukti_transfer'
-    AND (
-      LOWER(COALESCE(auth.jwt() ->> 'email', '')) IN ('koperasi.simandiri@gmail.com', 'admin@kopsim.id')
-      OR LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%'
-      OR UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) IN ('ADMIN', 'DIRECTOR')
-      OR UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) IN ('ADMIN', 'DIRECTOR')
-      OR EXISTS (
-        SELECT 1 FROM public.user_roles ur
-        LEFT JOIN public.roles r ON r.id = ur.role_id
-        WHERE ur.user_id = auth.uid() 
-          AND (UPPER(r.name) IN ('ADMIN', 'DIRECTOR') OR UPPER(ur.role) IN ('ADMIN', 'DIRECTOR'))
-      )
-    )
-  )
-  WITH CHECK (
-    bucket_id = 'bukti_transfer'
-    AND (
-      LOWER(COALESCE(auth.jwt() ->> 'email', '')) IN ('koperasi.simandiri@gmail.com', 'admin@kopsim.id')
-      OR LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%'
-      OR UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) IN ('ADMIN', 'DIRECTOR')
-      OR UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) IN ('ADMIN', 'DIRECTOR')
-      OR EXISTS (
-        SELECT 1 FROM public.user_roles ur
-        LEFT JOIN public.roles r ON r.id = ur.role_id
-        WHERE ur.user_id = auth.uid() 
-          AND (UPPER(r.name) IN ('ADMIN', 'DIRECTOR') OR UPPER(ur.role) IN ('ADMIN', 'DIRECTOR'))
-      )
-    )
-  );
+  USING (bucket_id IN ('bukti-transfer', 'bukti_transfer') AND public.is_director_or_admin())
+  WITH CHECK (bucket_id IN ('bukti-transfer', 'bukti_transfer') AND public.is_director_or_admin());
 
--- 8. POLICY 4: DELETE (Hanya ADMIN)
-CREATE POLICY "bukti_transfer_delete_admin"
+CREATE POLICY "bukti-transfer_auth_delete"
   ON storage.objects FOR DELETE
   TO authenticated
-  USING (
-    bucket_id = 'bukti_transfer'
-    AND (
-      LOWER(COALESCE(auth.jwt() ->> 'email', '')) IN ('koperasi.simandiri@gmail.com', 'admin@kopsim.id')
-      OR LOWER(COALESCE(auth.jwt() ->> 'email', '')) LIKE 'admin@%'
-      OR UPPER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'ADMIN'
-      OR UPPER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'ADMIN'
-      OR EXISTS (
-        SELECT 1 FROM public.user_roles ur
-        LEFT JOIN public.roles r ON r.id = ur.role_id
-        WHERE ur.user_id = auth.uid() 
-          AND (UPPER(r.name) = 'ADMIN' OR UPPER(ur.role) = 'ADMIN')
-      )
-    )
-  );
+  USING (bucket_id IN ('bukti-transfer', 'bukti_transfer') AND public.is_admin_only());
 `;
 
 export interface ProofOptimizationResult {
@@ -635,6 +558,8 @@ export function isSupabaseStorageUrl(urlOrPath?: string | null): boolean {
     if (
       pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) ||
       pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`) ||
+      pathname.endsWith(`/${LEGACY_BUKTI_BUCKET}`) ||
+      pathname.endsWith(`/${LEGACY_BUKTI_BUCKET}/`) ||
       pathname.endsWith('/object/public') ||
       pathname.endsWith('/object/public/') ||
       pathname.endsWith('/object/sign') ||
@@ -651,24 +576,26 @@ export function isSupabaseStorageUrl(urlOrPath?: string | null): boolean {
       return true;
     }
 
-    // Cek pola bucket bukti_transfer pada host Supabase yang aktif atau domain supabase.co/.in
-    const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
-    if (bucketIdx !== -1) {
-      const remainder = pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2).replace(/^\/+|\/+$/g, '');
-      const envHost = (() => {
-        try {
-          const envUrl = getSupabaseUrl();
-          return envUrl ? new URL(envUrl).hostname : '';
-        } catch {
-          return '';
+    // Cek pola bucket bukti-transfer atau bukti_transfer pada host Supabase yang aktif
+    for (const bucketCandidate of [BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET]) {
+      const bucketIdx = pathname.indexOf(`/${bucketCandidate}/`);
+      if (bucketIdx !== -1) {
+        const remainder = pathname.substring(bucketIdx + bucketCandidate.length + 2).replace(/^\/+|\/+$/g, '');
+        const envHost = (() => {
+          try {
+            const envUrl = getSupabaseUrl();
+            return envUrl ? new URL(envUrl).hostname : '';
+          } catch {
+            return '';
+          }
+        })();
+        const isSupabaseHost =
+          urlObj.hostname.endsWith('.supabase.co') ||
+          urlObj.hostname.endsWith('.supabase.in') ||
+          (envHost !== '' && urlObj.hostname === envHost);
+        if (isSupabaseHost && remainder.length > 0) {
+          return true;
         }
-      })();
-      const isSupabaseHost =
-        urlObj.hostname.endsWith('.supabase.co') ||
-        urlObj.hostname.endsWith('.supabase.in') ||
-        (envHost !== '' && urlObj.hostname === envHost);
-      if (isSupabaseHost && remainder.length > 0) {
-        return true;
       }
     }
   } catch {
@@ -687,7 +614,9 @@ export function resolveKnownStorageProofUrl(trxId?: string | null): string {
   if (!cleanId) return '';
   const baseId = cleanId.replace(/[-_.]\d+$/, '');
   const relPath = KNOWN_STORAGE_PROOFS[cleanId] || KNOWN_STORAGE_PROOFS[baseId];
-  return relPath ? getPublicProofUrl(relPath) : '';
+  if (!relPath) return '';
+  const envUrl = getSupabaseUrl().replace(/\/+$/, '') || 'https://iqamratpkvnyyayjpnsu.supabase.co';
+  return `${envUrl}/storage/v1/object/public/${LEGACY_BUKTI_BUCKET}/${relPath}`;
 }
 
 /**
@@ -698,7 +627,9 @@ export function getMemberDefaultProof(memberNo?: string): string {
   if (!memberNo) return '';
   const clean = memberNo.trim();
   const relPath = MEMBER_DEFAULT_PROOFS[clean];
-  return relPath ? getPublicProofUrl(relPath) : '';
+  if (!relPath) return '';
+  const envUrl = getSupabaseUrl().replace(/\/+$/, '') || 'https://iqamratpkvnyyayjpnsu.supabase.co';
+  return `${envUrl}/storage/v1/object/public/${LEGACY_BUKTI_BUCKET}/${relPath}`;
 }
 
 /**
@@ -903,13 +834,13 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
     return null;
   }
 
-  // Tolak URL Google Drive / Google Docs legacy — bukan objek Supabase Storage
-  if (isGoogleDriveUrl(trimmed)) {
+  // Tolak URL Google Drive / Google Docs legacy serta Base64 Data URI (jangan simpan base64 di DB)
+  if (isGoogleDriveUrl(trimmed) || trimmed.startsWith('data:')) {
     return null;
   }
 
-  // If already a data URI or local asset
-  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
+  // Local preview / local static asset
+  if (trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
     return trimmed;
   }
 
@@ -917,12 +848,13 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
       const urlObj = new URL(trimmed);
-      const pathname = urlObj.pathname; // e.g. /storage/v1/object/public/bukti_transfer/2026/08/TRX-001.webp
+      const pathname = urlObj.pathname;
 
-      // URL points to bucket root with no filename
       if (
         pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}`) ||
         pathname.endsWith(`/${BUKTI_TRANSFER_BUCKET}/`) ||
+        pathname.endsWith(`/${LEGACY_BUKTI_BUCKET}`) ||
+        pathname.endsWith(`/${LEGACY_BUKTI_BUCKET}/`) ||
         pathname.endsWith('/object/public') ||
         pathname.endsWith('/object/public/') ||
         pathname.endsWith('/object/sign') ||
@@ -931,36 +863,37 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
         return null;
       }
 
-      // Match pattern /storage/v1/object/(public|sign|authenticated)/<bucket>/(.*)
       const storageMatch = pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\/(.*)/);
       if (storageMatch && storageMatch[2]) {
         const extracted = decodeURIComponent(storageMatch[2]).replace(/^\/+|\/+$/g, '');
         return extracted.length > 0 ? extracted : null;
       }
 
-      // Match bucket folder only on valid Supabase host
       if (isSupabaseStorageUrl(trimmed)) {
-        const bucketIdx = pathname.indexOf(`/${BUKTI_TRANSFER_BUCKET}/`);
-        if (bucketIdx !== -1) {
-          const extracted = decodeURIComponent(pathname.substring(bucketIdx + BUKTI_TRANSFER_BUCKET.length + 2)).replace(/^\/+|\/+$/g, '');
-          return extracted.length > 0 ? extracted : null;
+        for (const bucketCandidate of [BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET]) {
+          const bucketIdx = pathname.indexOf(`/${bucketCandidate}/`);
+          if (bucketIdx !== -1) {
+            const extracted = decodeURIComponent(pathname.substring(bucketIdx + bucketCandidate.length + 2)).replace(/^\/+|\/+$/g, '');
+            return extracted.length > 0 ? extracted : null;
+          }
         }
       }
     } catch {
       return null;
     }
 
-    // URL eksternal non-Supabase (mis. Google Drive, link pihak ketiga lain) wajib mengembalikan null
     return null;
   }
 
   // Remove leading slashes and bucket prefix if any
   let clean = trimmed.replace(/^\/+/, '');
-  if (clean.startsWith(`${BUKTI_TRANSFER_BUCKET}/`)) {
-    clean = clean.replace(new RegExp(`^${BUKTI_TRANSFER_BUCKET}/+`), '');
+  for (const b of [BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET]) {
+    if (clean.startsWith(`${b}/`)) {
+      clean = clean.replace(new RegExp(`^${b}/+`), '');
+    }
   }
   clean = clean.replace(/^\/+|\/+$/g, '');
-  if (!clean || clean === BUKTI_TRANSFER_BUCKET) {
+  if (!clean || clean === BUKTI_TRANSFER_BUCKET || clean === LEGACY_BUKTI_BUCKET) {
     return null;
   }
   return clean;
@@ -968,7 +901,7 @@ export function extractStoragePath(rawLinkOrUrl?: string | null): string | null 
 
 /**
  * Resolves consistent Public URL ONLY from valid Supabase Storage references (path, signed URL, or public URL),
- * local assets, or data/blob previews. Strictly rejects Google Drive and non-Supabase external URLs.
+ * or static local assets. Strictly rejects Google Drive, non-Supabase external URLs, and Base64 Data URIs.
  */
 export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
   if (!storagePathOrUrl) return '';
@@ -977,13 +910,13 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
     return '';
   }
 
-  // 0. Tolak secara eksplisit URL legacy Google Drive / Google Docs
-  if (isGoogleDriveUrl(trimmed)) {
+  // 0. Tolak URL legacy Google Drive / Google Docs & Base64 Data URI
+  if (isGoogleDriveUrl(trimmed) || trimmed.startsWith('data:')) {
     return '';
   }
 
-  // 1. Return immediately if data URI or local asset
-  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
+  // 1. Static asset atau preview blob sementara
+  if (trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
     return trimmed;
   }
 
@@ -1003,14 +936,15 @@ export function getPublicProofUrl(storagePathOrUrl?: string | null): string {
     if (trimmed.includes('/storage/v1/object/public/') && !trimmed.includes('?token=')) {
       return trimmed;
     }
-    // Konversi URL sign/authenticated menjadi public URL bucket yang stabil jika envUrl tersedia
     if (envUrl) {
-      return `${envUrl}/storage/v1/object/public/${bucketName}/${extracted}`;
+      const bucketMatch = trimmed.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\//);
+      const urlBucket = bucketMatch?.[1] || bucketName;
+      return `${envUrl}/storage/v1/object/public/${urlBucket}/${extracted}`;
     }
     return trimmed;
   }
 
-  // 3. If it is a relative storage path (e.g. "2026/04/T260421001-hvubbk.webp")
+  // 3. Relative storage path (e.g. "2026/04/T260421001-hvubbk.webp")
   const path = extractStoragePath(trimmed);
   if (!path) return '';
 
@@ -1056,6 +990,28 @@ export async function getSignedProofUrl(storagePath: string): Promise<string | n
   return url || null;
 }
 
+/**
+ * Mengonversi Data URI Base64 lama menjadi objek File agar dapat diunggah ke Supabase Storage.
+ */
+export function dataUrlToFile(dataUrl: string, defaultBaseName: string = 'bukti-migrasi'): File | null {
+  if (!dataUrl || !dataUrl.startsWith('data:') || !dataUrl.includes(',')) return null;
+  try {
+    const [header, base64] = dataUrl.split(',');
+    const mimeMatch = header.match(/data:([^;]+);base64/i);
+    const mime = mimeMatch?.[1] || 'image/webp';
+    const ext = mime.includes('png') ? 'png' : mime.includes('pdf') ? 'pdf' : mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'webp';
+    const binaryStr = atob(base64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    const safeName = `${defaultBaseName.replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`;
+    return new File([bytes], safeName, { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 async function fileToDataUrl(file: File | Blob): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -1066,18 +1022,15 @@ async function fileToDataUrl(file: File | Blob): Promise<string> {
 }
 
 /**
- * Mengunggah berkas anggota/publik (pendaftaran, investasi, setoran, avatar) ke bucket bukti_transfer
- * Urutan prioritas:
- * 1. Direct upload ke Supabase Storage (sesuai folder prefix yang diizinkan RLS)
- * 2. Fallback melalui backend proxy /api/storage/upload-proof (memakai Service Role jika tersedia)
- * 3. Fallback terakhir ke Data URL terkompresi agar bukti tidak hilang jika offline
+ * Mengunggah berkas (pendaftaran, investasi, setoran, avatar, berita, migrasi) ke bucket Supabase Storage 'bukti-transfer'.
+ * Tidak pernah menyimpan file sebagai base64 ke database/browser.
  */
 export async function uploadMemberProof(
   file: File | Blob,
-  folderPrefix: 'pendaftaran' | 'investasi' | 'setoran' | 'avatar',
+  folderPrefix: 'pendaftaran' | 'investasi' | 'setoran' | 'avatar' | 'berita' | 'migrasi',
   refId: string,
   originalFileName?: string
-): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string; source?: 'SUPABASE' | 'SERVER' | 'DATA_URL' }> {
+): Promise<{ success: boolean; fileUrl?: string; storagePath?: string; error?: string; source?: 'SUPABASE' | 'SERVER' }> {
   const client = getSupabaseClient();
   const rawName = originalFileName || (file instanceof File ? file.name : 'bukti_transfer.webp');
   const fileExt = (rawName.split('.').pop()?.toLowerCase() || (file.type?.includes('webp') ? 'webp' : 'jpg')).replace(/[^a-z0-9]/g, '') || 'webp';
@@ -1086,37 +1039,43 @@ export async function uploadMemberProof(
   const storagePath = `${folderPrefix}/${fileName}`;
   const mimeType = file.type || (fileExt === 'pdf' ? 'application/pdf' : fileExt === 'webp' ? 'image/webp' : 'image/jpeg');
 
-  // 1. Upload langsung ke Supabase Storage bucket 'bukti_transfer'
+  // 1. Upload langsung ke Supabase Storage bucket aktif ('bukti-transfer' / fallback 'bukti_transfer' jika belum dibuat)
   if (client) {
-    try {
-      const uploadRes = await client.storage
-        .from(BUKTI_TRANSFER_BUCKET)
-        .upload(storagePath, file, {
-          contentType: mimeType,
-          cacheControl: '3600',
-          upsert: false,
-        });
+    const primaryBucket = await resolveActiveBucket();
+    const bucketsToTry = Array.from(new Set([primaryBucket, BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET]));
+    for (const targetBucket of bucketsToTry) {
+      try {
+        const uploadRes = await client.storage
+          .from(targetBucket)
+          .upload(storagePath, file, {
+            contentType: mimeType,
+            cacheControl: '3600',
+            upsert: false,
+          });
 
-      if (!uploadRes.error && uploadRes.data) {
-        const { data: urlData } = client.storage
-          .from(BUKTI_TRANSFER_BUCKET)
-          .getPublicUrl(uploadRes.data.path || storagePath);
+        if (!uploadRes.error && uploadRes.data) {
+          _resolvedActiveBucket = targetBucket;
+          const savedPath = uploadRes.data.path || storagePath;
+          const { data: urlData } = client.storage
+            .from(targetBucket)
+            .getPublicUrl(savedPath);
 
-        const publicUrl = urlData?.publicUrl || getPublicProofUrl(uploadRes.data.path || storagePath);
-        return {
-          success: true,
-          fileUrl: publicUrl,
-          storagePath: uploadRes.data.path || storagePath,
-          source: 'SUPABASE',
-        };
+          const publicUrl = urlData?.publicUrl || getPublicProofUrl(savedPath);
+          return {
+            success: true,
+            fileUrl: publicUrl,
+            storagePath: savedPath,
+            source: 'SUPABASE',
+          };
+        }
+        console.warn(`[Storage] Upload to "${targetBucket}" returned error:`, uploadRes.error?.message);
+      } catch (err) {
+        console.warn(`[Storage] Upload to "${targetBucket}" exception:`, err);
       }
-      console.warn('[Storage] Direct scoped upload returned error:', uploadRes.error?.message);
-    } catch (err) {
-      console.warn('[Storage] Direct scoped upload exception:', err);
     }
   }
 
-  // 2. Fallback via server endpoint (/api/storage/upload-proof)
+  // 2. Server-side upload proxy (/api/storage/upload-proof) jika tersedia (hanya mengirim ke Supabase Storage, bukan return Data URL)
   try {
     if (typeof FileReader !== 'undefined' && typeof fetch !== 'undefined') {
       const dataUrl = await fileToDataUrl(file);
@@ -1131,7 +1090,7 @@ export async function uploadMemberProof(
       });
       if (resp.ok) {
         const json = await resp.json();
-        if (json?.success && json?.publicUrl) {
+        if (json?.success && json?.publicUrl && !String(json.publicUrl).startsWith('data:')) {
           return {
             success: true,
             fileUrl: json.publicUrl,
@@ -1140,27 +1099,19 @@ export async function uploadMemberProof(
           };
         }
       }
-
-      // 3. Last-resort offline Data URL
-      return {
-        success: true,
-        fileUrl: dataUrl,
-        storagePath,
-        source: 'DATA_URL',
-      };
     }
   } catch (err) {
-    console.warn('[Storage] Server/FileReader fallback error:', err);
+    console.warn('[Storage] Server upload proxy error:', err);
   }
 
   return {
     success: false,
-    error: 'Gagal mengunggah berkas bukti transfer. Silakan periksa koneksi Anda atau coba lagi.',
+    error: 'Gagal mengunggah berkas ke Supabase Storage (bucket bukti-transfer). Pastikan Anda sudah login dan policy Storage aktif.',
   };
 }
 
 /**
- * Upload bukti transfer pendaftaran anggota baru ke bucket bukti_transfer
+ * Upload bukti transfer pendaftaran anggota baru ke bucket bukti-transfer
  */
 export async function uploadPublicRegistrationProof(
   file: File | Blob,

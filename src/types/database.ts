@@ -10,6 +10,7 @@ export interface TransactionRecord {
   qty: number;
   jumlah: number;
   filelink?: string;
+  bukti_url?: string;
   akun?: string;
   keterangan?: string;
   login_as?: string;

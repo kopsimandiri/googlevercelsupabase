@@ -19,8 +19,6 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
-const STORAGE_AUDIT_KEY = 'KOPSIM_LOCAL_AUDIT_LOGS';
-
 const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   {
     id: 'audit-001',
@@ -47,20 +45,6 @@ let inMemoryAuditLogs: AuditLogEntry[] | null = null;
 export const auditService = {
   getStoredLogs(): AuditLogEntry[] {
     if (inMemoryAuditLogs) return inMemoryAuditLogs;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const stored = localStorage.getItem(STORAGE_AUDIT_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            inMemoryAuditLogs = parsed;
-            return inMemoryAuditLogs;
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
     inMemoryAuditLogs = [...INITIAL_AUDIT_LOGS];
     return inMemoryAuditLogs;
   },
@@ -110,16 +94,11 @@ export const auditService = {
       }
     }
 
-    // 2. Local Storage Cache / In-Memory
-    try {
+    // 2. In-memory fallback HANYA jika Supabase belum dikonfigurasi (sandbox/test offline)
+    if (!isSupabaseConfigured || !client) {
       const logs = this.getStoredLogs();
       logs.unshift(newEntry);
       inMemoryAuditLogs = logs.slice(0, 200);
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(STORAGE_AUDIT_KEY, JSON.stringify(inMemoryAuditLogs));
-      }
-    } catch (e) {
-      console.warn('[auditService] Local audit write warning:', e);
     }
 
     return { success: true, id: newEntry.id };
@@ -133,40 +112,37 @@ export const auditService = {
     const client = getSupabaseClient();
     const limit = options?.limit || 50;
 
-    if (client) {
-      try {
-        let query = client
-          .from('audit_logs')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(limit);
+    if (isSupabaseConfigured && client) {
+      let query = client
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit);
 
-        if (options?.entity) {
-          query = query.eq('entity', options.entity);
-        }
-        if (options?.action) {
-          query = query.eq('action', options.action.toUpperCase());
-        }
-
-        const { data, error } = await query;
-        if (!error && Array.isArray(data) && data.length > 0) {
-          const mapped: AuditLogEntry[] = data.map((r: any) => ({
-            id: String(r.id),
-            user_id: r.user_id || null,
-            user_email: r.user_email || 'system',
-            action: r.action || 'ACTIVITY',
-            entity: r.entity || 'general',
-            entity_id: r.entity_id || null,
-            old_values: r.old_values || null,
-            new_values: r.new_values || null,
-            ip_address: r.ip_address || null,
-            created_at: r.created_at || new Date().toISOString(),
-          }));
-          return { data: mapped, source: 'SUPABASE' };
-        }
-      } catch (err) {
-        console.warn('[auditService] Supabase audit fetch notice:', err);
+      if (options?.entity) {
+        query = query.eq('entity', options.entity);
       }
+      if (options?.action) {
+        query = query.eq('action', options.action.toUpperCase());
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Gagal memuat audit log dari server: ${error.message}`);
+      }
+      const mapped: AuditLogEntry[] = (data || []).map((r: any) => ({
+        id: String(r.id),
+        user_id: r.user_id || null,
+        user_email: r.user_email || 'system',
+        action: r.action || 'ACTIVITY',
+        entity: r.entity || 'general',
+        entity_id: r.entity_id || null,
+        old_values: r.old_values || null,
+        new_values: r.new_values || null,
+        ip_address: r.ip_address || null,
+        created_at: r.created_at || new Date().toISOString(),
+      }));
+      return { data: mapped, source: 'SUPABASE' };
     }
 
     let local = this.getStoredLogs();

@@ -86,22 +86,19 @@ export const paymentService = {
 
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        const { data, error } = await client
-          .from('payment_requests')
-          .insert([newPayment])
-          .select()
-          .single();
+      const { data, error } = await client
+        .from('payment_requests')
+        .insert([newPayment])
+        .select()
+        .single();
 
-        if (!error && data) {
-          return { success: true, data };
-        }
-      } catch (err) {
-        console.warn('Error inserting payment_request in Supabase:', err);
+      if (error || !data) {
+        return { success: false, error: `Gagal membuat tagihan pembayaran di Supabase: ${error?.message || 'Error server'}` };
       }
+      return { success: true, data };
     }
 
-    // Local fallback
+    // In-memory fallback strictly for offline/test mode
     const local = this.getLocalPayments();
     local.unshift(newPayment);
     this.saveLocalPayments(local);
@@ -115,19 +112,16 @@ export const paymentService = {
   async getPaymentStatus(orderId: string): Promise<PaymentRequestRecord | null> {
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        const { data, error } = await client
-          .from('payment_requests')
-          .select('*')
-          .eq('order_id', orderId)
-          .single();
+      const { data, error } = await client
+        .from('payment_requests')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle();
 
-        if (!error && data) {
-          return data;
-        }
-      } catch (err) {
-        console.warn('Error fetching payment status from Supabase:', err);
+      if (error) {
+        throw new Error(`Gagal memeriksa status pembayaran dari Supabase: ${error.message}`);
       }
+      return data || null;
     }
 
     const local = this.getLocalPayments();
@@ -140,24 +134,21 @@ export const paymentService = {
   async getPayments(memberId?: string): Promise<PaymentRequestRecord[]> {
     const client = getSupabaseClient();
     if (isSupabaseConfigured && client) {
-      try {
-        let query = client
-          .from('payment_requests')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100);
+      let query = client
+        .from('payment_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-        if (memberId) {
-          query = query.eq('member_id', memberId);
-        }
-
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          return data;
-        }
-      } catch (err) {
-        console.warn('Error fetching payments list from Supabase:', err);
+      if (memberId) {
+        query = query.eq('member_id', memberId);
       }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Gagal memuat riwayat pembayaran dari Supabase: ${error.message}`);
+      }
+      return data || [];
     }
 
     let local = this.getLocalPayments();
@@ -420,17 +411,6 @@ export const paymentService = {
 
   getLocalPayments(): PaymentRequestRecord[] {
     if (inMemoryPayments) return inMemoryPayments;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const raw = localStorage.getItem('kopsim_payment_requests');
-        if (raw) {
-          inMemoryPayments = JSON.parse(raw);
-          return inMemoryPayments!;
-        }
-      }
-    } catch {
-      // ignore
-    }
     inMemoryPayments = [
       {
         id: 'pay-sample-1',
@@ -462,12 +442,5 @@ export const paymentService = {
 
   saveLocalPayments(list: PaymentRequestRecord[]): void {
     inMemoryPayments = list;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('kopsim_payment_requests', JSON.stringify(list));
-      }
-    } catch {
-      // ignore
-    }
   },
 };

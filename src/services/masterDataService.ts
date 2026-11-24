@@ -259,10 +259,10 @@ CREATE INDEX IF NOT EXISTS idx_products_sku_name ON public.products (sku_name);`
   },
   transactions: {
     label: 'Transaksi & Keuangan (Transactions)',
-    columnCount: 19,
+    columnCount: 20,
     columns: [
       'id', 'transaction_no', 'transaction_date', 'referral_type', 'area_name',
-      'transaction_type', 'payment_method', 'amount', 'file_url', 'account_name_legacy',
+      'transaction_type', 'payment_method', 'amount', 'file_url', 'bukti_url', 'account_name_legacy',
       'description', 'category_name', 'product_name', 'supplier_name', 'customer_name',
       'qty', 'price', 'created_at', 'updated_at',
     ],
@@ -277,6 +277,7 @@ CREATE INDEX IF NOT EXISTS idx_products_sku_name ON public.products (sku_name);`
   payment_method TEXT NOT NULL DEFAULT 'Bank BSI',
   amount NUMERIC(15, 2) NOT NULL DEFAULT 0.00 CHECK (amount >= 0),
   file_url TEXT DEFAULT '',
+  bukti_url TEXT DEFAULT '',
   account_name_legacy TEXT DEFAULT 'Bank BSI',
   description TEXT DEFAULT '',
   category_name TEXT DEFAULT 'Kas',
@@ -1321,25 +1322,23 @@ const SEED_DATA: Record<MasterDataTableName, any[]> = {
   ],
 };
 
+const inMemoryTables: Partial<Record<MasterDataTableName, any[]>> = {};
+
 export const masterDataService = {
   getLocalStorageKey(table: MasterDataTableName): string {
     return `KOPSIM_TABLE_${table.toUpperCase()}`;
   },
 
   getStoredData<T = any>(table: MasterDataTableName): T[] {
-    try {
-      const stored = localStorage.getItem(this.getLocalStorageKey(table));
-      if (stored) return JSON.parse(stored);
-    } catch {
-      // fallback
+    if (!inMemoryTables[table]) {
+      const seed = SEED_DATA[table] || [];
+      inMemoryTables[table] = [...seed];
     }
-    const seed = SEED_DATA[table] || [];
-    localStorage.setItem(this.getLocalStorageKey(table), JSON.stringify(seed));
-    return seed as T[];
+    return inMemoryTables[table] as T[];
   },
 
   saveStoredData<T = any>(table: MasterDataTableName, data: T[]): void {
-    localStorage.setItem(this.getLocalStorageKey(table), JSON.stringify(data));
+    inMemoryTables[table] = data;
   },
 
   /**
@@ -1460,16 +1459,12 @@ export const masterDataService = {
    */
   async getTableRecords<T = any>(table: MasterDataTableName): Promise<{ data: T[]; source: 'SUPABASE' | 'LOCAL' }> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { data, error } = await client.from(table).select('*');
-        if (!error && data && data.length > 0) {
-          this.saveStoredData(table, data);
-          return { data: data as T[], source: 'SUPABASE' };
-        }
-      } catch (err) {
-        console.warn(`Supabase getTableRecords (${table}) fallback:`, err);
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client.from(table).select('*');
+      if (error) {
+        throw new Error(`Gagal memuat tabel '${table}' dari Supabase: ${error.message}`);
       }
+      return { data: (data || []) as T[], source: 'SUPABASE' };
     }
 
     return { data: this.getStoredData(table) as T[], source: 'LOCAL' };
@@ -1482,62 +1477,70 @@ export const masterDataService = {
     table: MasterDataTableName,
     record: T
   ): Promise<{ success: boolean; id: string; error?: string; source: 'SUPABASE' | 'LOCAL' }> {
-    const records = this.getStoredData(table) as any[];
     const recId = record.id !== undefined && record.id !== null ? String(record.id) : '';
+    const client = getSupabaseClient();
+
+    if (isSupabaseConfigured && client) {
+      const payload: any = { ...record };
+      if ((table === 'areas' || table === 'transaction_categories') && typeof payload.id === 'string' && isNaN(Number(payload.id))) {
+        delete payload.id;
+      }
+
+      // Check existing row on Supabase to decide UPDATE vs INSERT
+      let existingRow: any = null;
+      if (recId && !isNaN(Number(recId))) {
+        const { data } = await client.from(table).select('id').eq('id', Number(recId)).maybeSingle();
+        existingRow = data;
+      } else if (recId && table !== 'areas' && table !== 'transaction_categories') {
+        const { data } = await client.from(table).select('id').eq('id', recId).maybeSingle();
+        existingRow = data;
+      } else if (table === 'areas' && record.area_code) {
+        const { data } = await client.from(table).select('id').eq('area_code', record.area_code).maybeSingle();
+        existingRow = data;
+      } else if (table === 'transaction_categories' && record.category_code) {
+        const { data } = await client.from(table).select('id').eq('category_code', record.category_code).maybeSingle();
+        existingRow = data;
+      }
+
+      if (existingRow) {
+        const { error } = await client.from(table).update(payload).eq('id', existingRow.id);
+        if (error) {
+          throw new Error(`Gagal memperbarui data pada tabel '${table}': ${error.message}`);
+        }
+      } else {
+        const { error } = await client.from(table).insert([payload]);
+        if (error) {
+          throw new Error(`Gagal menambahkan data pada tabel '${table}': ${error.message}`);
+        }
+      }
+
+      return {
+        success: true,
+        id: recId || (record as any).area_code || (record as any).category_code || 'NEW',
+        source: 'SUPABASE',
+      };
+    }
+
+    // In-memory fallback strictly for offline/test mode
+    const records = this.getStoredData(table) as any[];
     const existingIndex = records.findIndex((r) => {
       if (recId && String(r.id) === recId) return true;
       if (table === 'areas' && record.area_code && r.area_code === record.area_code) return true;
       if (table === 'transaction_categories' && record.category_code && r.category_code === record.category_code) return true;
       return false;
     });
-    const isEdit = existingIndex !== -1;
 
-    if (isEdit) {
+    if (existingIndex !== -1) {
       records[existingIndex] = { ...records[existingIndex], ...record };
     } else {
       records.unshift(record);
     }
     this.saveStoredData(table, records);
 
-    const client = getSupabaseClient();
-    let savedToSupabase = false;
-
-    if (client) {
-      try {
-        // Clean payload for tables with bigint identity (areas, transaction_categories)
-        const payload: any = { ...record };
-        if ((table === 'areas' || table === 'transaction_categories') && typeof payload.id === 'string' && isNaN(Number(payload.id))) {
-          delete payload.id; // Let Postgres sequence assign id
-        }
-
-        if (isEdit) {
-          let query = client.from(table).update(payload);
-          if (recId && !isNaN(Number(recId))) {
-            query = query.eq('id', Number(recId));
-          } else if (recId && table !== 'areas' && table !== 'transaction_categories') {
-            query = query.eq('id', recId);
-          } else if (table === 'areas' && record.area_code) {
-            query = query.eq('area_code', record.area_code);
-          } else if (table === 'transaction_categories' && record.category_code) {
-            query = query.eq('category_code', record.category_code);
-          } else {
-            query = query.eq('id', recId);
-          }
-          const { error } = await query;
-          if (!error) savedToSupabase = true;
-        } else {
-          const { error } = await client.from(table).insert([payload]);
-          if (!error) savedToSupabase = true;
-        }
-      } catch (err) {
-        console.warn(`Supabase saveRecord (${table}) fallback:`, err);
-      }
-    }
-
     return {
       success: true,
       id: recId || (record as any).area_code || (record as any).category_code || 'NEW',
-      source: savedToSupabase ? 'SUPABASE' : 'LOCAL',
+      source: 'LOCAL',
     };
   },
 
@@ -1545,27 +1548,28 @@ export const masterDataService = {
    * Delete a record from any of the master tables
    */
   async deleteRecord(table: MasterDataTableName, id: string): Promise<{ success: boolean; error?: string }> {
-    let records = this.getStoredData(table);
-    records = records.filter((r) => String(r.id) !== String(id) && (r.area_code !== id) && (r.category_code !== id));
-    this.saveStoredData(table, records);
-
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        if (!isNaN(Number(id))) {
-          await client.from(table).delete().eq('id', Number(id));
-        } else if (table === 'areas') {
-          await client.from(table).delete().eq('area_code', id);
-        } else if (table === 'transaction_categories') {
-          await client.from(table).delete().eq('category_code', id);
-        } else {
-          await client.from(table).delete().eq('id', id);
-        }
-      } catch (err) {
-        console.warn(`Supabase deleteRecord (${table}) fallback:`, err);
+    if (isSupabaseConfigured && client) {
+      let query = client.from(table).delete();
+      if (!isNaN(Number(id))) {
+        query = query.eq('id', Number(id));
+      } else if (table === 'areas') {
+        query = query.eq('area_code', id);
+      } else if (table === 'transaction_categories') {
+        query = query.eq('category_code', id);
+      } else {
+        query = query.eq('id', id);
       }
+      const { error } = await query;
+      if (error) {
+        throw new Error(`Gagal menghapus record dari tabel '${table}': ${error.message}`);
+      }
+      return { success: true };
     }
 
+    let records = this.getStoredData(table);
+    records = records.filter((r) => String(r.id) !== String(id) && r.area_code !== id && r.category_code !== id);
+    this.saveStoredData(table, records);
     return { success: true };
   },
 

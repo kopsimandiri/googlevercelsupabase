@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 import {
   ProjectInvestmentCampaign,
   InvestmentTransaction,
@@ -8,11 +8,22 @@ import {
   CreateInvestmentCheckoutPayload,
 } from '../types/investment';
 import { akadTemplateService } from './akadTemplateService';
+import { getPublicProofUrl } from './storageService';
 
-const STORAGE_CAMPAIGNS_KEY = 'kopsim_investment_campaigns_cache';
-const STORAGE_TRANSACTIONS_KEY = 'kopsim_investment_transactions_cache';
-const STORAGE_AGREEMENTS_KEY = 'kopsim_digital_agreements_cache';
-const STORAGE_DIVIDENDS_KEY = 'kopsim_investment_dividends_cache';
+let inMemoryCampaigns: ProjectInvestmentCampaign[] | null = null;
+let inMemoryInvTransactions: InvestmentTransaction[] | null = null;
+let inMemoryAgreements: DigitalAgreement[] | null = null;
+let inMemoryDividends: InvestmentDividendDistribution[] | null = null;
+
+function mapInvestmentTransactionRow(row: any): InvestmentTransaction {
+  const rawProof = row?.bukti_url || row?.payment_proof_url || '';
+  const cleanProof = rawProof ? getPublicProofUrl(rawProof) || rawProof : '';
+  return {
+    ...row,
+    payment_proof_url: cleanProof || undefined,
+    bukti_url: cleanProof || undefined,
+  } as InvestmentTransaction;
+}
 
 export const INITIAL_DEMO_CAMPAIGNS: ProjectInvestmentCampaign[] = [
   {
@@ -139,32 +150,22 @@ export const investmentService = {
 
   async getAllCampaigns(): Promise<ProjectInvestmentCampaign[]> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('project_investment_campaigns')
-          .select('*')
-          .order('created_at', { ascending: false });
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from('project_investment_campaigns')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          localStorage.setItem(STORAGE_CAMPAIGNS_KEY, JSON.stringify(data));
-          return data as ProjectInvestmentCampaign[];
-        }
-      } catch (err) {
-        console.warn('investmentService.getAllCampaigns Supabase error:', err);
+      if (error) {
+        throw new Error(`Gagal memuat daftar kampanye investasi dari Supabase: ${error.message}`);
       }
+      return (data || []) as ProjectInvestmentCampaign[];
     }
 
-    // Local fallback
-    try {
-      const cached = localStorage.getItem(STORAGE_CAMPAIGNS_KEY);
-      if (cached) {
-        return JSON.parse(cached);
-      }
-    } catch (e) {
-      console.warn('localStorage read error:', e);
+    if (!inMemoryCampaigns) {
+      inMemoryCampaigns = [...INITIAL_DEMO_CAMPAIGNS];
     }
-    return INITIAL_DEMO_CAMPAIGNS;
+    return inMemoryCampaigns;
   },
 
   async getCampaignById(id: string): Promise<ProjectInvestmentCampaign | null> {
@@ -193,64 +194,51 @@ export const investmentService = {
       updated_at: new Date().toISOString(),
     };
 
-    let resultData: ProjectInvestmentCampaign | null = null;
-    let resultError: any = null;
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from('project_investment_campaigns')
+        .upsert([payload])
+        .select()
+        .maybeSingle();
 
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('project_investment_campaigns')
-          .upsert([payload])
-          .select()
-          .maybeSingle();
-
-        if (!error && data) {
-          resultData = data as ProjectInvestmentCampaign;
-        } else {
-          resultError = error;
-        }
-      } catch (err) {
-        resultError = err;
+      if (error) {
+        return { data: null, error };
       }
+      return { data: (data as ProjectInvestmentCampaign) || null, error: null };
     }
 
-    // Update Local Cache
-    try {
-      const current = await this.getAllCampaigns();
-      const existingIdx = current.findIndex(
-        (c) => c.id === campaign.id || c.project_id === campaign.project_id
-      );
-      let updatedList = [...current];
-      const finalized = (resultData || {
-        ...payload,
-        id: campaign.id || `c-${Date.now()}`,
-        target_amount: campaign.target_amount || 500000000,
-        collected_amount: campaign.collected_amount || 0,
-        min_investment: campaign.min_investment || 1000000,
-        projected_roi_percent: campaign.projected_roi_percent || 15.0,
-        tenor_months: campaign.tenor_months || 12,
-        shu_distribution_schedule: campaign.shu_distribution_schedule || 'TRIWULAN',
-        offering_start_date: campaign.offering_start_date || new Date().toISOString().split('T')[0],
-        offering_end_date:
-          campaign.offering_end_date ||
-          new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
-        status: campaign.status || 'OPEN',
-        platform_fee_percent: campaign.platform_fee_percent || 0.5,
-        instrument_type: campaign.instrument_type || 'SUKS',
-        akad_type: campaign.akad_type || 'MUSYARAKAH',
-        is_investment_enabled: campaign.is_investment_enabled !== false,
-      }) as ProjectInvestmentCampaign;
+    const current = await this.getAllCampaigns();
+    const existingIdx = current.findIndex(
+      (c) => c.id === campaign.id || c.project_id === campaign.project_id
+    );
+    const updatedList = [...current];
+    const finalized = {
+      ...payload,
+      id: campaign.id || `c-${Date.now()}`,
+      target_amount: campaign.target_amount || 500000000,
+      collected_amount: campaign.collected_amount || 0,
+      min_investment: campaign.min_investment || 1000000,
+      projected_roi_percent: campaign.projected_roi_percent || 15.0,
+      tenor_months: campaign.tenor_months || 12,
+      shu_distribution_schedule: campaign.shu_distribution_schedule || 'TRIWULAN',
+      offering_start_date: campaign.offering_start_date || new Date().toISOString().split('T')[0],
+      offering_end_date:
+        campaign.offering_end_date ||
+        new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
+      status: campaign.status || 'OPEN',
+      platform_fee_percent: campaign.platform_fee_percent || 0.5,
+      instrument_type: campaign.instrument_type || 'SUKS',
+      akad_type: campaign.akad_type || 'MUSYARAKAH',
+      is_investment_enabled: campaign.is_investment_enabled !== false,
+    } as ProjectInvestmentCampaign;
 
-      if (existingIdx >= 0) {
-        updatedList[existingIdx] = { ...updatedList[existingIdx], ...finalized };
-      } else {
-        updatedList.unshift(finalized);
-      }
-      localStorage.setItem(STORAGE_CAMPAIGNS_KEY, JSON.stringify(updatedList));
-      return { data: finalized, error: null };
-    } catch (e) {
-      return { data: resultData, error: resultError || e };
+    if (existingIdx >= 0) {
+      updatedList[existingIdx] = { ...updatedList[existingIdx], ...finalized };
+    } else {
+      updatedList.unshift(finalized);
     }
+    inMemoryCampaigns = updatedList;
+    return { data: finalized, error: null };
   },
 
   // ==========================================
@@ -304,6 +292,10 @@ export const investmentService = {
     const newTrxId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}`;
     const newAgrId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `a-${Date.now()}`;
 
+    const cleanProofUrl = payload.paymentProofUrl
+      ? getPublicProofUrl(payload.paymentProofUrl) || (payload.paymentProofUrl.startsWith('data:') ? '' : payload.paymentProofUrl)
+      : '';
+
     const trxRecord: InvestmentTransaction = {
       id: newTrxId,
       transaction_no: transactionNo,
@@ -318,7 +310,7 @@ export const investmentService = {
       platform_fee: platformFee,
       total_payment: totalPayment,
       payment_method: payload.paymentMethod,
-      payment_proof_url: payload.paymentProofUrl,
+      payment_proof_url: cleanProofUrl || undefined,
       status: 'PENDING',
       notes: `Pemesanan ${unitsCount} unit efek ${campaign.instrument_type} (${campaign.project_name})`,
       created_at: nowIso,
@@ -340,58 +332,65 @@ export const investmentService = {
       created_at: nowIso,
     };
 
-    // 1. Simpan ke Supabase jika tersedia
-    if (client) {
-      const { error: trxErr } = await client.from('investment_transactions').insert([trxRecord]);
-      if (trxErr) {
-        console.warn('createInvestmentTransaction Supabase insert warning:', trxErr.message);
-      } else {
-        const { error: agrErr } = await client.from('digital_agreements').insert([agrRecord]);
-        if (agrErr) {
-          console.warn('digital_agreements Supabase insert warning:', agrErr.message);
-        }
+    // 1. Simpan ke Supabase secara otoritatif jika terkonfigurasi
+    if (isSupabaseConfigured && client) {
+      const dbTrxPayload: Record<string, any> = {
+        ...trxRecord,
+        bukti_url: cleanProofUrl || '',
+      };
 
-        // Update collected amount di kampanye
-        const newCollected = (campaign.collected_amount || 0) + payload.amount;
-        const newStatus = newCollected >= campaign.target_amount ? 'FUNDED' : campaign.status;
-        await client
-          .from('project_investment_campaigns')
-          .update({
-            collected_amount: newCollected,
-            status: newStatus,
-            updated_at: nowIso,
-          })
-          .eq('id', campaign.id);
+      let { error: trxErr } = await client.from('investment_transactions').insert([dbTrxPayload]);
+      if (trxErr && trxErr.message?.includes('bukti_url')) {
+        delete dbTrxPayload.bukti_url;
+        const retry = await client.from('investment_transactions').insert([dbTrxPayload]);
+        trxErr = retry.error;
       }
+
+      if (trxErr) {
+        throw new Error(`Gagal menyimpan transaksi investasi ke Supabase: ${trxErr.message}`);
+      }
+
+      const { error: agrErr } = await client.from('digital_agreements').insert([agrRecord]);
+      if (agrErr) {
+        console.warn('digital_agreements Supabase insert warning:', agrErr.message);
+      }
+
+      const newCollected = (campaign.collected_amount || 0) + payload.amount;
+      const newStatus = newCollected >= campaign.target_amount ? 'FUNDED' : campaign.status;
+      await client
+        .from('project_investment_campaigns')
+        .update({
+          collected_amount: newCollected,
+          status: newStatus,
+          updated_at: nowIso,
+        })
+        .eq('id', campaign.id);
+
+      return {
+        transaction: { ...trxRecord, campaign, agreement: agrRecord },
+        agreement: agrRecord,
+      };
     }
 
-    // 2. Simpan ke Local Storage Cache
-    try {
-      const storedTrx = JSON.parse(localStorage.getItem(STORAGE_TRANSACTIONS_KEY) || '[]');
-      storedTrx.unshift(trxRecord);
-      localStorage.setItem(STORAGE_TRANSACTIONS_KEY, JSON.stringify(storedTrx));
+    // 2. In-memory fallback strictly for offline/test mode
+    if (!inMemoryInvTransactions) inMemoryInvTransactions = [...INITIAL_DEMO_TRANSACTIONS];
+    inMemoryInvTransactions.unshift(trxRecord);
 
-      const storedAgr = JSON.parse(localStorage.getItem(STORAGE_AGREEMENTS_KEY) || '[]');
-      storedAgr.unshift(agrRecord);
-      localStorage.setItem(STORAGE_AGREEMENTS_KEY, JSON.stringify(storedAgr));
+    if (!inMemoryAgreements) inMemoryAgreements = [];
+    inMemoryAgreements.unshift(agrRecord);
 
-      // Update local campaign progress
-      const campaigns = await this.getAllCampaigns();
-      const updatedCampaigns = campaigns.map((c) => {
-        if (c.id === campaign.id) {
-          const newCollected = (c.collected_amount || 0) + payload.amount;
-          return {
-            ...c,
-            collected_amount: newCollected,
-            status: newCollected >= c.target_amount ? 'FUNDED' : c.status,
-          };
-        }
-        return c;
-      });
-      localStorage.setItem(STORAGE_CAMPAIGNS_KEY, JSON.stringify(updatedCampaigns));
-    } catch (localErr) {
-      console.warn('Local storage write error:', localErr);
-    }
+    const campaigns = await this.getAllCampaigns();
+    inMemoryCampaigns = campaigns.map((c) => {
+      if (c.id === campaign.id) {
+        const newCollected = (c.collected_amount || 0) + payload.amount;
+        return {
+          ...c,
+          collected_amount: newCollected,
+          status: newCollected >= c.target_amount ? 'FUNDED' : c.status,
+        };
+      }
+      return c;
+    });
 
     return {
       transaction: { ...trxRecord, campaign, agreement: agrRecord },
@@ -403,38 +402,26 @@ export const investmentService = {
     const client = getSupabaseClient();
     const cleanNo = memberNo.trim();
     let result: InvestmentTransaction[] = [];
-    let supabaseQueried = false;
 
-    if (client && cleanNo) {
-      try {
-        const { data, error } = await client
-          .from('investment_transactions')
-          .select('*')
-          .ilike('member_no', cleanNo)
-          .order('created_at', { ascending: false });
+    if (isSupabaseConfigured && client && cleanNo) {
+      const { data, error } = await client
+        .from('investment_transactions')
+        .select('*')
+        .ilike('member_no', cleanNo)
+        .order('created_at', { ascending: false });
 
-        if (!error && Array.isArray(data)) {
-          result = data as InvestmentTransaction[];
-          supabaseQueried = true;
-        }
-      } catch (err) {
-        console.warn('getTransactionsByMember Supabase error:', err);
+      if (error) {
+        throw new Error(`Gagal memuat riwayat investasi anggota dari Supabase: ${error.message}`);
       }
+      result = (data || []).map(mapInvestmentTransactionRow);
+    } else {
+      const list = inMemoryInvTransactions || INITIAL_DEMO_TRANSACTIONS;
+      result = list.filter(
+        (t: InvestmentTransaction) =>
+          t.member_no.toUpperCase().trim() === cleanNo.toUpperCase().trim()
+      );
     }
 
-    if (!supabaseQueried) {
-      try {
-        const cached = JSON.parse(localStorage.getItem(STORAGE_TRANSACTIONS_KEY) || '[]');
-        result = cached.filter(
-          (t: InvestmentTransaction) =>
-            t.member_no.toUpperCase().trim() === cleanNo.toUpperCase().trim()
-        );
-      } catch (e) {
-        result = [];
-      }
-    }
-
-    // Attach matching campaigns and agreements
     const campaigns = await this.getAllCampaigns();
     const agreements = await this.getAllDigitalAgreements();
 
@@ -449,28 +436,18 @@ export const investmentService = {
     const client = getSupabaseClient();
     let result: InvestmentTransaction[] = [];
 
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('investment_transactions')
-          .select('*')
-          .order('created_at', { ascending: false });
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from('investment_transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          result = data as InvestmentTransaction[];
-        }
-      } catch (err) {
-        console.warn('getAllTransactions Supabase error:', err);
+      if (error) {
+        throw new Error(`Gagal memuat semua transaksi investasi dari Supabase: ${error.message}`);
       }
-    }
-
-    if (result.length === 0) {
-      try {
-        const cached = JSON.parse(localStorage.getItem(STORAGE_TRANSACTIONS_KEY) || '[]');
-        result = cached.length > 0 ? cached : INITIAL_DEMO_TRANSACTIONS;
-      } catch (e) {
-        result = INITIAL_DEMO_TRANSACTIONS;
-      }
+      result = (data || []).map(mapInvestmentTransactionRow);
+    } else {
+      result = inMemoryInvTransactions || INITIAL_DEMO_TRANSACTIONS;
     }
 
     const campaigns = await this.getAllCampaigns();
@@ -488,58 +465,44 @@ export const investmentService = {
     const client = getSupabaseClient();
     const nowIso = new Date().toISOString();
 
-    if (client) {
-      try {
-        await client
-          .from('investment_transactions')
-          .update({
-            status,
-            verified_by: verifiedBy,
-            verified_at: nowIso,
-            updated_at: nowIso,
-          })
-          .eq('id', transactionId);
-      } catch (err) {
-        console.warn('updateTransactionStatus Supabase error:', err);
-      }
-    }
+    if (isSupabaseConfigured && client) {
+      const { error } = await client
+        .from('investment_transactions')
+        .update({
+          status,
+          verified_by: verifiedBy,
+          verified_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq('id', transactionId);
 
-    // Update Local Cache
-    try {
-      const cached: InvestmentTransaction[] = JSON.parse(
-        localStorage.getItem(STORAGE_TRANSACTIONS_KEY) || '[]'
-      );
-      const idx = cached.findIndex((t) => t.id === transactionId);
-      if (idx >= 0) {
-        cached[idx].status = status;
-        cached[idx].verified_by = verifiedBy;
-        cached[idx].verified_at = nowIso;
-        localStorage.setItem(STORAGE_TRANSACTIONS_KEY, JSON.stringify(cached));
+      if (error) {
+        throw new Error(`Gagal memperbarui status investasi di Supabase: ${error.message}`);
       }
       return true;
-    } catch (e) {
-      return false;
     }
+
+    if (!inMemoryInvTransactions) inMemoryInvTransactions = [...INITIAL_DEMO_TRANSACTIONS];
+    const idx = inMemoryInvTransactions.findIndex((t) => t.id === transactionId);
+    if (idx >= 0) {
+      inMemoryInvTransactions[idx].status = status;
+      inMemoryInvTransactions[idx].verified_by = verifiedBy;
+      inMemoryInvTransactions[idx].verified_at = nowIso;
+    }
+    return true;
   },
 
   async getAllDigitalAgreements(): Promise<DigitalAgreement[]> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { data, error } = await client.from('digital_agreements').select('*');
-        if (!error && data && data.length > 0) {
-          return data as DigitalAgreement[];
-        }
-      } catch (err) {
-        console.warn('getAllDigitalAgreements error:', err);
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client.from('digital_agreements').select('*');
+      if (error) {
+        throw new Error(`Gagal memuat akad digital dari Supabase: ${error.message}`);
       }
+      return (data || []) as DigitalAgreement[];
     }
 
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_AGREEMENTS_KEY) || '[]');
-    } catch (e) {
-      return [];
-    }
+    return inMemoryAgreements || [];
   },
 
   // ==========================================
@@ -600,28 +563,19 @@ export const investmentService = {
 
   async getAllDividends(): Promise<InvestmentDividendDistribution[]> {
     const client = getSupabaseClient();
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('investment_dividend_distributions')
-          .select('*')
-          .order('distribution_date', { ascending: false });
+    if (isSupabaseConfigured && client) {
+      const { data, error } = await client
+        .from('investment_dividend_distributions')
+        .select('*')
+        .order('distribution_date', { ascending: false });
 
-        if (!error && data && data.length > 0) {
-          return data as InvestmentDividendDistribution[];
-        }
-      } catch (err) {
-        console.warn('getAllDividends Supabase error:', err);
+      if (error) {
+        throw new Error(`Gagal memuat distribusi bagi hasil dari Supabase: ${error.message}`);
       }
+      return (data || []) as InvestmentDividendDistribution[];
     }
 
-    try {
-      const cached = localStorage.getItem(STORAGE_DIVIDENDS_KEY);
-      if (cached) return JSON.parse(cached);
-    } catch (e) {
-      console.warn('localStorage read error:', e);
-    }
-    return INITIAL_DEMO_DIVIDENDS;
+    return inMemoryDividends || INITIAL_DEMO_DIVIDENDS;
   },
 
   async addDividendDistribution(
@@ -636,21 +590,16 @@ export const investmentService = {
       created_at: nowIso,
     };
 
-    if (client) {
-      try {
-        await client.from('investment_dividend_distributions').insert([record]);
-      } catch (err) {
-        console.warn('addDividendDistribution Supabase error:', err);
+    if (isSupabaseConfigured && client) {
+      const { error } = await client.from('investment_dividend_distributions').insert([record]);
+      if (error) {
+        throw new Error(`Gagal menyimpan distribusi dividen ke Supabase: ${error.message}`);
       }
+      return true;
     }
 
-    try {
-      const dividends = await this.getAllDividends();
-      dividends.unshift(record);
-      localStorage.setItem(STORAGE_DIVIDENDS_KEY, JSON.stringify(dividends));
-      return true;
-    } catch (e) {
-      return false;
-    }
+    if (!inMemoryDividends) inMemoryDividends = [...INITIAL_DEMO_DIVIDENDS];
+    inMemoryDividends.unshift(record);
+    return true;
   },
 };
