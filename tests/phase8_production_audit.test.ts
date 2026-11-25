@@ -236,6 +236,57 @@ async function runE2ECriticalFlows() {
   );
 
   // ----------------------------------------------------------------------------
+  // FLOW 10: Member Portal Routing & View-Only Transaction Mutation Guards
+  // ----------------------------------------------------------------------------
+  console.log('\n▶ [CRITICAL FLOW 10] Member Portal Routing & View-Only Guards');
+  const { pathToPage } = await import('../src/hooks/useAppRouter');
+  const memberSimpananRoute = pathToPage('/portal/simpanan');
+  assert(
+    memberSimpananRoute.page === 'MEMBER_PORTAL' && memberSimpananRoute.tab === 'simpanan',
+    '/portal/simpanan mengarah ke MEMBER_PORTAL (bukan Admin SIMPANAN)'
+  );
+  const memberTransaksiRoute = pathToPage('/portal/transaksi');
+  assert(
+    memberTransaksiRoute.page === 'MEMBER_PORTAL' && memberTransaksiRoute.tab === 'transaksi',
+    '/portal/transaksi mengarah ke MEMBER_PORTAL tab transaksi'
+  );
+  const adminSimpananRoute = pathToPage('/admin/simpanan');
+  assert(
+    adminSimpananRoute.page === 'SIMPANAN' && adminSimpananRoute.boundary === 'ADMIN',
+    '/admin/simpanan tetap diproteksi pada boundary ADMIN'
+  );
+
+  // Re-login as member to ensure activeUser is ANGGOTA for mutation denial test
+  await authService.loginMember(memberCreds);
+  let memberSaveBlocked = false;
+  try {
+    await transactionService.saveTransaction({
+      id: `TRX-DENIED-${Date.now()}`,
+      tanggal: '2026-11-24',
+      referal: 'KOPERASI',
+      plantation: 'PUSAT JAKARTA',
+      jenis: 'MASUK',
+      kategori: 'Simpanan Wajib',
+      metode_bayar: 'Bank BSI',
+      qty: 1,
+      jumlah: 100000,
+    });
+  } catch {
+    memberSaveBlocked = true;
+  }
+  assert(memberSaveBlocked === true, 'ANGGOTA ditolak saat mencoba saveTransaction (View-Only enforced)');
+
+  let memberDeleteBlocked = false;
+  try {
+    await transactionService.deleteTransaction(testTrxId);
+  } catch {
+    memberDeleteBlocked = true;
+  }
+  assert(memberDeleteBlocked === true, 'ANGGOTA ditolak saat mencoba deleteTransaction (View-Only enforced)');
+
+  await authService.signOut();
+
+  // ----------------------------------------------------------------------------
   // SUMMARY
   // ----------------------------------------------------------------------------
   console.log('\n================================================================');

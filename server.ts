@@ -420,9 +420,21 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Referensi berkas storage tidak valid.' });
     }
 
+    // Helper normalisasi path/URL agar URL-encoded (%20) vs spasi & huruf besar/kecil tetap cocok akurat
+    const normalizePathRef = (val: unknown): string => {
+      const s = String(val || '').trim();
+      if (!s) return '';
+      try {
+        return decodeURIComponent(s).toLowerCase();
+      } catch {
+        return s.toLowerCase();
+      }
+    };
+
     // Verifikasi otorisasi pemohon: harus memiliki JWT authenticated ATAU identitas anggota terverifikasi yang memiliki objek tsb
     let isAuthorized = false;
     let isAdminOrDir = false;
+    let jwtMemberNo = '';
     const authHeader = String(req.headers.authorization || '');
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
 
@@ -441,6 +453,15 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
             ['ADMIN', 'SUPERADMIN', 'DIRECTOR', 'PENGURUS'].includes(metaRole)
           ) {
             isAdminOrDir = true;
+          } else {
+            const rawMetaNo = String(
+              userData.user.app_metadata?.member_no ||
+                userData.user.user_metadata?.member_no ||
+                (email.endsWith('@anggota.kopsim.id') ? email.split('@')[0] : '')
+            ).trim();
+            if (rawMetaNo) {
+              jwtMemberNo = rawMetaNo.toLowerCase();
+            }
           }
         }
       } catch {
@@ -450,9 +471,19 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
 
     // Jika bukan admin/director JWT, wajib verifikasi kepemilikan objek oleh memberNo / memberName di DB
     if (!isAdminOrDir && hasServiceRoleKey) {
-      const cleanMemberNo = String(memberNo || '').trim().toLowerCase();
+      const requestedMemberNo = String(memberNo || '').trim().toLowerCase();
+      // Jika user membawa JWT anggota, kunci memberNo ke identitas JWT yang terverifikasi (anti-spoofing)
+      const cleanMemberNo = jwtMemberNo || requestedMemberNo;
       const cleanMemberName = String(memberName || '').trim().toLowerCase();
       const obj = parsed.objectPath;
+      const normObj = normalizePathRef(obj);
+
+      if (jwtMemberNo && requestedMemberNo && jwtMemberNo !== requestedMemberNo) {
+        return res.status(403).json({
+          success: false,
+          error: 'Akses ditolak: Identitas anggota tidak sesuai dengan sesi login.',
+        });
+      }
 
       if (!cleanMemberNo && !cleanMemberName) {
         if (!isAuthorized) {
@@ -463,9 +494,9 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
         let owned = false;
         if (
           cleanMemberNo &&
-          (obj.toLowerCase().startsWith(`avatar/${cleanMemberNo}`) ||
-            obj.toLowerCase().startsWith(`setoran/${cleanMemberNo}`) ||
-            obj.toLowerCase().startsWith(`investasi/${cleanMemberNo}`))
+          (normObj.startsWith(`avatar/${cleanMemberNo}`) ||
+            normObj.startsWith(`setoran/${cleanMemberNo}`) ||
+            normObj.startsWith(`investasi/${cleanMemberNo}`))
         ) {
           owned = true;
         }
@@ -477,10 +508,11 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
           });
           if (
             Array.isArray(trxRows) &&
-            trxRows.some(
-              (r: any) =>
-                String(r?.bukti_url || '').includes(obj) || String(r?.file_url || '').includes(obj)
-            )
+            trxRows.some((r: any) => {
+              const bUrl = normalizePathRef(r?.bukti_url);
+              const fUrl = normalizePathRef(r?.file_url);
+              return (bUrl && bUrl.includes(normObj)) || (fUrl && fUrl.includes(normObj));
+            })
           ) {
             owned = true;
           }
@@ -493,11 +525,11 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
             .ilike('member_no', cleanMemberNo);
           if (
             Array.isArray(invRows) &&
-            invRows.some(
-              (r: any) =>
-                String(r?.bukti_url || '').includes(obj) ||
-                String(r?.payment_proof_url || '').includes(obj)
-            )
+            invRows.some((r: any) => {
+              const bUrl = normalizePathRef(r?.bukti_url);
+              const pUrl = normalizePathRef(r?.payment_proof_url);
+              return (bUrl && bUrl.includes(normObj)) || (pUrl && pUrl.includes(normObj));
+            })
           ) {
             owned = true;
           }
@@ -508,7 +540,7 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
             p_member_no: cleanMemberNo,
             p_member_name: cleanMemberName,
           });
-          if (typeof regProof === 'string' && regProof.includes(obj)) {
+          if (typeof regProof === 'string' && normalizePathRef(regProof).includes(normObj)) {
             owned = true;
           }
         }
@@ -520,7 +552,7 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
             .or(`member_no.ilike.${cleanMemberNo},id.eq.${cleanMemberNo}`)
             .limit(1)
             .maybeSingle();
-          if (mRow?.avatar_url && String(mRow.avatar_url).includes(obj)) {
+          if (mRow?.avatar_url && normalizePathRef(mRow.avatar_url).includes(normObj)) {
             owned = true;
           }
         }
@@ -531,6 +563,12 @@ app.post('/api/storage/signed-url', async (req: Request, res: Response) => {
           return res.status(403).json({
             success: false,
             error: 'Akses ditolak: Anda tidak berhak mengakses berkas bukti transaksi ini.',
+          });
+        } else {
+          // Even with a valid member JWT, reject objects that do not belong to the member
+          return res.status(403).json({
+            success: false,
+            error: 'Akses ditolak: Berkas bukti transfer ini bukan milik akun anggota Anda.',
           });
         }
       }
@@ -597,11 +635,15 @@ app.post('/api/auth/member-ensure-auth', async (req: Request, res: Response) => 
     const memberNo = String(m.member_no || m.id || cleanUser).trim();
     const memberEmail = `${memberNo.toLowerCase()}@anggota.kopsim.id`;
 
-    const { data: existingList } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const usersArr: any[] = Array.isArray((existingList as any)?.users) ? (existingList as any).users : [];
-    const existingUser = usersArr.find(
-      (u: any) => String(u?.email || '').toLowerCase() === memberEmail
-    );
+    let existingUser: any = null;
+    for (let page = 1; page <= 5; page++) {
+      const { data: existingList } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+      const usersArr: any[] = Array.isArray((existingList as any)?.users) ? (existingList as any).users : [];
+      existingUser = usersArr.find(
+        (u: any) => String(u?.email || '').toLowerCase() === memberEmail
+      );
+      if (existingUser || usersArr.length < 1000) break;
+    }
 
     if (!existingUser) {
       const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
@@ -641,6 +683,18 @@ app.post('/api/auth/member-ensure-auth', async (req: Request, res: Response) => 
           member_id: m.id,
           full_name: m.full_name,
         },
+        app_metadata: {
+          ...(existingUser.app_metadata || {}),
+          role: 'ANGGOTA',
+          member_no: memberNo,
+        },
+      });
+      await supabaseAdmin.from('profiles').upsert({
+        id: existingUser.id,
+        full_name: m.full_name,
+        role: 'ANGGOTA',
+        member_id: memberNo,
+        username: m.username || memberNo,
       });
     }
 

@@ -106,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setRole = useCallback((newRole: UserRole) => {
     setUser((prev) => {
-      if (!prev) return null;
+      if (!prev || prev.role === 'ANGGOTA') return prev;
       return { ...prev, role: newRole };
     });
   }, []);
@@ -118,13 +118,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (updated.role === 'ANGGOTA') {
         authService.updateActiveMemberProfile({
           name: updated.name,
-          gender: updated.gender,
+          gender: updated.gender as 'L' | 'P' | undefined,
           address: updated.address,
           city: updated.city,
           province: updated.province,
           occupation: updated.occupation,
           birthDate: updated.birthDate,
           birthPlace: updated.birthPlace,
+          avatarUrl: updated.avatarUrl,
         });
       }
       return updated;

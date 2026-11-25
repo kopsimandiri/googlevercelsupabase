@@ -35,7 +35,8 @@ import { KopsimLogo } from '../common/KopsimLogo';
 
 interface SidebarProps {
   activePage: ActivePage;
-  onNavigate: (page: ActivePage) => void;
+  activeTab?: string;
+  onNavigate: (page: ActivePage, subTab?: string) => void;
   isOpen: boolean;
   onClose: () => void;
   onRequestLogin: () => void;
@@ -44,6 +45,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activePage,
+  activeTab,
   onNavigate,
   isOpen,
   onClose,
@@ -52,8 +54,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { user, role, isAuthenticated, logout } = useAuth();
 
-  const handleNavClick = (page: ActivePage) => {
-    onNavigate(page);
+  const handleNavClick = (page: ActivePage, subTab?: string) => {
+    onNavigate(page, subTab);
     onClose();
   };
 
@@ -304,36 +306,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               </div>
             ) : role === 'ANGGOTA' ? (
-              /* If Authenticated as ANGGOTA: Show strictly personal savings and personal profile */
+              /* If Authenticated as ANGGOTA: Show strictly personal transactions, savings, and personal profile (View-Only) */
               <div className="space-y-1">
-                {/* 1. Simpanan Pribadi */}
+                {/* 1. Riwayat Transaksi & Bukti */}
                 <button
-                  onClick={() => handleNavClick('MEMBER_PORTAL')}
+                  onClick={() => handleNavClick('MEMBER_PORTAL', 'transaksi')}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all ${
-                    activePage === 'MEMBER_PORTAL'
+                    activePage === 'MEMBER_PORTAL' && (!activeTab || activeTab === 'transaksi' || activeTab === 'dashboard')
+                      ? 'bg-accent-gold text-white font-bold shadow-xs'
+                      : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <FileSpreadsheet className="w-4 h-4 shrink-0 text-amber-300" />
+                    <span>1. Riwayat Transaksi &amp; Bukti</span>
+                  </div>
+                  <ChevronRight className="w-3 h-3 text-amber-300" />
+                </button>
+
+                {/* 2. Simpanan Pribadi & Mutasi */}
+                <button
+                  onClick={() => handleNavClick('MEMBER_PORTAL', 'simpanan')}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all ${
+                    activePage === 'MEMBER_PORTAL' && activeTab === 'simpanan'
                       ? 'bg-accent-gold text-white font-bold shadow-xs'
                       : 'text-stone-200 hover:bg-primary-800 hover:text-white'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
                     <Coins className="w-4 h-4 shrink-0 text-amber-300" />
-                    <span>1. Simpanan Pribadi & Mutasi</span>
+                    <span>2. Simpanan Pribadi &amp; Mutasi</span>
                   </div>
-                  <ChevronRight className="w-3 h-3 text-amber-300" />
+                  <ChevronRight className="w-3 h-3 text-stone-400" />
                 </button>
 
-                {/* 2. Data Diri & e-KTA */}
+                {/* 3. Data Diri & e-KTA */}
                 <button
-                  onClick={() => handleNavClick('MEMBER_PORTAL')}
+                  onClick={() => handleNavClick('MEMBER_PORTAL', 'kta')}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all ${
-                    activePage === 'MEMBER_PORTAL'
-                      ? 'bg-primary-800 text-white font-semibold shadow-xs'
+                    activePage === 'MEMBER_PORTAL' && (activeTab === 'kta' || activeTab === 'profile')
+                      ? 'bg-accent-gold text-white font-bold shadow-xs'
                       : 'text-stone-200 hover:bg-primary-800 hover:text-white'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
                     <User className="w-4 h-4 shrink-0 text-emerald-300" />
-                    <span>2. Data Diri & e-KTA</span>
+                    <span>3. Data Diri &amp; e-KTA</span>
                   </div>
                   <ChevronRight className="w-3 h-3 text-stone-400" />
                 </button>

@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 
 interface BottomNavProps {
   activePage: ActivePage;
-  onNavigate: (page: ActivePage) => void;
+  onNavigate: (page: ActivePage, subTab?: string) => void;
   onOpenRegister: () => void;
   onRequestLogin: () => void;
 }
@@ -65,7 +65,15 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
       {/* 4. Portal Internal / Simpanan */}
       <button
-        onClick={() => onNavigate(role === 'ANGGOTA' ? 'MEMBER_PORTAL' : 'REPORTS_DASHBOARD')}
+        onClick={() => {
+          if (!isAuthenticated) {
+            onRequestLogin();
+          } else if (role === 'ANGGOTA') {
+            onNavigate('MEMBER_PORTAL', 'transaksi');
+          } else {
+            onNavigate('REPORTS_DASHBOARD');
+          }
+        }}
         className={`flex flex-col items-center justify-center p-1.5 rounded-lg min-w-[56px] transition-colors ${
           (role === 'ANGGOTA' ? activePage === 'MEMBER_PORTAL' : isInternalActive)
             ? 'text-primary-700 font-bold'
@@ -73,13 +81,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         }`}
       >
         <LayoutDashboard className="w-4 h-4 mb-0.5" />
-        <span className="text-[10px] tracking-tight">{role === 'ANGGOTA' ? 'Simpanan' : 'Internal'}</span>
+        <span className="text-[10px] tracking-tight">{role === 'ANGGOTA' ? 'Transaksi' : 'Internal'}</span>
       </button>
 
       {/* 5. Akun / Login */}
       {isAuthenticated ? (
         <button
-          onClick={() => onNavigate(role === 'ANGGOTA' ? 'MEMBER_PORTAL' : 'MEMBERSHIP')}
+          onClick={() => onNavigate(role === 'ANGGOTA' ? 'MEMBER_PORTAL' : 'MEMBERSHIP', role === 'ANGGOTA' ? 'kta' : undefined)}
           className={`flex flex-col items-center justify-center p-1.5 rounded-lg min-w-[56px] transition-colors ${
             (role === 'ANGGOTA' ? activePage === 'MEMBER_PORTAL' : activePage === 'MEMBERSHIP')
               ? 'text-primary-700 font-bold'

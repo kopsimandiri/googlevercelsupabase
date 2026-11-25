@@ -552,6 +552,11 @@ export interface TransactionSearchParams {
   page?: number;
   pageSize?: number;
   signal?: AbortSignal;
+  memberScope?: {
+    memberNo?: string;
+    memberName?: string;
+    memberId?: string;
+  };
 }
 
 export interface TransactionSearchResult {
@@ -596,6 +601,13 @@ export interface SaveSplitTransactionsParams {
   login_as?: string;
   keterangan_umum?: string;
   splits: SplitCategoryItem[];
+}
+
+function assertCanMutateTransactions(): void {
+  const activeRole = authService.getCurrentUser()?.role;
+  if (activeRole === 'ANGGOTA') {
+    throw new Error('Akses ditolak: akun anggota hanya memiliki hak baca (view-only) dan tidak dapat mengubah atau menghapus transaksi.');
+  }
 }
 
 export const transactionService = {
@@ -730,6 +742,42 @@ export const transactionService = {
         // B. Jenis Filter
         if (jenisFilter !== 'ALL') {
           query = query.eq('transaction_type', jenisFilter);
+        }
+
+        // Defense-in-depth member scoping (ANGGOTA / scopedMember)
+        const activeUser = authService.getCurrentUser();
+        const effectiveScope =
+          params.memberScope ||
+          (activeUser?.role === 'ANGGOTA'
+            ? { memberNo: activeUser.memberNo || activeUser.username, memberName: activeUser.name, memberId: activeUser.id }
+            : undefined);
+
+        if (effectiveScope) {
+          const scopeClauses: string[] = [];
+          const sNo = (effectiveScope.memberNo || '').trim();
+          const sId = (effectiveScope.memberId || '').trim();
+          const sName = (effectiveScope.memberName || '').trim();
+          if (sNo.length >= 3) {
+            scopeClauses.push(
+              `member_id.eq.${sNo}`,
+              `customer_name.ilike.%${sNo}%`,
+              `account_name_legacy.ilike.%${sNo}%`,
+              `description.ilike.%${sNo}%`
+            );
+          }
+          if (sId && sId !== sNo) {
+            scopeClauses.push(`member_id.eq.${sId}`);
+          }
+          if (sName.length >= 3) {
+            scopeClauses.push(
+              `customer_name.ilike.%${sName}%`,
+              `account_name_legacy.ilike.%${sName}%`,
+              `description.ilike.%${sName}%`
+            );
+          }
+          if (scopeClauses.length > 0) {
+            query = query.or(scopeClauses.join(','));
+          }
         }
 
         // C. Multi-column Search Query
@@ -936,8 +984,18 @@ export const transactionService = {
 
   async saveTransaction(
     trxData: Partial<TransactionRecord>,
-    isEditExplicit?: boolean
+    isEditExplicit?: boolean,
+    options?: { systemWebhook?: boolean }
   ): Promise<{ success: boolean; id: string; error?: string; source?: 'SUPABASE' | 'LOCAL' }> {
+    const isVerifiedSystemWebhook = Boolean(
+      options?.systemWebhook &&
+      !isEditExplicit &&
+      trxData.login_as === 'SYSTEM_PAYMENT_GATEWAY' &&
+      String(trxData.id || '').startsWith('TRX-PG-')
+    );
+    if (!isVerifiedSystemWebhook) {
+      assertCanMutateTransactions();
+    }
     const client = getSupabaseClient();
     const isServerMode = Boolean(client && isSupabaseConfigured);
 
@@ -1133,6 +1191,7 @@ export const transactionService = {
   async saveSplitTransactions(
     params: SaveSplitTransactionsParams
   ): Promise<{ success: boolean; baseId: string; ids: string[]; error?: string; count: number }> {
+    assertCanMutateTransactions();
     const {
       baseTrxId,
       tanggal,
@@ -1295,6 +1354,7 @@ export const transactionService = {
   },
 
   async deleteTransaction(id: string): Promise<{ success: boolean; error?: string }> {
+    assertCanMutateTransactions();
     const client = getSupabaseClient();
     if (client && isSupabaseConfigured) {
       try {
@@ -1328,6 +1388,7 @@ export const transactionService = {
    * Membatalkan transaksi (void) tanpa menghapus jejak pembukuan untuk menjaga integritas audit
    */
   async voidTransaction(id: string, reason: string): Promise<{ success: boolean; message: string }> {
+    assertCanMutateTransactions();
     const client = getSupabaseClient();
     if (client && isSupabaseConfigured) {
       try {
@@ -1683,22 +1744,48 @@ export const transactionService = {
   },
 
   /**
-   * Mengambil riwayat mutasi transaksi buku tabungan anggota
+   * Mengambil riwayat mutasi transaksi buku tabungan anggota (strictly scoped & deduplicated)
    */
-  async getMemberTransactions(memberName: string, memberNo?: string): Promise<TransactionRecord[]> {
+  async getMemberTransactions(
+    memberName: string,
+    memberNo?: string,
+    memberId?: string
+  ): Promise<TransactionRecord[]> {
     const cleanName = (memberName || '').trim();
     const cleanNo = (memberNo || '').trim();
+    const cleanPk = (memberId || '').trim();
     const client = getSupabaseClient();
 
-    if (client && (cleanName.length >= 2 || cleanNo.length >= 2)) {
-      // 1. Prioritas: gunakan SECURITY DEFINER RPC get_member_portal_transactions agar lintas perangkat tetap dapat membaca file_url & riwayat transaksi
+    const dedupeAndSort = (rows: TransactionRecord[]): TransactionRecord[] => {
+      const byId = new Map<string, TransactionRecord>();
+      for (const row of rows) {
+        const key = (row.id || `${row.tanggal}-${row.kategori}-${row.jumlah}`).trim();
+        const existing = byId.get(key);
+        if (!existing) {
+          byId.set(key, row);
+        } else {
+          // Prefer row with valid proof url
+          const existingProof = existing.bukti_url || existing.filelink || '';
+          const newProof = row.bukti_url || row.filelink || '';
+          if (!existingProof && newProof) {
+            byId.set(key, row);
+          }
+        }
+      }
+      return Array.from(byId.values()).sort((a, b) =>
+        String(b.tanggal || '').localeCompare(String(a.tanggal || ''))
+      );
+    };
+
+    if (client && (cleanName.length >= 2 || cleanNo.length >= 2 || cleanPk.length >= 2)) {
+      // 1. Prioritas: gunakan SECURITY DEFINER RPC get_member_portal_transactions agar lintas perangkat tetap dapat membaca bukti_url & file_url
       try {
         const { data: rpcRows, error: rpcErr } = await client.rpc('get_member_portal_transactions', {
-          p_member_no: cleanNo,
+          p_member_no: cleanNo || cleanPk,
           p_member_name: cleanName,
         });
         if (!rpcErr && Array.isArray(rpcRows)) {
-          return rpcRows.map(mapAndCleanTransactionRow);
+          return dedupeAndSort(rpcRows.map(mapAndCleanTransactionRow));
         }
       } catch (rpcEx) {
         console.warn('getMemberTransactions RPC fallback:', rpcEx);
@@ -1722,17 +1809,22 @@ export const transactionService = {
             `description.ilike.%${cleanNo}%`
           );
         }
+        if (cleanPk.length >= 3 && cleanPk !== cleanNo) {
+          orClauses.push(`member_id.eq.${cleanPk}`);
+        }
 
-        const { data, error } = await client
-          .from(TRANSACTIONS_TABLE_NAME)
-          .select('*')
-          .or(orClauses.join(','))
-          .order('transaction_date', { ascending: false });
+        if (orClauses.length > 0) {
+          const { data, error } = await client
+            .from(TRANSACTIONS_TABLE_NAME)
+            .select('*')
+            .or(orClauses.join(','))
+            .order('transaction_date', { ascending: false });
 
-        if (!error && Array.isArray(data)) {
-          return data.map(mapAndCleanTransactionRow);
-        } else if (error) {
-          console.error('[TransactionService] Gagal memuat transaksi anggota dari Supabase:', error.message);
+          if (!error && Array.isArray(data)) {
+            return dedupeAndSort(data.map(mapAndCleanTransactionRow));
+          } else if (error) {
+            console.error('[TransactionService] Gagal memuat transaksi anggota dari Supabase:', error.message);
+          }
         }
       } catch (err) {
         console.error('[TransactionService] Exception saat memuat transaksi anggota:', err);
@@ -1745,24 +1837,27 @@ export const transactionService = {
 
     // Fallback in-memory HANYA untuk mode offline/unit test tanpa Supabase
     const all = this.getStoredTransactions();
-    return all.filter((t) => {
+    const filtered = all.filter((t) => {
       const desc = (t.keterangan || '').toLowerCase();
       const cust = (t.customer_id || '').toLowerCase();
       const custName = (t.customer_name || '').toLowerCase();
-      const memberId = (t.member_id || '').toLowerCase();
+      const memberIdVal = (t.member_id || '').toLowerCase();
       const acc = (t.akun || '').toLowerCase();
       const id = (t.id || '').toLowerCase();
       const targetName = cleanName.toLowerCase();
       const targetNo = cleanNo.toLowerCase();
+      const targetPk = cleanPk.toLowerCase();
 
       const matchNo =
         targetNo.length >= 3 &&
-        (memberId.includes(targetNo) ||
+        (memberIdVal === targetNo ||
           cust.includes(targetNo) ||
           custName.includes(targetNo) ||
           desc.includes(targetNo) ||
           acc.includes(targetNo) ||
           id.includes(targetNo));
+
+      const matchPk = targetPk.length >= 3 && memberIdVal === targetPk;
 
       const matchName =
         targetName.length >= 3 &&
@@ -1771,8 +1866,10 @@ export const transactionService = {
           desc.includes(targetName) ||
           acc.includes(targetName));
 
-      return matchNo || matchName;
+      return matchNo || matchPk || matchName;
     });
+
+    return dedupeAndSort(filtered);
   },
 
   getCustomers(): CustomerRecord[] {
@@ -1874,6 +1971,7 @@ export const transactionService = {
     updatedCount: number;
     errors: string[];
   }> {
+    assertCanMutateTransactions();
     const preview = await this.previewLegacyFileUrlMigration();
     const client = getSupabaseClient();
     if (!client) {
@@ -1993,6 +2091,7 @@ export const transactionService = {
     errors: string[];
     updatedItems: Array<{ transaction_no: string; file_url: string }>;
   }> {
+    assertCanMutateTransactions();
     const client = getSupabaseClient();
     const errors: string[] = [];
     let updatedCount = 0;
@@ -2063,6 +2162,7 @@ export const transactionService = {
     recoveredCount: number;
     recoveredItems: Array<{ transaction_no: string; publicUrl: string }>;
   }> {
+    assertCanMutateTransactions();
     // 1. Sync all known verified storage objects to database first (including split rows & legacy Google Drive rows)
     await this.syncKnownStorageProofsToDatabase();
 

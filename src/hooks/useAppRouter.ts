@@ -29,15 +29,17 @@ export const ROUTE_DEFINITIONS: RouteMapping[] = [
 
   // MEMBER PORTAL
   { path: '/portal/login', page: 'HOME', boundary: 'MEMBER_PORTAL' },
-  { path: '/portal/dashboard', page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'dashboard' },
+  { path: '/portal/dashboard', page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'transaksi' },
+  { path: '/portal/transaksi', page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'transaksi' },
   { path: '/portal/profile', page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'profile' },
-  { path: '/portal/simpanan', page: 'SIMPANAN', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'simpanan' },
+  { path: '/portal/simpanan', page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'simpanan' },
   { path: '/portal/kta', page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL', requiresAuth: true, tab: 'kta' },
 
   // ADMIN / MANAGEMENT
   { path: '/admin', page: 'REPORTS_DASHBOARD', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/dashboard', page: 'REPORTS_DASHBOARD', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/members', page: 'MEMBERSHIP', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/simpanan', page: 'SIMPANAN', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/transactions', page: 'TRANSACTIONS', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/finance', page: 'FINANCE', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/reports', page: 'REPORTS_KEUANGAN', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
@@ -73,9 +75,9 @@ export function pageToPath(page: ActivePage, subTab?: string): string {
     case 'PAYMENTS':
       return '/pembayaran';
     case 'MEMBER_PORTAL':
-      return subTab ? `/portal/${subTab}` : '/portal/dashboard';
+      return subTab ? `/portal/${subTab}` : '/portal/transaksi';
     case 'SIMPANAN':
-      return '/portal/simpanan';
+      return '/admin/simpanan';
     case 'REPORTS_DASHBOARD':
       return '/admin';
     case 'MEMBERSHIP':
@@ -106,6 +108,13 @@ export function pathToPage(currentPath: string): { page: ActivePage; tab?: strin
   let normalized = currentPath.trim();
   if (normalized.startsWith('#')) {
     normalized = normalized.substring(1);
+  }
+  const qIndex = normalized.indexOf('?');
+  if (qIndex !== -1) {
+    normalized = normalized.substring(0, qIndex);
+  }
+  if (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
   }
   if (!normalized || normalized === '') {
     normalized = '/';
@@ -142,7 +151,8 @@ export function pathToPage(currentPath: string): { page: ActivePage; tab?: strin
     return { page: 'REPORTS_DASHBOARD', boundary: 'ADMIN' };
   }
   if (normalized.startsWith('/portal')) {
-    return { page: 'MEMBER_PORTAL', boundary: 'MEMBER_PORTAL' };
+    const subTab = normalized.replace('/portal', '').replace(/^\/+/, '') || 'transaksi';
+    return { page: 'MEMBER_PORTAL', tab: subTab, boundary: 'MEMBER_PORTAL' };
   }
 
   return { page: 'HOME', boundary: 'PUBLIC' };

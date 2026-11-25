@@ -3,9 +3,15 @@ import { AuthCredentials, MemberLoginCredentials, UserRole, UserSession } from '
 import { maskNik } from '../utils/formatters';
 import { mapSupabaseMemberRowToMemberRecord, memberService } from './memberService';
 
-// Sesi anggota aktif disimpan di memori aplikasi (bukan localStorage/sessionStorage).
+// Sesi aktif disimpan di memori aplikasi (bukan localStorage/sessionStorage).
 // Untuk persistensi lintas reload yang aman, hubungkan akun anggota ke Supabase Auth.
 let inMemoryMemberSession: UserSession | null = null;
+let lastResolvedSession: UserSession | null = null;
+
+function isUuidLike(val?: string | null): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+}
 
 /**
  * Resolves user profile and role details securely from Supabase database tables (profiles, user_roles, roles)
@@ -94,8 +100,11 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
 
   // Untuk ANGGOTA: pastikan memberNo & profil anggota lengkap (dari email, inMemoryMemberSession, atau RPC)
   if (role === 'ANGGOTA') {
-    if (!memberNo && emailLower.endsWith('@anggota.kopsim.id')) {
+    if ((!memberNo || isUuidLike(memberNo)) && emailLower.endsWith('@anggota.kopsim.id')) {
       memberNo = emailLower.split('@')[0].toUpperCase();
+    }
+    if (isUuidLike(memberNo)) {
+      memberNo = undefined;
     }
 
     if (
@@ -103,27 +112,43 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
       ((memberNo && inMemoryMemberSession.memberNo?.toLowerCase() === memberNo.toLowerCase()) ||
         inMemoryMemberSession.email?.toLowerCase() === emailLower)
     ) {
-      return {
+      const merged: UserSession = {
         ...inMemoryMemberSession,
         role: 'ANGGOTA',
         loginTime: inMemoryMemberSession.loginTime || new Date().toISOString(),
       };
+      lastResolvedSession = merged;
+      return merged;
     }
 
-    const lookupIdent = memberNo || memberId || '';
+    const lookupIdent = memberNo || (!isUuidLike(memberId) ? memberId : '') || '';
     if (lookupIdent) {
       try {
         const { data: prof } = await client.rpc('get_member_profile_self', {
           p_identifier: lookupIdent,
         });
         if (prof && typeof prof === 'object') {
-          return {
+          let transferProofUrl = String(prof.transfer_proof_url || '').trim();
+          if (!transferProofUrl) {
+            try {
+              const { data: rpcProof } = await client.rpc('get_member_registration_proof', {
+                p_member_no: prof.member_no || lookupIdent,
+                p_member_name: prof.full_name || fullName,
+              });
+              if (typeof rpcProof === 'string' && rpcProof.trim()) {
+                transferProofUrl = rpcProof.trim();
+              }
+            } catch {
+              // ignore
+            }
+          }
+          const resolvedMemberSession: UserSession = {
             id: prof.id || user.id,
             name: prof.full_name || fullName,
             email: user.email || '',
             role: 'ANGGOTA',
             memberId: prof.id || memberId,
-            memberNo: prof.member_no || memberNo || prof.id,
+            memberNo: prof.member_no || memberNo || (!isUuidLike(prof.id) ? prof.id : ''),
             workArea: prof.work_area || 'PUSAT JAKARTA',
             nikMasked: maskNik(prof.nik),
             gender: prof.gender || 'L',
@@ -135,8 +160,12 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
             birthPlace: prof.birth_place || 'Jakarta',
             status: prof.status || 'AKTIF',
             avatarUrl: prof.avatar_url || '',
+            transferProofUrl,
             loginTime: new Date().toISOString(),
           };
+          inMemoryMemberSession = resolvedMemberSession;
+          lastResolvedSession = resolvedMemberSession;
+          return resolvedMemberSession;
         }
       } catch {
         // lanjut fallback minimal
@@ -144,7 +173,7 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
     }
   }
 
-  return {
+  const baseSession: UserSession = {
     id: user.id,
     name: fullName,
     email: user.email || '',
@@ -153,6 +182,8 @@ async function resolveUserSession(client: any, user: any): Promise<UserSession> 
     memberNo,
     loginTime: new Date().toISOString(),
   };
+  lastResolvedSession = baseSession;
+  return baseSession;
 }
 
 export const authService = {
@@ -228,6 +259,7 @@ export const authService = {
     };
 
     inMemoryMemberSession = localSession;
+    lastResolvedSession = localSession;
     return localSession;
   },
 
@@ -363,12 +395,27 @@ export const authService = {
 
             if (isValid) {
               const mapped = mapSupabaseMemberRowToMemberRecord(m);
+              let resolvedProofUrl = mapped.transfer_proof_url || (m as any).transfer_proof_url || '';
+              if (!resolvedProofUrl) {
+                try {
+                  const { data: regProof } = await client.rpc('get_member_registration_proof', {
+                    p_member_no: mapped.id,
+                    p_member_name: mapped.nama || '',
+                  });
+                  if (typeof regProof === 'string' && regProof.trim()) {
+                    resolvedProofUrl = regProof.trim();
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+
               const memberSession: UserSession = {
                 id: mapped.id,
                 name: mapped.nama || 'Anggota KOPSIM',
                 email: `${mapped.id.toLowerCase()}@anggota.kopsim.id`,
                 role: 'ANGGOTA',
-                memberId: mapped.id,
+                memberId: String(m.id || mapped.id),
                 memberNo: mapped.id,
                 workArea: mapped.plantation || 'PUSAT JAKARTA',
                 nikMasked: maskNik(mapped.nik || (m as any).nik || ''),
@@ -381,15 +428,33 @@ export const authService = {
                 birthPlace: (mapped as any).tempat_lahir || (m as any).birth_place || 'Jakarta',
                 status: (mapped as any).status || 'AKTIF',
                 avatarUrl: (mapped as any).avatar_url || (m as any).avatar_url || '',
+                transferProofUrl: resolvedProofUrl,
                 loginTime: new Date().toISOString(),
               };
 
               inMemoryMemberSession = memberSession;
+              lastResolvedSession = memberSession;
               try {
-                await client.auth.signInWithPassword({
+                const { error: authErr } = await client.auth.signInWithPassword({
                   email: memberSession.email,
                   password: cleanPassword,
                 });
+                if (authErr && typeof fetch !== 'undefined' && typeof window !== 'undefined') {
+                  const syncResp = await fetch('/api/auth/member-ensure-auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
+                  }).catch(() => null);
+                  if (syncResp?.ok) {
+                    const syncJson = await syncResp.json().catch(() => null);
+                    if (syncJson?.success && syncJson?.email) {
+                      await client.auth.signInWithPassword({
+                        email: syncJson.email,
+                        password: cleanPassword,
+                      });
+                    }
+                  }
+                }
               } catch {
                 // Abaikan jika member belum terhubung ke auth.users
               }
@@ -458,14 +523,16 @@ export const authService = {
   /**
    * Synchronously returns the currently cached user session info (if available)
    */
-  getCurrentUser(): { id?: string; email?: string; username?: string; role?: UserRole; name?: string } | null {
-    if (inMemoryMemberSession) {
+  getCurrentUser(): { id?: string; email?: string; username?: string; role?: UserRole; name?: string; memberNo?: string } | null {
+    const active = inMemoryMemberSession || lastResolvedSession;
+    if (active) {
       return {
-        id: inMemoryMemberSession.id,
-        email: inMemoryMemberSession.email || undefined,
-        username: inMemoryMemberSession.memberNo || inMemoryMemberSession.memberId,
-        role: inMemoryMemberSession.role || 'ANGGOTA',
-        name: inMemoryMemberSession.name,
+        id: active.id,
+        email: active.email || undefined,
+        username: active.memberNo || active.memberId || active.email,
+        role: active.role || 'ANGGOTA',
+        name: active.name,
+        memberNo: active.memberNo,
       };
     }
     return null;
@@ -484,6 +551,7 @@ export const authService = {
       }
     }
     inMemoryMemberSession = null;
+    lastResolvedSession = null;
   },
 
   /**

@@ -97,7 +97,7 @@ function AppContent() {
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
 
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, role } = useAuth();
   const { showToast } = useNotification();
 
   // If navigating directly to a news detail URL with article ID, hydrate selectedArticle
@@ -111,8 +111,8 @@ function AppContent() {
     }
   }, [activePage, activeTab, selectedArticle]);
 
-  const handleNavigate = (page: ActivePage) => {
-    navigate(page);
+  const handleNavigate = (page: ActivePage, subTab?: string) => {
+    navigate(page, subTab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -168,7 +168,11 @@ function AppContent() {
                   size="sm"
                   onClick={() => {
                     if (isAuthenticated) {
-                      handleNavigate('REPORTS_DASHBOARD');
+                      if (role === 'ANGGOTA') {
+                        handleNavigate('MEMBER_PORTAL', 'transaksi');
+                      } else {
+                        handleNavigate('REPORTS_DASHBOARD');
+                      }
                     } else {
                       setShowLoginModal(true);
                     }
@@ -229,7 +233,11 @@ function AppContent() {
                       className="bg-emerald-800 hover:bg-emerald-700 text-white font-semibold border border-emerald-600/80 shadow-md"
                       onClick={() => {
                         if (isAuthenticated) {
-                          handleNavigate('REPORTS_DASHBOARD');
+                          if (role === 'ANGGOTA') {
+                            handleNavigate('MEMBER_PORTAL', 'transaksi');
+                          } else {
+                            handleNavigate('REPORTS_DASHBOARD');
+                          }
                         } else {
                           setShowLoginModal(true);
                         }
@@ -777,7 +785,7 @@ function AppContent() {
               onRequestLogin={() => setShowLoginModal(true)}
               onGoHome={() => handleNavigate('HOME')}
             >
-              {renderModuleWithSuspense(<MemberPortalView />, 'Portal Anggota')}
+              {renderModuleWithSuspense(<MemberPortalView initialTab={activeTab} />, 'Portal Anggota')}
             </RoleGuard>
           </PageContainer>
         );
@@ -1027,6 +1035,7 @@ function AppContent() {
         {/* Sidebar */}
         <Sidebar
           activePage={activePage}
+          activeTab={activeTab}
           onNavigate={handleNavigate}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
@@ -1076,7 +1085,7 @@ function AppContent() {
             onSuccess={(loggedInRole) => {
               setShowLoginModal(false);
               if (loggedInRole === 'ANGGOTA') {
-                handleNavigate('MEMBER_PORTAL');
+                handleNavigate('MEMBER_PORTAL', 'transaksi');
               } else {
                 handleNavigate('REPORTS_DASHBOARD');
               }

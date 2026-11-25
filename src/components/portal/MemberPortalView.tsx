@@ -31,6 +31,7 @@ import { KTACard } from '../kta/KTACard';
 import { LoanSimulatorModule } from '../loans/LoanSimulatorModule';
 import { PaymentGatewayModule } from '../payments/PaymentGatewayModule';
 import { MemberInvestmentsTab } from '../investment/MemberInvestmentsTab';
+import { TransactionModule } from '../transactions/TransactionModule';
 import {
   CreditCard,
   User,
@@ -48,8 +49,6 @@ import {
   QrCode,
   Info,
   Clock,
-  ArrowDownLeft,
-  ArrowUpRight,
   Sparkles,
   KeyRound,
   Edit3,
@@ -77,11 +76,48 @@ import {
 
 type MemberTabType = 'SIMPANAN' | 'INVESTASIKU' | 'TRANSAKSI' | 'SHU' | 'KTA' | 'PROFIL' | 'DOKUMEN' | 'NOTIFIKASI';
 
-export const MemberPortalView: React.FC = () => {
+interface MemberPortalViewProps {
+  initialTab?: string;
+}
+
+function mapRouteTabToMemberTab(routeTab?: string): MemberTabType {
+  switch ((routeTab || '').toLowerCase()) {
+    case 'simpanan':
+      return 'SIMPANAN';
+    case 'investasiku':
+      return 'INVESTASIKU';
+    case 'shu':
+      return 'SHU';
+    case 'kta':
+      return 'KTA';
+    case 'profile':
+    case 'profil':
+      return 'PROFIL';
+    case 'dokumen':
+      return 'DOKUMEN';
+    case 'notifikasi':
+      return 'NOTIFIKASI';
+    case 'transaksi':
+    case 'dashboard':
+    default:
+      return 'TRANSAKSI';
+  }
+}
+
+const isUuidString = (val?: string | null): boolean =>
+  Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
+
+export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }) => {
   const { user, role, isLoading: isAuthLoading, isAuthenticated, logout, updateUser } = useAuth();
   const { showToast } = useNotification();
 
-  const [activeTab, setActiveTab] = useState<MemberTabType>('SIMPANAN');
+  const [activeTab, setActiveTab] = useState<MemberTabType>(() => mapRouteTabToMemberTab(initialTab));
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(mapRouteTabToMemberTab(initialTab));
+    }
+  }, [initialTab]);
   const [memberData, setMemberData] = useState<MemberRecord | null>(null);
   const [memberTransactions, setMemberTransactions] = useState<TransactionRecord[]>([]);
   const [savingsData, setSavingsData] = useState<{
@@ -147,7 +183,18 @@ export const MemberPortalView: React.FC = () => {
     },
   ]);
 
-  const memberNo = user?.memberNo || user?.memberId || user?.id || '';
+  const emailNraPrefix =
+    user?.email && user.email.toLowerCase().endsWith('@anggota.kopsim.id')
+      ? user.email.split('@')[0]
+      : '';
+  const memberNo = (
+    user?.memberNo ||
+    (!isUuidString(user?.memberId) ? user?.memberId : '') ||
+    emailNraPrefix ||
+    (!isUuidString(user?.id) ? user?.id : '') ||
+    ''
+  ).trim();
+  const memberUuidPk = isUuidString(user?.memberId) ? user!.memberId!.trim() : '';
 
   useEffect(() => {
     let isMounted = true;
@@ -166,12 +213,12 @@ export const MemberPortalView: React.FC = () => {
       try {
         const memberName = user?.name || '';
 
-        // 1. Fetch real member data from Supabase public.members via memberService
-        let found = await memberService.getMemberById(memberNo);
+        // 1. Fetch real member data from Supabase public.members via memberService (self-lookup)
+        let found = await memberService.getMemberById(memberNo || memberUuidPk);
         if (!found && memberName) {
           found = await memberService.getMemberById(memberName);
         }
-        if (!found) {
+        if (!found && role !== 'ANGGOTA') {
           const allMembers = await memberService.getMembers();
           found =
             allMembers.find(
@@ -320,7 +367,8 @@ export const MemberPortalView: React.FC = () => {
         // 3. Query member transactions
         const realTrx = await transactionService.getMemberTransactions(
           memberName || found?.nama || '',
-          memberNo
+          memberNo,
+          memberUuidPk || undefined
         );
 
         if (isMounted) {
@@ -338,7 +386,7 @@ export const MemberPortalView: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [isAuthLoading, isAuthenticated, role, memberNo, user]);
+  }, [isAuthLoading, isAuthenticated, role, memberNo, memberUuidPk, user]);
 
   const memberTabs: TabItem<MemberTabType>[] = [
     { id: 'SIMPANAN', label: 'Buku Simpanan', icon: <Coins className="w-4 h-4" /> },
@@ -845,167 +893,26 @@ export const MemberPortalView: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: RIWAYAT TRANSAKSI */}
+      {/* TAB 2: RIWAYAT TRANSAKSI (GRID IDENTIK PENGURUS & DIREKSI, VIEW-ONLY)     */}
       {/* ========================================================================= */}
       {activeTab === 'TRANSAKSI' && (
         <div className="space-y-6 animate-in fade-in duration-200" id="member-transactions-section">
-          <Card
-            title="Riwayat Mutasi Transaksi & Setoran"
-            subtitle="Semua mutasi setoran dan penarikan yang tercatat resmi di buku kas koperasi"
-            action={
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={async () => {
-                  const memberName = user?.name || memberData?.nama || '';
-                  const realTrx = await transactionService.getMemberTransactions(memberName, memberNo);
-                  setMemberTransactions(realTrx);
-                  showToast('Daftar riwayat transaksi telah diperbarui.', 'success');
-                }}
-                leftIcon={<Clock className="w-3.5 h-3.5" />}
-              >
-                Segarkan
-              </Button>
-            }
-          >
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-stone-200 bg-stone-50 text-stone-600 font-semibold uppercase text-[10px] tracking-wider">
-                    <th className="py-3 px-4">Tanggal</th>
-                    <th className="py-3 px-4">Jenis Transaksi</th>
-                    <th className="py-3 px-4">Kategori Simpanan</th>
-                    <th className="py-3 px-4">Keterangan</th>
-                    <th className="py-3 px-4 text-right">Jumlah (IDR)</th>
-                    <th className="py-3 px-4 text-center">Bukti / Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-100">
-                  {memberTransactions.length > 0 ? (
-                    memberTransactions.map((trx, idx) => {
-                      const isIncome = trx.jenis === 'MASUK';
-                      const isPokokTrx =
-                        (trx.kategori && trx.kategori.toLowerCase().includes('simpanan pokok')) ||
-                        trx.id === 'T251229001' ||
-                        trx.id === 'T251229002' ||
-                        trx.id === 'T251229003' ||
-                        trx.id === 'T251229004';
-                      const memberRegistrationProof =
-                        getPublicProofUrl(memberData?.transfer_proof_url) ||
-                        getPublicProofUrl(user?.transferProofUrl) ||
-                        getMemberDefaultProof(memberNo);
-
-                      const hasProof = Boolean(
-                        hasTransactionProof({
-                          id: trx.id,
-                          filelink: trx.filelink,
-                          bukti_url: trx.bukti_url,
-                        }) ||
-                        (isPokokTrx && memberRegistrationProof)
-                      );
-
-                      return (
-                        <tr key={trx.id || idx} className="hover:bg-stone-50/60 transition-colors">
-                          <td className="py-3 px-4 text-stone-600 font-mono">
-                            {formatDateIndo(trx.tanggal || '2024-08-10')}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded text-[11px] ${
-                                isIncome ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'
-                              }`}
-                            >
-                              {isIncome ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
-                              {isIncome ? 'SETORAN' : 'PENARIKAN'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 font-semibold text-stone-800">{trx.kategori || 'Simpanan'}</td>
-                          <td className="py-3 px-4 text-stone-600">{trx.keterangan || trx.deskripsi || 'Transaksi'}</td>
-                          <td
-                            className={`py-3 px-4 text-right font-mono font-bold ${
-                              isIncome ? 'text-emerald-700' : 'text-stone-800'
-                            }`}
-                          >
-                            {formatRupiah(trx.jumlah)}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              {hasProof ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleViewProof(trx)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer border border-emerald-700"
-                                  title="Lihat Bukti Transfer"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>Lihat Bukti</span>
-                                </button>
-                              ) : (
-                                <span className="text-stone-400 font-medium px-2 select-none">-</span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => setSelectedKuitansi(trx)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-600 hover:text-white rounded-lg border border-purple-200 hover:border-purple-600 transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
-                                title="Cetak Kuitansi Transaksi"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                                <span>Kuitansi</span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-10 px-4">
-                        <EmptyState
-                          title="Belum Ada Riwayat Mutasi Transaksi"
-                          description="Semua transaksi setoran simpanan, penarikan, dan pembayaran yang telah dibukukan di kas koperasi akan muncul otomatis di sini."
-                        />
-                        {(() => {
-                          const regProofUrl =
-                            getPublicProofUrl(memberData?.transfer_proof_url) ||
-                            getPublicProofUrl(user?.transferProofUrl) ||
-                            getMemberDefaultProof(memberNo);
-                          if (!regProofUrl) return null;
-                          return (
-                            <div className="mt-3 flex justify-center">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleViewProof({
-                                    id: `REG-${memberNo || 'ANGGOTA'}`,
-                                    tanggal: memberData?.tgl_reg || user?.registeredAt || new Date().toISOString().split('T')[0],
-                                    referal: 'KOPERASI',
-                                    plantation: memberData?.plantation || 'PUSAT JAKARTA',
-                                    jenis: 'MASUK',
-                                    kategori: 'Bukti Transfer Pendaftaran',
-                                    metode_bayar: 'Bank Transfer BSI',
-                                    qty: 1,
-                                    jumlah: savingsData.pokok,
-                                    area_jenis: 'KOPERASI PUSAT',
-                                    filelink: regProofUrl,
-                                    akun: memberData?.nama || user?.name || 'Anggota',
-                                    keterangan: 'Setoran Simpanan Pokok Keanggotaan KOPSIM Mandiri',
-                                  })
-                                }
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs transition-all cursor-pointer border border-emerald-700"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Lihat Bukti Pendaftaran</span>
-                              </button>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          <TransactionModule
+            viewOnly
+            scopedMember={{
+              memberNo,
+              memberName: memberData?.nama || user?.name || '',
+              memberId: memberUuidPk || undefined,
+              defaultProofUrl:
+                getPublicProofUrl(memberData?.transfer_proof_url) ||
+                getPublicProofUrl(user?.transferProofUrl) ||
+                getMemberDefaultProof(memberNo),
+              registeredAt: memberData?.tgl_reg || user?.registeredAt,
+              plantation: memberData?.plantation || user?.workArea,
+              nominalPokok: savingsData.pokok,
+            }}
+            onTransactionsLoaded={setMemberTransactions}
+          />
         </div>
       )}
 

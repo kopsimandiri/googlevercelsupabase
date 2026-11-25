@@ -304,19 +304,23 @@ export const paymentService = {
       const trxId = `TRX-PG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       // 1. Post to official transactions ledger
-      await transactionService.saveTransaction({
-        id: trxId,
-        tanggal: new Date().toISOString().split('T')[0],
-        referal: 'KOPERASI',
-        plantation: 'PUSAT JAKARTA',
-        jenis: 'MASUK',
-        kategori: payment.category || 'Simpanan Wajib Anggota',
-        metode_bayar: `Payment Gateway (${payment.payment_channel})`,
-        qty: 1,
-        jumlah: payment.amount,
-        keterangan: `Setoran Pembayaran Online #${payment.order_id} - ${payment.member_name}`,
-        login_as: 'SYSTEM_PAYMENT_GATEWAY',
-      });
+      await transactionService.saveTransaction(
+        {
+          id: trxId,
+          tanggal: new Date().toISOString().split('T')[0],
+          referal: 'KOPERASI',
+          plantation: 'PUSAT JAKARTA',
+          jenis: 'MASUK',
+          kategori: payment.category || 'Simpanan Wajib Anggota',
+          metode_bayar: `Payment Gateway (${payment.payment_channel})`,
+          qty: 1,
+          jumlah: payment.amount,
+          keterangan: `Setoran Pembayaran Online #${payment.order_id} - ${payment.member_name}`,
+          login_as: 'SYSTEM_PAYMENT_GATEWAY',
+        },
+        false,
+        { systemWebhook: true }
+      );
 
       // 2. Update payment request state machine
       payment.status = 'POSTED';

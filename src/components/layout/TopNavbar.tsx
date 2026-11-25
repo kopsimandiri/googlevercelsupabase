@@ -21,7 +21,7 @@ import { KopsimLogo } from '../common/KopsimLogo';
 
 interface TopNavbarProps {
   activePage: ActivePage;
-  onNavigate: (page: ActivePage) => void;
+  onNavigate: (page: ActivePage, subTab?: string) => void;
   onToggleSidebar: () => void;
   onRequestLogin: () => void;
   onOpenRegister: () => void;
@@ -106,7 +106,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             if (!isAuthenticated) {
               onRequestLogin();
             } else if (role === 'ANGGOTA') {
-              onNavigate('MEMBER_PORTAL');
+              onNavigate('MEMBER_PORTAL', 'transaksi');
             } else {
               onNavigate('REPORTS_DASHBOARD');
             }
