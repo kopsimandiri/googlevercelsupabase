@@ -10,7 +10,7 @@ import {
   uploadTransactionProof,
   deleteTransactionProof,
   getPublicProofUrl,
-  getSignedProofUrl,
+  getSignedProofUrlDetailed,
   findProofInBucketByTransactionNo,
   getMemberDefaultProof,
   isImageFile,
@@ -138,10 +138,12 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
   const [viewingProofSignedUrl, setViewingProofSignedUrl] = useState<string | null>(null);
   const [isLoadingProofSignedUrl, setIsLoadingProofSignedUrl] = useState<boolean>(false);
   const [viewingProofError, setViewingProofError] = useState<boolean>(false);
+  const [viewingProofErrorMsg, setViewingProofErrorMsg] = useState<string | null>(null);
   const [quickProofTrx, setQuickProofTrx] = useState<TransactionRecord | null>(null);
   const [quickProofUrl, setQuickProofUrl] = useState<string | null>(null);
   const [isLoadingQuickProof, setIsLoadingQuickProof] = useState<boolean>(false);
   const [proofLoadError, setProofLoadError] = useState<boolean>(false);
+  const [quickProofErrorMsg, setQuickProofErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showDdlModal, setShowDdlModal] = useState<boolean>(false);
   const [activeSqlTab, setActiveSqlTab] = useState<'transactions' | 'storage'>('transactions');
@@ -985,6 +987,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
         setViewingProofSignedUrl(null);
         setIsLoadingProofSignedUrl(false);
         setViewingProofError(false);
+        setViewingProofErrorMsg(null);
         return;
       }
 
@@ -1002,25 +1005,34 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
         setViewingProofSignedUrl(null);
         setIsLoadingProofSignedUrl(false);
         setViewingProofError(Boolean(viewingTrx.bukti_url || viewingTrx.filelink));
+        setViewingProofErrorMsg(
+          Boolean(viewingTrx.bukti_url || viewingTrx.filelink)
+            ? 'Referensi berkas bukti bukan berasal dari Supabase Storage.'
+            : null
+        );
         return;
       }
 
       setIsLoadingProofSignedUrl(true);
       setViewingProofError(false);
-      const signed = await getSignedProofUrl(rawRef, {
+      setViewingProofErrorMsg(null);
+      const signedRes = await getSignedProofUrlDetailed(rawRef, {
         expiresIn: 3600,
         memberNo: viewingTrx.member_id || effectiveMemberNo,
         memberName: viewingTrx.akun || effectiveMemberName,
+        transactionNo: viewingTrx.id,
       });
 
       if (cancelled) return;
-      if (!signed) {
-        console.error('[TransactionModule] Gagal membuat Signed URL detail transaksi:', viewingTrx.id, rawRef);
+      if (!signedRes.signedUrl) {
+        console.error('[TransactionModule] Gagal membuat Signed URL detail transaksi:', viewingTrx.id, rawRef, signedRes);
         setViewingProofSignedUrl(null);
         setViewingProofError(true);
+        setViewingProofErrorMsg(signedRes.errorMessage || 'Bukti tidak dapat dimuat');
       } else {
-        setViewingProofSignedUrl(signed);
+        setViewingProofSignedUrl(signedRes.signedUrl);
         setViewingProofError(false);
+        setViewingProofErrorMsg(null);
       }
       setIsLoadingProofSignedUrl(false);
     };
@@ -1036,6 +1048,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
     setQuickProofUrl(null);
     setIsLoadingQuickProof(true);
     setProofLoadError(false);
+    setQuickProofErrorMsg(null);
 
     // 1. Resolusi ketat hanya menerima URL/path Supabase Storage (URL Google Drive ditolak menjadi '')
     let rawRef = getPublicProofUrl(t.bukti_url || t.filelink);
@@ -1081,24 +1094,28 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
     if (!rawRef) {
       setQuickProofUrl(null);
       setProofLoadError(true);
+      setQuickProofErrorMsg('Berkas lampiran belum terhubung ke file fisik di bucket Supabase Storage.');
       setIsLoadingQuickProof(false);
       return;
     }
 
     // 5. Buat Signed URL berjangka 1 jam (3600 detik) untuk bucket privat
-    const signedUrl = await getSignedProofUrl(rawRef, {
+    const signedRes = await getSignedProofUrlDetailed(rawRef, {
       expiresIn: 3600,
       memberNo: t.member_id || effectiveMemberNo,
       memberName: t.akun || effectiveMemberName,
+      transactionNo: t.id,
     });
 
-    if (!signedUrl) {
-      console.error('[TransactionModule] Gagal membuat Signed URL lampiran:', t.id, rawRef);
+    if (!signedRes.signedUrl) {
+      console.error('[TransactionModule] Gagal membuat Signed URL lampiran:', t.id, rawRef, signedRes);
       setQuickProofUrl(null);
       setProofLoadError(true);
+      setQuickProofErrorMsg(signedRes.errorMessage || 'Gagal membuat Signed URL untuk berkas lampiran.');
     } else {
-      setQuickProofUrl(signedUrl);
+      setQuickProofUrl(signedRes.signedUrl);
       setProofLoadError(false);
+      setQuickProofErrorMsg(null);
     }
     setIsLoadingQuickProof(false);
   };
@@ -2129,9 +2146,14 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                       </a>
                     </div>
                   ) : (
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                      <span className="font-semibold">Bukti tidak dapat dimuat</span>
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs space-y-1">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                        <span className="font-semibold">Bukti tidak dapat dimuat</span>
+                      </div>
+                      {viewingProofErrorMsg && (
+                        <p className="text-[11px] text-rose-700 pl-6">{viewingProofErrorMsg}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2259,12 +2281,17 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                     </div>
                   )
                 ) : (
-                  <div className="text-center p-6 text-stone-400 space-y-3">
+                  <div className="text-center p-6 text-stone-400 space-y-3 max-w-md">
                     <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
                     <p className="text-xs text-stone-300 font-medium">Berkas lampiran pada bucket storage:</p>
                     <code className="text-[10px] text-emerald-400 bg-stone-950 px-2 py-1 rounded block break-all font-mono">
                       {quickProofTrx.filelink || '(Belum terhubung ke file fisik di bucket)'}
                     </code>
+                    {quickProofErrorMsg && (
+                      <p className="text-[11px] text-amber-200/90 bg-amber-950/50 border border-amber-800/50 rounded-lg px-3 py-2">
+                        {quickProofErrorMsg}
+                      </p>
+                    )}
                     <div className="flex items-center justify-center gap-2 pt-1">
                       {canEdit && (
                         <Button

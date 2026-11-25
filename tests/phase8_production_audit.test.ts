@@ -10,8 +10,10 @@ import {
   isSupabaseStorageUrl,
   extractStoragePath,
   getPublicProofUrl,
+  getSignedProofUrlDetailed,
   hasTransactionProof,
 } from '../src/services/storageService';
+import { parseStorageRef } from '../server/supabaseHandlers';
 import {
   ADMIN_WHATSAPP_DISPLAY,
   formatWhatsAppInternational,
@@ -285,6 +287,38 @@ async function runE2ECriticalFlows() {
   assert(memberDeleteBlocked === true, 'ANGGOTA ditolak saat mencoba deleteTransaction (View-Only enforced)');
 
   await authService.signOut();
+
+  // ----------------------------------------------------------------------------
+  // FLOW 11: Storage Ref Parsing, Cross-Bucket Handling & Diagnostic Signed URL
+  // ----------------------------------------------------------------------------
+  console.log('\n[FLOW 11] Storage Ref Parsing & Diagnostic Signed URL');
+  const parsedUnderscore = parseStorageRef(
+    'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/02/T260220001-b97crn.webp'
+  );
+  assert(
+    parsedUnderscore?.bucket === 'bukti_transfer' &&
+      parsedUnderscore?.objectPath === '2026/02/T260220001-b97crn.webp',
+    'parseStorageRef mengekstrak bucket bukti_transfer dan path objek dengan akurat'
+  );
+  assert(
+    parseStorageRef('https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/../secret.webp') === null,
+    'parseStorageRef menolak path traversal (..)'
+  );
+  assert(
+    parseStorageRef('https://drive.google.com/file/d/abc123/view') === null,
+    'parseStorageRef menolak URL legacy Google Drive'
+  );
+
+  const emptyDiag = await getSignedProofUrlDetailed('');
+  assert(
+    emptyDiag.signedUrl === null && emptyDiag.reason === 'INVALID_REF' && Boolean(emptyDiag.errorMessage),
+    'getSignedProofUrlDetailed mengembalikan reason INVALID_REF dan pesan diagnosa saat path kosong'
+  );
+  const gdriveDiag = await getSignedProofUrlDetailed('https://drive.google.com/file/d/xyz/view');
+  assert(
+    gdriveDiag.signedUrl === null && gdriveDiag.reason === 'INVALID_REF',
+    'getSignedProofUrlDetailed menolak tautan Google Drive dengan alasan terstruktur'
+  );
 
   // ----------------------------------------------------------------------------
   // SUMMARY

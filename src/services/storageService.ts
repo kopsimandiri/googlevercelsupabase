@@ -976,43 +976,71 @@ export function isPdfFile(urlOrPath?: string | null): boolean {
   return clean.endsWith('.pdf') || clean.startsWith('data:application/pdf');
 }
 
+export type SignedProofFailureReason =
+  | 'INVALID_REF'
+  | 'NO_SESSION'
+  | 'RLS_DENIED'
+  | 'NOT_FOUND'
+  | 'MISSING_SERVICE_KEY'
+  | 'API_UNAVAILABLE';
+
+export interface SignedProofUrlResult {
+  signedUrl: string | null;
+  reason?: SignedProofFailureReason;
+  errorMessage?: string;
+}
+
 /**
- * Membuat Signed URL sementara (default 1 jam = 3600 detik) untuk bucket privat 'bukti-transfer' / 'bukti_transfer'.
- * Menggunakan Supabase Storage createSignedUrl() jika user memiliki sesi authenticated,
- * dengan fallback ke endpoint server (/api/storage/signed-url) agar role ANGGOTA tetap dapat
- * melihat bukti miliknya secara aman di bucket privat.
+ * Membuat Signed URL sementara (default 1 jam = 3600 detik) untuk bucket privat 'bukti-transfer' / 'bukti_transfer'
+ * dan mengembalikan diagnosa penyebab jika gagal dibuat.
  */
-export async function getSignedProofUrl(
+export async function getSignedProofUrlDetailed(
   storagePathOrUrl?: string | null,
-  options?: { expiresIn?: number; memberNo?: string; memberName?: string }
-): Promise<string | null> {
-  if (!storagePathOrUrl) return null;
+  options?: {
+    expiresIn?: number;
+    memberNo?: string;
+    memberName?: string;
+    transactionNo?: string;
+    allowPublicBucketProbe?: boolean;
+  }
+): Promise<SignedProofUrlResult> {
+  if (!storagePathOrUrl) {
+    return { signedUrl: null, reason: 'INVALID_REF', errorMessage: 'Referensi berkas bukti kosong.' };
+  }
   const trimmed = storagePathOrUrl.trim();
   if (!trimmed || trimmed === '-' || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'none') {
-    return null;
+    return { signedUrl: null, reason: 'INVALID_REF', errorMessage: 'Referensi berkas bukti belum tersedia.' };
   }
 
   // Tolak URL legacy Google Drive & Base64 Data URI
   if (isGoogleDriveUrl(trimmed) || trimmed.startsWith('data:')) {
     console.error('[Storage] Menolak referensi bukti non-Supabase (Google Drive / Base64):', trimmed.slice(0, 60));
-    return null;
+    return {
+      signedUrl: null,
+      reason: 'INVALID_REF',
+      errorMessage: 'Referensi lampiran bukan berasal dari Supabase Storage.',
+    };
   }
 
   // Izinkan preview blob lokal atau aset statis aplikasi
   if (trimmed.startsWith('blob:') || trimmed.startsWith('/assets/')) {
-    return trimmed;
+    return { signedUrl: trimmed };
   }
 
   // Jika sudah berupa Signed URL aktif yang memiliki token
   if (trimmed.includes('/storage/v1/object/sign/') && trimmed.includes('token=')) {
-    return trimmed;
+    return { signedUrl: trimmed };
   }
 
   const expiresIn = Math.max(60, Math.min(86400, options?.expiresIn || 3600));
   const extractedPath = extractStoragePath(trimmed);
   if (!extractedPath) {
     console.error('[Storage] Gagal mengekstrak object path dari referensi bukti:', trimmed);
-    return null;
+    return {
+      signedUrl: null,
+      reason: 'INVALID_REF',
+      errorMessage: 'Format path berkas bukti storage tidak valid.',
+    };
   }
 
   const bucketMatch = trimmed.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\//);
@@ -1023,24 +1051,52 @@ export async function getSignedProofUrl(
 
   const client = getSupabaseClient();
   let accessToken = '';
+  let hasClientSession = false;
+  let clientRlsDenied = false;
+  let clientNotFound = false;
 
   // 1. Prioritas: gunakan Supabase client createSignedUrl jika user memiliki sesi authenticated
   if (client) {
     try {
       const { data: sessionData } = await client.auth.getSession();
       accessToken = sessionData?.session?.access_token || '';
+      hasClientSession = Boolean(sessionData?.session?.user);
 
-      if (sessionData?.session?.user) {
+      if (hasClientSession) {
         for (const bucket of bucketsToTry) {
           const { data, error } = await client.storage
             .from(bucket)
             .createSignedUrl(extractedPath, expiresIn);
 
           if (!error && data?.signedUrl) {
-            return data.signedUrl;
+            return { signedUrl: data.signedUrl };
           }
           if (error) {
+            const msg = (error.message || '').toLowerCase();
             console.warn(`[Storage] createSignedUrl("${bucket}/${extractedPath}") gagal:`, error.message);
+            if (msg.includes('row-level security') || msg.includes('policy') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+              clientRlsDenied = true;
+            } else if (msg.includes('not found') || msg.includes('object not found')) {
+              clientNotFound = true;
+            }
+          }
+        }
+
+        // Jika file tidak ditemukan di path persis dan transactionNo tersedia, coba cari di folder bucket
+        if (clientNotFound && !clientRlsDenied && options?.transactionNo) {
+          try {
+            const discovered = await findProofInBucketByTransactionNo(options.transactionNo);
+            if (discovered.found && discovered.path) {
+              const targetBucket = discovered.bucketName || urlBucket || BUKTI_TRANSFER_BUCKET;
+              const { data: retryData } = await client.storage
+                .from(targetBucket)
+                .createSignedUrl(discovered.path, expiresIn);
+              if (retryData?.signedUrl) {
+                return { signedUrl: retryData.signedUrl };
+              }
+            }
+          } catch {
+            // abaikan dan lanjut ke server fallback
           }
         }
       }
@@ -1048,6 +1104,15 @@ export async function getSignedProofUrl(
       console.warn('[Storage] Exception saat createSignedUrl via client:', err);
     }
   }
+
+  let serverReason: SignedProofFailureReason | undefined = hasClientSession
+    ? clientRlsDenied
+      ? 'RLS_DENIED'
+      : clientNotFound
+        ? 'NOT_FOUND'
+        : undefined
+    : 'NO_SESSION';
+  let serverErrorMsg: string | undefined;
 
   // 2. Fallback terkontrol via endpoint backend (/api/storage/signed-url) untuk sesi anggota / cross-bucket
   if (typeof fetch !== 'undefined' && typeof window !== 'undefined') {
@@ -1065,28 +1130,132 @@ export async function getSignedProofUrl(
           expiresIn,
           memberNo: options?.memberNo || '',
           memberName: options?.memberName || '',
+          transactionNo: options?.transactionNo || '',
         }),
       });
       if (resp.ok) {
         const json = await resp.json();
         if (json?.success && json?.signedUrl) {
-          return json.signedUrl;
+          return { signedUrl: json.signedUrl };
         }
       } else {
-        const errBody = await resp.text().catch(() => '');
-        console.error('[Storage] Endpoint /api/storage/signed-url menolak permintaan:', resp.status, errBody);
+        const errText = await resp.text().catch(() => '');
+        let errJson: any = null;
+        try {
+          errJson = errText ? JSON.parse(errText) : null;
+        } catch {
+          errJson = null;
+        }
+        console.error('[Storage] Endpoint /api/storage/signed-url menolak permintaan:', resp.status, errText);
+
+        const code = String(errJson?.code || '').toUpperCase();
+        if (code === 'MISSING_SERVICE_KEY') {
+          serverReason = 'MISSING_SERVICE_KEY';
+          serverErrorMsg = errJson?.error || 'SUPABASE_SERVICE_ROLE_KEY belum dikonfigurasi di server.';
+        } else if (code === 'FORBIDDEN' || resp.status === 403) {
+          serverReason = 'RLS_DENIED';
+          serverErrorMsg = errJson?.error || 'Akses berkas bukti ditolak oleh kebijakan keamanan (RLS).';
+        } else if (code === 'NOT_FOUND') {
+          serverReason = 'NOT_FOUND';
+          serverErrorMsg = errJson?.error || 'Berkas bukti tidak ditemukan di bucket Supabase Storage.';
+        } else if (resp.status === 404 && !errJson) {
+          serverReason = 'API_UNAVAILABLE';
+          serverErrorMsg = 'Endpoint API /api/storage/signed-url tidak aktif pada deployment saat ini.';
+        } else if (code === 'UNAUTHORIZED' || resp.status === 401) {
+          serverReason = hasClientSession ? 'RLS_DENIED' : 'NO_SESSION';
+          serverErrorMsg = errJson?.error || 'Sesi autentikasi Supabase Auth belum aktif.';
+        }
       }
     } catch (apiErr) {
       console.warn('[Storage] Gagal memanggil /api/storage/signed-url:', apiErr);
+      if (!serverReason || serverReason === 'NO_SESSION') {
+        serverReason = 'API_UNAVAILABLE';
+      }
     }
   }
+
+  // 3. Probe terkontrol HANYA jika Signed URL gagal karena sesi/API/Service Key (BUKAN ditolak RLS/FORBIDDEN)
+  //    Jika bucket di Supabase memang diset public=TRUE dan URL /object/public/ dapat diakses (HTTP 200), tampilkan gambar.
+  //    Jika bucket privat (public=FALSE), Supabase menolak akses langsung sehingga fallback tetap diblokir dengan aman.
+  const canProbePublicBucket =
+    options?.allowPublicBucketProbe !== false &&
+    typeof fetch !== 'undefined' &&
+    typeof window !== 'undefined' &&
+    !clientRlsDenied &&
+    serverReason !== 'RLS_DENIED' &&
+    serverReason !== 'NOT_FOUND' &&
+    (serverReason === 'NO_SESSION' ||
+      serverReason === 'MISSING_SERVICE_KEY' ||
+      serverReason === 'API_UNAVAILABLE');
+
+  if (canProbePublicBucket) {
+    const envUrl = getSupabaseUrl().replace(/\/+$/, '');
+    const probeUrls = Array.from(
+      new Set(
+        [
+          trimmed.includes('/storage/v1/object/public/') ? trimmed : '',
+          ...(envUrl
+            ? bucketsToTry.map((b) => `${envUrl}/storage/v1/object/public/${b}/${extractedPath}`)
+            : []),
+        ].filter(Boolean)
+      )
+    );
+
+    for (const candidateUrl of probeUrls) {
+      try {
+        const headResp = await fetch(candidateUrl, { method: 'HEAD' });
+        if (headResp.ok) {
+          return { signedUrl: candidateUrl };
+        }
+      } catch {
+        // abaikan error CORS/network saat probe
+      }
+    }
+  }
+
+  const defaultMessages: Record<SignedProofFailureReason, string> = {
+    INVALID_REF: 'Referensi berkas bukti storage tidak valid.',
+    NO_SESSION:
+      'Sesi Supabase Auth anggota belum aktif dan layanan Signed URL server belum merespons. Pastikan migrasi SQL 000002–000004 serta SUPABASE_SERVICE_ROLE_KEY sudah dikonfigurasi.',
+    MISSING_SERVICE_KEY:
+      'SUPABASE_SERVICE_ROLE_KEY belum diisi di environment variable server/Vercel sehingga Signed URL bucket privat tidak dapat diterbitkan.',
+    API_UNAVAILABLE:
+      'Endpoint Signed URL (/api/storage/signed-url) tidak terjangkau dan sesi Supabase Auth belum aktif.',
+    RLS_DENIED:
+      'Akses berkas bukti ditolak oleh kebijakan keamanan RLS Supabase Storage. Pastikan akun berhak atas transaksi ini dan migrasi SQL terbaru sudah dijalankan.',
+    NOT_FOUND: `Berkas "${extractedPath}" tidak ditemukan di bucket Supabase Storage (${bucketsToTry.join(' / ')}).`,
+  };
+
+  const finalReason = serverReason || 'RLS_DENIED';
+  const finalMessage = serverErrorMsg || defaultMessages[finalReason];
 
   console.error('[Storage] Bukti transfer tidak dapat dibuatkan Signed URL yang valid:', {
     input: trimmed,
     extractedPath,
     bucketsTried: bucketsToTry,
+    reason: finalReason,
+    message: finalMessage,
   });
-  return null;
+
+  return {
+    signedUrl: null,
+    reason: finalReason,
+    errorMessage: finalMessage,
+  };
+}
+
+/**
+ * Membuat Signed URL sementara (default 1 jam = 3600 detik) untuk bucket privat 'bukti-transfer' / 'bukti_transfer'.
+ * Menggunakan Supabase Storage createSignedUrl() jika user memiliki sesi authenticated,
+ * dengan fallback ke endpoint server (/api/storage/signed-url) agar role ANGGOTA tetap dapat
+ * melihat bukti miliknya secara aman di bucket privat.
+ */
+export async function getSignedProofUrl(
+  storagePathOrUrl?: string | null,
+  options?: { expiresIn?: number; memberNo?: string; memberName?: string; transactionNo?: string }
+): Promise<string | null> {
+  const res = await getSignedProofUrlDetailed(storagePathOrUrl, options);
+  return res.signedUrl;
 }
 
 /**
