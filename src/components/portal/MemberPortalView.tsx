@@ -250,15 +250,24 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
         if (!proofUrl && client && (memberName || found?.nama)) {
           try {
             const lookupName = (memberName || found?.nama || '').trim();
-            const { data: reg } = await client
+            const normalizeName = (v: string) =>
+              v.toLowerCase().replace(/\./g, '').replace(/[,;:/\\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+            const normTarget = normalizeName(lookupName);
+            const { data: regs } = await client
               .from('member_registrations')
-              .select('transfer_proof_url')
-              .ilike('full_name', `%${lookupName}%`)
+              .select('member_no, full_name, transfer_proof_url')
               .order('submitted_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-            if (reg?.transfer_proof_url) {
-              proofUrl = getPublicProofUrl(reg.transfer_proof_url);
+              .limit(20);
+            if (Array.isArray(regs)) {
+              const matchedReg = regs.find((r: any) => {
+                const rNo = String(r?.member_no || '').trim().toLowerCase();
+                if (memberNo && rNo && rNo === memberNo.toLowerCase()) return true;
+                const rName = normalizeName(String(r?.full_name || ''));
+                return Boolean(normTarget && rName && rName === normTarget);
+              });
+              if (matchedReg?.transfer_proof_url) {
+                proofUrl = getPublicProofUrl(matchedReg.transfer_proof_url);
+              }
             }
           } catch {
             // ignore

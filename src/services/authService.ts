@@ -15,12 +15,14 @@ function isUuidLike(val?: string | null): boolean {
 
 async function ensureMemberSupabaseSession(
   client: any,
-  memberEmail: string,
+  memberMeta: { email: string; memberNo: string; memberId?: string; fullName?: string },
   cleanUsername: string,
   cleanPassword: string
 ): Promise<boolean> {
+  const { email: memberEmail, memberNo, memberId, fullName } = memberMeta;
   if (!client || !memberEmail || !cleanPassword) return false;
   try {
+    // 1. Coba login langsung ke Supabase Auth
     const { data: firstAuth, error: authErr } = await client.auth.signInWithPassword({
       email: memberEmail,
       password: cleanPassword,
@@ -29,6 +31,8 @@ async function ensureMemberSupabaseSession(
       return true;
     }
 
+    // 2. Coba sinkronisasi via backend (/api/auth/member-ensure-auth) bila SUPABASE_SERVICE_ROLE_KEY aktif
+    let serverSynced = false;
     if (typeof fetch !== 'undefined' && typeof window !== 'undefined') {
       const syncResp = await fetch('/api/auth/member-ensure-auth', {
         method: 'POST',
@@ -42,6 +46,7 @@ async function ensureMemberSupabaseSession(
       if (syncResp?.ok) {
         const syncJson = await syncResp.json().catch(() => null);
         if (syncJson?.success && syncJson?.email) {
+          serverSynced = true;
           const { data: retryAuth, error: retryErr } = await client.auth.signInWithPassword({
             email: syncJson.email,
             password: cleanPassword,
@@ -51,10 +56,44 @@ async function ensureMemberSupabaseSession(
           }
           console.warn('[Auth] Retry signInWithPassword anggota setelah sync gagal:', retryErr?.message);
         } else if (syncJson?.skipped) {
-          console.warn('[Auth] Sinkronisasi Supabase Auth anggota dilewati (SUPABASE_SERVICE_ROLE_KEY belum aktif di server).');
+          console.warn('[Auth] Server belum memiliki SUPABASE_SERVICE_ROLE_KEY; beralih ke fallback signUp + RPC sync_verified_member_auth.');
         }
       } else if (syncResp) {
         console.warn('[Auth] /api/auth/member-ensure-auth merespons HTTP', syncResp.status);
+      }
+    }
+
+    // 3. Fallback mandiri (tidak membutuhkan SUPABASE_SERVICE_ROLE_KEY di server):
+    //    Daftarkan akun @anggota.kopsim.id via signUp, konfirmasi lewat RPC sync_verified_member_auth, lalu signInWithPassword
+    if (!serverSynced) {
+      const { data: signUpData } = await client.auth.signUp({
+        email: memberEmail,
+        password: cleanPassword,
+        options: {
+          data: {
+            role: 'ANGGOTA',
+            member_no: memberNo,
+            member_id: memberId || memberNo,
+            full_name: fullName || 'Anggota KOPSIM',
+          },
+        },
+      });
+      if (signUpData?.session) {
+        return true;
+      }
+
+      const { data: rpcSync } = await client.rpc('sync_verified_member_auth', {
+        p_username: cleanUsername,
+        p_password: cleanPassword,
+      });
+      if (rpcSync?.success) {
+        const { data: finalAuth, error: finalErr } = await client.auth.signInWithPassword({
+          email: rpcSync.email || memberEmail,
+          password: cleanPassword,
+        });
+        if (!finalErr && finalAuth?.session) {
+          return true;
+        }
       }
     }
   } catch (err) {
@@ -370,9 +409,20 @@ export const authService = {
 
             // Simpan sesi anggota di memori sebelum signInWithPassword agar onAuthStateChange tidak menimpa memberNo
             inMemoryMemberSession = memberSession;
+            lastResolvedSession = memberSession;
 
             // Sinkronisasi sesi Supabase Auth agar anggota memperoleh JWT authenticated untuk RLS & Signed URL
-            await ensureMemberSupabaseSession(client, memberSession.email, cleanUsername, cleanPassword);
+            await ensureMemberSupabaseSession(
+              client,
+              {
+                email: memberSession.email,
+                memberNo: memberSession.memberNo || memberSession.id,
+                memberId: memberSession.memberId,
+                fullName: memberSession.name,
+              },
+              cleanUsername,
+              cleanPassword
+            );
 
             return memberSession;
           }
@@ -461,7 +511,17 @@ export const authService = {
 
               inMemoryMemberSession = memberSession;
               lastResolvedSession = memberSession;
-              await ensureMemberSupabaseSession(client, memberSession.email, cleanUsername, cleanPassword);
+              await ensureMemberSupabaseSession(
+                client,
+                {
+                  email: memberSession.email,
+                  memberNo: memberSession.memberNo || memberSession.id,
+                  memberId: memberSession.memberId,
+                  fullName: memberSession.name,
+                },
+                cleanUsername,
+                cleanPassword
+              );
 
               return memberSession;
             } else {
@@ -515,6 +575,7 @@ export const authService = {
         };
 
         inMemoryMemberSession = memberSession;
+        lastResolvedSession = memberSession;
         return memberSession;
       }
     }
@@ -586,6 +647,7 @@ export const authService = {
         ...(updated.avatarUrl !== undefined ? { avatarUrl: updated.avatarUrl } : {}),
       };
       inMemoryMemberSession = newSession;
+      lastResolvedSession = newSession;
       return newSession;
     }
     return null;

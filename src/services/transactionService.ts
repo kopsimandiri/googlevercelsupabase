@@ -535,6 +535,117 @@ export async function getAllTransactionsRaw(startDate?: string, endDate?: string
   return localList.map(mapAndCleanTransactionRow);
 }
 
+const GENERIC_LEDGER_ACCOUNT_NAMES = new Set([
+  'dana project',
+  'kas umum koperasi',
+  'kas umum koperasi non anggota',
+  'bank bsi',
+  'bank mandiri',
+  'kas besar bank',
+  'kas besar',
+  'kas tunai kantor pusat',
+  'kas tunai',
+  'koperasi pusat',
+  'pusat jakarta',
+]);
+
+export function normalizePersonIdentity(value: unknown): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\./g, '')
+    .replace(/[,;:/\\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegexLiteral(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasWordBoundaryPhrase(haystack: string, needle: string): boolean {
+  if (!haystack || !needle) return false;
+  const escaped = escapeRegexLiteral(needle);
+  return new RegExp(`(^|\\s)${escaped}(\\s|$)`, 'i').test(haystack);
+}
+
+/**
+ * Strict ownership verification for member-scoped transaction queries.
+ * - Rejects rows explicitly stamped with another member's member_id.
+ * - Avoids short substring false positives (e.g. "Ari" in "Syariah").
+ */
+export function doesTransactionBelongToMember(
+  row: any,
+  member: { memberName?: string; memberNo?: string; memberId?: string }
+): boolean {
+  if (!row) return false;
+  const cleanNo = (member.memberNo || '').trim().toLowerCase();
+  const cleanPk = (member.memberId || '').trim().toLowerCase();
+  const normTargetName = normalizePersonIdentity(member.memberName || '');
+
+  const rowMemberId = String(row.member_id || '').trim().toLowerCase();
+  if (rowMemberId) {
+    if (cleanNo && rowMemberId === cleanNo) return true;
+    if (cleanPk && rowMemberId === cleanPk) return true;
+    return false;
+  }
+
+  const rawCustomerId = String(row.customer_id || '').trim().toLowerCase();
+  const rawCustomerName = String(row.customer_name || '').trim().toLowerCase();
+  const rawAccount = String(row.account_name_legacy ?? row.akun ?? '').trim().toLowerCase();
+  const rawDesc = String(row.description ?? row.keterangan ?? '').trim().toLowerCase();
+  const rawTrxNo = String(row.transaction_no ?? row.id ?? '').trim().toLowerCase();
+
+  if (cleanNo.length >= 3) {
+    if (
+      rawCustomerId === cleanNo ||
+      hasWordBoundaryPhrase(rawCustomerName, cleanNo) ||
+      hasWordBoundaryPhrase(rawAccount, cleanNo) ||
+      hasWordBoundaryPhrase(rawDesc, cleanNo) ||
+      rawTrxNo === cleanNo
+    ) {
+      return true;
+    }
+  }
+
+  if (cleanPk.length >= 3 && cleanPk !== cleanNo) {
+    if (rawCustomerId === cleanPk) {
+      return true;
+    }
+  }
+
+  if (normTargetName.length < 4) {
+    return false;
+  }
+
+  const normCust = normalizePersonIdentity(row.customer_name);
+  const normAcc = normalizePersonIdentity(row.account_name_legacy ?? row.akun);
+  const normDesc = normalizePersonIdentity(row.description ?? row.keterangan);
+  const isAccGeneric = GENERIC_LEDGER_ACCOUNT_NAMES.has(normAcc);
+  const targetWordCount = normTargetName.split(' ').filter(Boolean).length;
+
+  if (normCust && (normCust === normTargetName || (normTargetName.length >= 5 && hasWordBoundaryPhrase(normCust, normTargetName)))) {
+    return true;
+  }
+
+  if (normAcc && !isAccGeneric) {
+    if (normAcc === normTargetName) return true;
+    if (normTargetName.length >= 5 && hasWordBoundaryPhrase(normAcc, normTargetName)) return true;
+    // Allow matching full title name ("Alvin Azhar, S.E., M.M.") to stored name without academic titles ("Alvin Azhar")
+    const accWordCount = normAcc.split(' ').filter(Boolean).length;
+    if (normAcc.length >= 5 && accWordCount >= 2 && hasWordBoundaryPhrase(normTargetName, normAcc)) {
+      return true;
+    }
+  }
+
+  if ((normTargetName.length >= 6 || targetWordCount >= 2) && normDesc) {
+    if (hasWordBoundaryPhrase(normDesc, normTargetName)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export interface TransactionsMetaResult {
   data: TransactionRecord[];
   source: 'SUPABASE' | 'LOCAL';
@@ -1695,6 +1806,15 @@ export const transactionService = {
     }
 
     if (transactionsList.length > 0) {
+      transactionsList = transactionsList.filter((row) =>
+        doesTransactionBelongToMember(row, {
+          memberName: cleanName,
+          memberNo: cleanNo,
+        })
+      );
+    }
+
+    if (transactionsList.length > 0) {
       let foundPokok = 0;
       let foundWajib = 0;
       let foundManasuka = 0;
@@ -1777,6 +1897,15 @@ export const transactionService = {
       );
     };
 
+    const filterOwned = (rows: TransactionRecord[]): TransactionRecord[] =>
+      rows.filter((row) =>
+        doesTransactionBelongToMember(row, {
+          memberName: cleanName,
+          memberNo: cleanNo,
+          memberId: cleanPk,
+        })
+      );
+
     if (client && (cleanName.length >= 2 || cleanNo.length >= 2 || cleanPk.length >= 2)) {
       // 1. Prioritas: gunakan SECURITY DEFINER RPC get_member_portal_transactions agar lintas perangkat tetap dapat membaca bukti_url & file_url
       try {
@@ -1785,7 +1914,7 @@ export const transactionService = {
           p_member_name: cleanName,
         });
         if (!rpcErr && Array.isArray(rpcRows)) {
-          return dedupeAndSort(rpcRows.map(mapAndCleanTransactionRow));
+          return dedupeAndSort(filterOwned(rpcRows.map(mapAndCleanTransactionRow)));
         }
       } catch (rpcEx) {
         console.warn('getMemberTransactions RPC fallback:', rpcEx);
@@ -1794,12 +1923,14 @@ export const transactionService = {
       // 2. Fallback query langsung jika RPC belum dipasang
       try {
         const orClauses: string[] = [];
-        if (cleanName.length >= 3) {
+        if (cleanName.length >= 4) {
           orClauses.push(
             `account_name_legacy.ilike.%${cleanName}%`,
-            `description.ilike.%${cleanName}%`,
             `customer_name.ilike.%${cleanName}%`
           );
+          if (cleanName.length >= 6) {
+            orClauses.push(`description.ilike.%${cleanName}%`);
+          }
         }
         if (cleanNo.length >= 3) {
           orClauses.push(
@@ -1821,7 +1952,7 @@ export const transactionService = {
             .order('transaction_date', { ascending: false });
 
           if (!error && Array.isArray(data)) {
-            return dedupeAndSort(data.map(mapAndCleanTransactionRow));
+            return dedupeAndSort(filterOwned(data.map(mapAndCleanTransactionRow)));
           } else if (error) {
             console.error('[TransactionService] Gagal memuat transaksi anggota dari Supabase:', error.message);
           }
@@ -1837,39 +1968,7 @@ export const transactionService = {
 
     // Fallback in-memory HANYA untuk mode offline/unit test tanpa Supabase
     const all = this.getStoredTransactions();
-    const filtered = all.filter((t) => {
-      const desc = (t.keterangan || '').toLowerCase();
-      const cust = (t.customer_id || '').toLowerCase();
-      const custName = (t.customer_name || '').toLowerCase();
-      const memberIdVal = (t.member_id || '').toLowerCase();
-      const acc = (t.akun || '').toLowerCase();
-      const id = (t.id || '').toLowerCase();
-      const targetName = cleanName.toLowerCase();
-      const targetNo = cleanNo.toLowerCase();
-      const targetPk = cleanPk.toLowerCase();
-
-      const matchNo =
-        targetNo.length >= 3 &&
-        (memberIdVal === targetNo ||
-          cust.includes(targetNo) ||
-          custName.includes(targetNo) ||
-          desc.includes(targetNo) ||
-          acc.includes(targetNo) ||
-          id.includes(targetNo));
-
-      const matchPk = targetPk.length >= 3 && memberIdVal === targetPk;
-
-      const matchName =
-        targetName.length >= 3 &&
-        (custName.includes(targetName) ||
-          cust.includes(targetName) ||
-          desc.includes(targetName) ||
-          acc.includes(targetName));
-
-      return matchNo || matchPk || matchName;
-    });
-
-    return dedupeAndSort(filtered);
+    return dedupeAndSort(filterOwned(all));
   },
 
   getCustomers(): CustomerRecord[] {

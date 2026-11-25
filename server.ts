@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 import express, { Request, Response } from 'express';
 import path from 'path';
 import crypto from 'crypto';

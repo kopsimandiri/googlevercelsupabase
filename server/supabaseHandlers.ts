@@ -6,11 +6,18 @@ function getSupabaseServerConfig(): {
   url: string;
   key: string;
   hasServiceRoleKey: boolean;
+  serviceRoleVarName: string;
   hasUrl: boolean;
   hasAnonFallback: boolean;
 } {
   const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
-  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  const serviceRoleCandidates: Array<[string, string | undefined]> = [
+    ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY],
+    ['SUPABASE_SERVICE_KEY', process.env.SUPABASE_SERVICE_KEY],
+    ['SUPABASE_SECRET_KEY', process.env.SUPABASE_SECRET_KEY],
+  ];
+  const matchedServiceVar = serviceRoleCandidates.find(([, val]) => Boolean(val && val.trim()));
+  const serviceKey = (matchedServiceVar?.[1] || '').trim();
   const fallbackAnonKey = (
     process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
     process.env.VITE_SUPABASE_ANON_KEY ||
@@ -22,6 +29,7 @@ function getSupabaseServerConfig(): {
     url,
     key,
     hasServiceRoleKey: Boolean(serviceKey),
+    serviceRoleVarName: matchedServiceVar?.[0] || 'NONE',
     hasUrl: Boolean(url && url !== 'https://your-project.supabase.co'),
     hasAnonFallback: Boolean(fallbackAnonKey),
   };
@@ -33,6 +41,10 @@ export async function handleHealthRequest(req: any, res: any) {
   }
   const cfg = getSupabaseServerConfig();
   const { client } = getSupabaseAdminClient();
+  const missingEnv: string[] = [];
+  if (!cfg.hasUrl) missingEnv.push('SUPABASE_URL');
+  if (!cfg.hasServiceRoleKey) missingEnv.push('SUPABASE_SERVICE_ROLE_KEY');
+
   return res.json({
     status: 'ok',
     app: 'KOPSIM Mandiri Platform',
@@ -40,7 +52,12 @@ export async function handleHealthRequest(req: any, res: any) {
     supabase_connected: Boolean(client),
     has_supabase_url: cfg.hasUrl,
     service_role_active: cfg.hasServiceRoleKey,
+    service_role_source: cfg.serviceRoleVarName,
     has_anon_fallback: cfg.hasAnonFallback,
+    missing_env: missingEnv,
+    hint: cfg.hasServiceRoleKey
+      ? 'Server service role key aktif.'
+      : 'SUPABASE_SERVICE_ROLE_KEY belum terbaca di environment server. Tambahkan di Vercel Environment Variables atau Secrets/env server lalu restart/redeploy.',
     timestamp: new Date().toISOString(),
   });
 }
@@ -320,17 +337,29 @@ export async function handleSignedUrlRequest(req: any, res: any) {
       const normObj = normalizePathRef(obj);
 
       if (jwtMemberNo && requestedMemberNo && jwtMemberNo !== requestedMemberNo) {
-        // Izinkan jika requestedMemberNo merupakan primary key (members.id) milik jwtMemberNo tersebut
+        // Izinkan hanya jika jwtMemberNo dan requestedMemberNo merujuk ke baris anggota yang sama (id <-> member_no/username)
         let isSameMemberAlias = false;
         try {
-          const { data: aliasRow } = await supabaseAdmin
+          const isNumericOrUuidJwt = isUuidLike(jwtMemberNo) || /^\d+$/.test(jwtMemberNo);
+          const { data: aliasByNo } = await supabaseAdmin
             .from('members')
-            .select('id, member_no')
-            .ilike('member_no', jwtMemberNo)
+            .select('id, member_no, username')
+            .or(
+              isNumericOrUuidJwt
+                ? `id.eq.${jwtMemberNo},member_no.ilike.${jwtMemberNo},username.ilike.${jwtMemberNo}`
+                : `member_no.ilike.${jwtMemberNo},username.ilike.${jwtMemberNo}`
+            )
             .limit(1)
             .maybeSingle();
-          if (aliasRow && String(aliasRow.id || '').trim().toLowerCase() === requestedMemberNo) {
-            isSameMemberAlias = true;
+          if (aliasByNo) {
+            const candidates = [
+              String(aliasByNo.id || '').trim().toLowerCase(),
+              String(aliasByNo.member_no || '').trim().toLowerCase(),
+              String(aliasByNo.username || '').trim().toLowerCase(),
+            ].filter(Boolean);
+            if (candidates.includes(requestedMemberNo)) {
+              isSameMemberAlias = true;
+            }
           }
         } catch {
           isSameMemberAlias = false;
@@ -364,33 +393,69 @@ export async function handleSignedUrlRequest(req: any, res: any) {
         }
 
         if (!owned && (cleanMemberNo || cleanMemberName)) {
-          const { data: trxRows } = await supabaseAdmin.rpc('get_member_portal_transactions', {
+          let trxRows: any[] | null = null;
+          const { data: rpcRows, error: rpcErr } = await supabaseAdmin.rpc('get_member_portal_transactions', {
             p_member_no: cleanMemberNo,
             p_member_name: cleanMemberName,
           });
+          if (!rpcErr && Array.isArray(rpcRows)) {
+            trxRows = rpcRows;
+          } else if (cleanMemberNo) {
+            const { data: directRows } = await supabaseAdmin
+              .from('transactions')
+              .select('transaction_no, member_id, customer_name, account_name_legacy, description, bukti_url, file_url')
+              .eq('member_id', cleanMemberNo)
+              .limit(200);
+            if (Array.isArray(directRows)) {
+              trxRows = directRows;
+            }
+          }
+
+          const genericAccounts = new Set([
+            'dana project',
+            'kas umum koperasi',
+            'kas umum koperasi non anggota',
+            'bank bsi',
+            'bank mandiri',
+            'kas besar bank',
+            'kas tunai kantor pusat',
+          ]);
+
           if (
             Array.isArray(trxRows) &&
             trxRows.some((r: any) => {
+              const rowMemberId = String(r?.member_id || '').trim().toLowerCase();
+              if (rowMemberId && cleanMemberNo && rowMemberId !== cleanMemberNo) {
+                return false;
+              }
               const bUrl = normalizePathRef(r?.bukti_url);
               const fUrl = normalizePathRef(r?.file_url);
               if ((bUrl && bUrl.includes(normObj)) || (fUrl && fUrl.includes(normObj))) {
                 return true;
               }
-              // Jika baris transaksi sudah terverifikasi milik anggota, cocokkan nomor transaksinya pada nama file di bucket
               const rowTrxNo = String(r?.transaction_no || r?.id || '').trim().toLowerCase();
-              const normAcc = normalizePersonName(r?.account_name_legacy || r?.customer_name);
+              const normCust = normalizePersonName(r?.customer_name);
+              const normAcc = normalizePersonName(r?.account_name_legacy);
               const nameMatchesRow =
-                normMemberName.length >= 3 &&
-                normAcc.length >= 3 &&
-                (normAcc.includes(normMemberName) || normMemberName.includes(normAcc));
-              if (
+                normMemberName.length >= 4 &&
+                ((normCust.length >= 4 && normCust === normMemberName) ||
+                  (normAcc.length >= 4 && !genericAccounts.has(normAcc) && normAcc === normMemberName));
+
+              const matchesFileByTrxNo =
                 rowTrxNo.length >= 6 &&
                 (normObj.includes(`/${rowTrxNo}-`) ||
+                  normObj.includes(`/${rowTrxNo}_`) ||
                   normObj.includes(`/${rowTrxNo}.`) ||
                   normObj.startsWith(`${rowTrxNo}-`) ||
-                  normObj.startsWith(`${rowTrxNo}.`))
-              ) {
-                return Boolean(cleanMemberNo || nameMatchesRow || trxRows.length > 0);
+                  normObj.startsWith(`${rowTrxNo}_`) ||
+                  normObj.startsWith(`${rowTrxNo}.`));
+
+              if (matchesFileByTrxNo) {
+                return Boolean(
+                  (rowMemberId && cleanMemberNo && rowMemberId === cleanMemberNo) ||
+                    nameMatchesRow ||
+                    (cleanMemberNo && !rowMemberId)
+                );
               }
               return false;
             })

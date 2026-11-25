@@ -1,5 +1,9 @@
 import { authService } from '../src/services/authService';
-import { transactionService, mapAndCleanTransactionRow } from '../src/services/transactionService';
+import {
+  transactionService,
+  mapAndCleanTransactionRow,
+  doesTransactionBelongToMember,
+} from '../src/services/transactionService';
 import { paymentService } from '../src/services/paymentService';
 import { notificationService } from '../src/services/notificationService';
 import { auditService } from '../src/services/auditService';
@@ -334,6 +338,76 @@ async function runE2ECriticalFlows() {
       typeof healthPayload?.has_supabase_url === 'boolean',
     'handleHealthRequest mengembalikan status kesiapan server secara aman tanpa membocorkan kunci rahasia'
   );
+
+  // ----------------------------------------------------------------------------
+  // FLOW 12: Strict Member Transaction Isolation & Member Proof Ownership
+  // ----------------------------------------------------------------------------
+  console.log('\n[FLOW 12] Strict Member Transaction Isolation & Session Consistency');
+  const alvinMember = { memberName: 'Alvin Azhar, S.E., M.M.', memberNo: '1225-02001', memberId: '42' };
+
+  assert(
+    doesTransactionBelongToMember(
+      { transaction_no: 'T260220001', member_id: '1225-02001', account_name_legacy: 'ALVIN AZHAR SE,MM' },
+      alvinMember
+    ) === true,
+    'Transaksi milik Alvin Azhar dengan member_id cocok teridentifikasi sebagai milik sendiri'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220002',
+        member_id: '1121-00001',
+        customer_name: 'Ferry Joko',
+        description: 'Titipan transfer dari Alvin Azhar SE,MM',
+      },
+      alvinMember
+    ) === false,
+    'Transaksi dengan member_id anggota lain TIDAK bocor meskipun deskripsi menyebut nama anggota'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220003',
+        member_id: '',
+        account_name_legacy: 'Bank BSI',
+        description: 'Transaksi Syariah Koperasi Pusat',
+      },
+      { memberName: 'Ari', memberNo: '1225-09999', memberId: '99' }
+    ) === false,
+    'Nama pendek ("Ari") TIDAK cocok dengan kata biasa ("Syariah") pada baris legacy'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220004',
+        member_id: '',
+        account_name_legacy: 'ALVIN AZHAR SE,MM',
+        description: 'Simpanan Manasuka',
+      },
+      alvinMember
+    ) === true,
+    'Pencocokan nama legacy mengabaikan perbedaan tanda baca gelar (S.E., M.M. vs SE,MM)'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220005',
+        member_id: '',
+        account_name_legacy: 'DANA PROJECT',
+        description: 'Operasional Project Minyak Merah',
+      },
+      { memberName: 'Dana Project', memberNo: '1225-08888', memberId: '88' }
+    ) === false,
+    'Akun buku kas umum/project tidak pernah dianggap sebagai transaksi pribadi anggota'
+  );
+
+  await authService.loginMember(memberCreds);
+  const currentAfterLogin = authService.getCurrentUser();
+  assert(
+    currentAfterLogin?.role === 'ANGGOTA' && currentAfterLogin?.memberNo === '1121-00001',
+    'authService.getCurrentUser() langsung sinkron dengan role ANGGOTA setelah loginMember'
+  );
+  await authService.signOut();
 
   // ----------------------------------------------------------------------------
   // SUMMARY

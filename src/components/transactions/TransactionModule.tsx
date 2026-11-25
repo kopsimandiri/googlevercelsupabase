@@ -526,6 +526,52 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
           netBalance: totalMasuk - totalKeluar,
         });
         setMetaInfo(null);
+
+        // Read-only enrichment: cari berkas fisik di bucket 'bukti_transfer' untuk baris transaksi anggota yang DB-nya belum terisi file_url/bukti_url
+        const rowsMissingProof = pagedRows
+          .filter((row) => {
+            const existing =
+              getPublicProofUrl(row.bukti_url || row.filelink) ||
+              resolveKnownStorageProofUrl(row.id) ||
+              (effectiveDefaultProofUrl && isRegistrationOrPokokRow(row) ? effectiveDefaultProofUrl : '');
+            return !existing && Boolean(row.id) && !row.id.startsWith('REG-');
+          })
+          .slice(0, 10);
+
+        if (rowsMissingProof.length > 0) {
+          Promise.all(
+            rowsMissingProof.map(async (row) => {
+              try {
+                const matched = await findProofInBucketByTransactionNo(row.id, row.tanggal);
+                if (matched.found && matched.publicUrl) {
+                  return { id: row.id, publicUrl: matched.publicUrl };
+                }
+              } catch {
+                // ignore read-only discovery error
+              }
+              return null;
+            })
+          ).then((discoveries) => {
+            if (currentReqId !== searchRequestIdRef.current) return;
+            const foundMap = new Map<string, string>();
+            discoveries.forEach((d) => {
+              if (d?.id && d?.publicUrl) foundMap.set(d.id, d.publicUrl);
+            });
+            if (foundMap.size > 0) {
+              setTransactions((prev) =>
+                prev.map((row) => {
+                  const discovered = foundMap.get(row.id);
+                  if (!discovered) return row;
+                  return {
+                    ...row,
+                    bukti_url: row.bukti_url || discovered,
+                    filelink: row.filelink || discovered,
+                  };
+                })
+              );
+            }
+          });
+        }
         return;
       }
 
@@ -996,10 +1042,33 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
         (viewingTrx.kategori || '').toLowerCase().includes('pendaftaran') ||
         (viewingTrx.id || '').startsWith('T251229');
 
-      const rawRef =
+      let rawRef =
         getPublicProofUrl(viewingTrx.bukti_url || viewingTrx.filelink) ||
-        resolveKnownStorageProofUrl(viewingTrx.id) ||
-        (isRegOrPokok ? effectiveDefaultProofUrl : '');
+        resolveKnownStorageProofUrl(viewingTrx.id);
+
+      if (!rawRef && viewingTrx.id && !viewingTrx.id.startsWith('REG-')) {
+        try {
+          if (canEdit) {
+            const res = await transactionService.findAndLinkTransactionProof(viewingTrx.id, viewingTrx.tanggal);
+            if (res.found && res.publicUrl) {
+              rawRef = res.publicUrl;
+            }
+          } else {
+            const matched = await findProofInBucketByTransactionNo(viewingTrx.id, viewingTrx.tanggal);
+            if (matched.found && matched.publicUrl) {
+              rawRef = matched.publicUrl;
+            }
+          }
+        } catch (err) {
+          console.warn('[TransactionModule] Fallback pencarian bukti detail transaksi gagal:', err);
+        }
+      }
+
+      if (!rawRef && isRegOrPokok && effectiveDefaultProofUrl) {
+        rawRef = effectiveDefaultProofUrl;
+      }
+
+      if (cancelled) return;
 
       if (!rawRef) {
         setViewingProofSignedUrl(null);
@@ -1041,7 +1110,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [viewingTrx, effectiveMemberNo, effectiveMemberName, effectiveDefaultProofUrl]);
+  }, [viewingTrx, canEdit, effectiveMemberNo, effectiveMemberName, effectiveDefaultProofUrl]);
 
   const handleOpenQuickProof = async (t: TransactionRecord) => {
     setQuickProofTrx(t);
