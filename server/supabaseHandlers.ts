@@ -78,7 +78,7 @@ export function parseStorageRef(
     return null;
   }
 
-  let bucket = preferredBucket === 'bukti_transfer' ? 'bukti_transfer' : 'bukti-transfer';
+  let bucket = preferredBucket === 'bukti-transfer' ? 'bukti-transfer' : 'bukti_transfer';
   let objectPath = trimmed;
 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
@@ -166,7 +166,7 @@ export async function handleUploadProofRequest(req: any, res: any) {
       return res.status(413).json({ success: false, error: 'Ukuran berkas melebihi batas 10 MB.' });
     }
 
-    let usedBucket = 'bukti-transfer';
+    let usedBucket = 'bukti_transfer';
     let { data, error } = await supabaseAdmin.storage.from(usedBucket).upload(cleanPath, buffer, {
       contentType: mimeType,
       cacheControl: '3600',
@@ -174,7 +174,7 @@ export async function handleUploadProofRequest(req: any, res: any) {
     });
 
     if (error) {
-      usedBucket = 'bukti_transfer';
+      usedBucket = 'bukti-transfer';
       const retry = await supabaseAdmin.storage.from(usedBucket).upload(cleanPath, buffer, {
         contentType: mimeType,
         cacheControl: '3600',

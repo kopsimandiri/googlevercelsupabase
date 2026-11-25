@@ -449,7 +449,7 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
       }
     }
 
-    // 3. Fallback auto-recovery: cari berkas fisik di Supabase Storage bucket 'bukti-transfer'
+    // 3. Fallback auto-recovery: cari berkas fisik di Supabase Storage bucket 'bukti_transfer'
     if (!rawStorageRef && trxId && !trxId.startsWith('REG-')) {
       try {
         if (role === 'ANGGOTA') {

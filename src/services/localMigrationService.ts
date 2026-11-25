@@ -212,7 +212,7 @@ async function uploadAttachmentIfDataUrl(
       return {
         url: '',
         uploaded: false,
-        error: uploadRes.error || `Gagal unggah lampiran ${refId} ke bucket bukti-transfer.`,
+        error: uploadRes.error || `Gagal unggah lampiran ${refId} ke bucket bukti_transfer.`,
       };
     }
     return { url: uploadRes.fileUrl, uploaded: true };
@@ -370,7 +370,7 @@ export const localMigrationService = {
   },
 
   /**
-   * Memigrasikan seluruh data lokal browser ke Supabase Postgres + Supabase Storage ('bukti-transfer') tanpa duplikat.
+   * Memigrasikan seluruh data lokal browser ke Supabase Postgres + Supabase Storage ('bukti_transfer') tanpa duplikat.
    */
   async migrateLocalDataToSupabase(
     onProgress?: (progress: MigrationProgress) => void
@@ -821,7 +821,7 @@ export const localMigrationService = {
     emit('SELESAI', 'Proses migrasi data lokal ke server selesai.');
     result.success = result.failed === 0 || result.inserted > 0 || result.updated > 0;
     result.details.push(
-      `${result.inserted} data baru ditambahkan, ${result.updated} lampiran diperbarui, ${result.uploadedProofs} file diunggah ke bucket bukti-transfer, ${result.skippedDuplicates} duplikat dilewati.`
+      `${result.inserted} data baru ditambahkan, ${result.updated} lampiran diperbarui, ${result.uploadedProofs} file diunggah ke bucket bukti_transfer, ${result.skippedDuplicates} duplikat dilewati.`
     );
     return result;
   },

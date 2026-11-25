@@ -139,7 +139,7 @@ export const LocalDataMigrationModal: React.FC<LocalDataMigrationModalProps> = (
         if (!isMigrating) onClose();
       }}
       title="Migrasi Data Lokal ke Server & Cadangan JSON"
-      subtitle="Alat khusus Admin untuk memindahkan sisa data lama di browser ke database PostgreSQL & Storage 'bukti-transfer'"
+      subtitle="Alat khusus Admin untuk memindahkan sisa data lama di browser ke database PostgreSQL & Storage 'bukti_transfer'"
       maxWidth="max-w-2xl"
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2 w-full">
@@ -189,7 +189,7 @@ export const LocalDataMigrationModal: React.FC<LocalDataMigrationModalProps> = (
             <p className="text-[11px] text-emerald-800 leading-relaxed">
               1. Klik <strong>Ekspor Cadangan (JSON)</strong> terlebih dahulu sebagai salinan pengaman lokal.
               2. Klik <strong>Migrasi Data Lokal ke Server</strong> untuk mengunggah seluruh foto/lampiran base64 lama ke bucket{' '}
-              <code className="bg-white px-1 py-0.5 rounded border border-emerald-200 font-mono">bukti-transfer</code>{' '}
+              <code className="bg-white px-1 py-0.5 rounded border border-emerald-200 font-mono">bukti_transfer</code>{' '}
               dan menyimpan data tanpa duplikat ke Supabase.
             </p>
           </div>

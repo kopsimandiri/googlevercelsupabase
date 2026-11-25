@@ -1,14 +1,14 @@
 import { getSupabaseClient, getSupabaseUrl } from '../lib/supabase';
 
-export const BUKTI_TRANSFER_BUCKET = 'bukti-transfer';
-export const LEGACY_BUKTI_BUCKET = 'bukti_transfer';
-export const CANDIDATE_BUCKETS = ['bukti-transfer', 'bukti_transfer', 'transaksi', 'bukti_transaksi', 'documents', 'public', 'uploads'];
+export const BUKTI_TRANSFER_BUCKET = 'bukti_transfer';
+export const LEGACY_BUKTI_BUCKET = 'bukti-transfer';
+export const CANDIDATE_BUCKETS = ['bukti_transfer', 'bukti-transfer', 'transaksi', 'bukti_transaksi', 'documents', 'public', 'uploads'];
 
 // In-memory cache for resolved active bucket
 let _resolvedActiveBucket: string | null = null;
 
 /**
- * Automatically discovers the existing active bucket or creates 'bukti-transfer' as public.
+ * Automatically discovers the existing active bucket (prioritizing 'bukti_transfer') or returns 'bukti_transfer'.
  */
 export async function resolveActiveBucket(): Promise<string> {
   if (_resolvedActiveBucket) return _resolvedActiveBucket;
@@ -19,14 +19,14 @@ export async function resolveActiveBucket(): Promise<string> {
   try {
     const { data: buckets, error } = await client.storage.listBuckets();
     if (!error && buckets && buckets.length > 0) {
-      // 1. Check if 'bukti-transfer' exists
+      // 1. Check if 'bukti_transfer' exists
       const exactMatch = buckets.find((b) => b.name === BUKTI_TRANSFER_BUCKET || b.id === BUKTI_TRANSFER_BUCKET);
       if (exactMatch) {
         _resolvedActiveBucket = exactMatch.name;
         return exactMatch.name;
       }
 
-      // 2. Check candidate names in order (including legacy 'bukti_transfer')
+      // 2. Check candidate names in order
       for (const cand of CANDIDATE_BUCKETS) {
         const match = buckets.find((b) => b.name.toLowerCase() === cand.toLowerCase() || b.id.toLowerCase() === cand.toLowerCase());
         if (match) {
@@ -57,7 +57,7 @@ export async function resolveActiveBucket(): Promise<string> {
       }
     }
 
-    // Attempt to auto-create private bucket 'bukti-transfer' if permitted
+    // Attempt to auto-create private bucket 'bukti_transfer' if permitted
     try {
       const { data: newBucket, error: createErr } = await client.storage.createBucket(BUKTI_TRANSFER_BUCKET, {
         public: false,
@@ -81,25 +81,18 @@ export async function resolveActiveBucket(): Promise<string> {
 }
 
 export const STORAGE_BUKTI_TRANSFER_SQL_DDL = `-- ==============================================================================
--- KOPSIM MANDIRI: SUPABASE STORAGE BUCKET PRIVAT 'bukti-transfer' & POLICY RLS
+-- KOPSIM MANDIRI: SUPABASE STORAGE BUCKET PRIVAT 'bukti_transfer' & POLICY RLS
 -- ==============================================================================
 
--- 1. Pastikan bucket 'bukti-transfer' & 'bukti_transfer' bersifat PRIVAT (public = FALSE)
+-- 1. Pastikan bucket utama 'bukti_transfer' bersifat PRIVAT (public = FALSE)
 --    Sehingga akses URL langsung tanpa login ditolak oleh Supabase Storage.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES
   (
-    'bukti-transfer',
-    'bukti-transfer',
+    'bukti_transfer',
+    'bukti_transfer',
     FALSE,
     10485760, -- 10MB
-    ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-  ),
-  (
-    'bukti_transfer',
-    'bukti_transfer',
-    FALSE,
-    10485760,
     ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
   )
 ON CONFLICT (id) DO UPDATE SET
@@ -129,7 +122,7 @@ CREATE POLICY "bukti-transfer_auth_insert"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (
-    bucket_id IN ('bukti-transfer', 'bukti_transfer')
+    bucket_id IN ('bukti_transfer', 'bukti-transfer')
     AND (
       public.is_director_or_admin()
       OR name LIKE 'investasi/%'
@@ -142,13 +135,13 @@ CREATE POLICY "bukti-transfer_auth_insert"
 CREATE POLICY "bukti-transfer_auth_update"
   ON storage.objects FOR UPDATE
   TO authenticated
-  USING (bucket_id IN ('bukti-transfer', 'bukti_transfer') AND public.is_director_or_admin())
-  WITH CHECK (bucket_id IN ('bukti-transfer', 'bukti_transfer') AND public.is_director_or_admin());
+  USING (bucket_id IN ('bukti_transfer', 'bukti-transfer') AND public.is_director_or_admin())
+  WITH CHECK (bucket_id IN ('bukti_transfer', 'bukti-transfer') AND public.is_director_or_admin());
 
 CREATE POLICY "bukti-transfer_auth_delete"
   ON storage.objects FOR DELETE
   TO authenticated
-  USING (bucket_id IN ('bukti-transfer', 'bukti_transfer') AND public.is_admin_only());
+  USING (bucket_id IN ('bukti_transfer', 'bukti-transfer') AND public.is_admin_only());
 `;
 
 export interface ProofOptimizationResult {
@@ -365,7 +358,10 @@ export async function uploadTransactionProof(
     };
   }
 
-  const activeBucket = await resolveActiveBucket();
+  let activeBucket = await resolveActiveBucket();
+  if (activeBucket !== BUKTI_TRANSFER_BUCKET) {
+    activeBucket = BUKTI_TRANSFER_BUCKET;
+  }
 
   // Ensure clean path without leading slashes or bucket prefix
   let cleanPath = storagePath.trim().replace(/^\/+/, '');
@@ -387,14 +383,13 @@ export async function uploadTransactionProof(
         upsert: true,
       });
 
-    // If bucket was not found, attempt auto-create or retry on candidate buckets
+    // If bucket was not found, attempt private bucket creation on 'bukti_transfer' or retry fallback
     if (error && (error.message?.toLowerCase().includes('not found') || (error as any)?.statusCode === '404' || (error as any)?.statusCode === 404)) {
       console.warn(`[Storage] Bucket "${activeBucket}" not found, attempting recovery...`);
-      
-      // Try to create the bucket 'bukti_transfer' as public
+
       try {
         await client.storage.createBucket(BUKTI_TRANSFER_BUCKET, {
-          public: true,
+          public: false,
           fileSizeLimit: 10485760,
           allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
         });
@@ -402,7 +397,6 @@ export async function uploadTransactionProof(
         console.warn('[Storage] Create bucket attempt:', cErr);
       }
 
-      // Retry upload on BUKTI_TRANSFER_BUCKET
       const retryRes = await client.storage
         .from(BUKTI_TRANSFER_BUCKET)
         .upload(cleanPath, fileBlob, {
@@ -415,6 +409,20 @@ export async function uploadTransactionProof(
         data = retryRes.data;
         error = null;
         _resolvedActiveBucket = BUKTI_TRANSFER_BUCKET;
+      } else {
+        const legacyRetry = await client.storage
+          .from(LEGACY_BUKTI_BUCKET)
+          .upload(cleanPath, fileBlob, {
+            contentType: mimeType,
+            cacheControl: '3600',
+            upsert: true,
+          });
+        if (!legacyRetry.error) {
+          data = legacyRetry.data;
+          error = null;
+          activeBucket = LEGACY_BUKTI_BUCKET;
+          _resolvedActiveBucket = LEGACY_BUKTI_BUCKET;
+        }
       }
     }
 
@@ -461,7 +469,6 @@ export async function uploadTransactionProof(
 
     const savedPath = data?.path || cleanPath;
 
-    // STEP 2.1: Always get public URL for Public Bucket
     const { data: pubData } = client.storage.from(activeBucket).getPublicUrl(savedPath);
     const publicUrl = pubData?.publicUrl || getPublicProofUrl(savedPath);
 
@@ -609,7 +616,7 @@ export function resolveKnownStorageProofUrl(trxId?: string | null): string {
   const relPath = KNOWN_STORAGE_PROOFS[cleanId] || KNOWN_STORAGE_PROOFS[baseId];
   if (!relPath) return '';
   const envUrl = getSupabaseUrl().replace(/\/+$/, '') || 'https://iqamratpkvnyyayjpnsu.supabase.co';
-  return `${envUrl}/storage/v1/object/public/${LEGACY_BUKTI_BUCKET}/${relPath}`;
+  return `${envUrl}/storage/v1/object/public/${BUKTI_TRANSFER_BUCKET}/${relPath}`;
 }
 
 /**
@@ -622,7 +629,7 @@ export function getMemberDefaultProof(memberNo?: string): string {
   const relPath = MEMBER_DEFAULT_PROOFS[clean];
   if (!relPath) return '';
   const envUrl = getSupabaseUrl().replace(/\/+$/, '') || 'https://iqamratpkvnyyayjpnsu.supabase.co';
-  return `${envUrl}/storage/v1/object/public/${LEGACY_BUKTI_BUCKET}/${relPath}`;
+  return `${envUrl}/storage/v1/object/public/${BUKTI_TRANSFER_BUCKET}/${relPath}`;
 }
 
 /**
@@ -683,8 +690,8 @@ export async function findProofInBucketByTransactionNo(
   const lowerTrxNo = cleanTrxNo.toLowerCase();
   const lowerBaseTrxNo = baseTrxNo.toLowerCase();
 
-  // 1. Gunakan bucket utama secara langsung (hindari listBuckets() yang sering diblokir untuk role anon/anggota)
-  let bucketList = Array.from(new Set([_resolvedActiveBucket || BUKTI_TRANSFER_BUCKET, 'bukti_transfer']));
+  // 1. Gunakan bucket utama 'bukti_transfer' terlebih dahulu (hindari listBuckets() yang sering diblokir untuk role anon/anggota)
+  let bucketList = Array.from(new Set([BUKTI_TRANSFER_BUCKET, _resolvedActiveBucket, LEGACY_BUKTI_BUCKET].filter(Boolean) as string[]));
 
   // 2. Build folder search list based on transaction_no format (e.g. T260421001 -> 2026-04-21)
   const foldersToCheck: Set<string> = new Set(['', 'bukti_transfer', 'bukti', 'transaksi', 'transactions', 'uploads', 'proofs', 'proof']);
@@ -800,10 +807,12 @@ export async function deleteTransactionProof(storagePath: string): Promise<{ suc
     return { success: false, error: 'Supabase client tidak tersedia.' };
   }
 
+  const bucketMatch = storagePath.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^\/]+)\//);
+  const targetBucket = bucketMatch?.[1] || BUKTI_TRANSFER_BUCKET;
   const cleanPath = extractStoragePath(storagePath) || storagePath;
 
   try {
-    const { error } = await client.storage.from(BUKTI_TRANSFER_BUCKET).remove([cleanPath]);
+    const { error } = await client.storage.from(targetBucket).remove([cleanPath]);
     if (error) {
       console.warn('Gagal menghapus file storage (rollback):', error.message);
       return { success: false, error: error.message };
@@ -1290,7 +1299,7 @@ async function fileToDataUrl(file: File | Blob): Promise<string> {
 }
 
 /**
- * Mengunggah berkas (pendaftaran, investasi, setoran, avatar, berita, migrasi) ke bucket Supabase Storage 'bukti-transfer'.
+ * Mengunggah berkas (pendaftaran, investasi, setoran, avatar, berita, migrasi) ke bucket Supabase Storage 'bukti_transfer'.
  * Tidak pernah menyimpan file sebagai base64 ke database/browser.
  */
 export async function uploadMemberProof(
@@ -1307,10 +1316,9 @@ export async function uploadMemberProof(
   const storagePath = `${folderPrefix}/${fileName}`;
   const mimeType = file.type || (fileExt === 'pdf' ? 'application/pdf' : fileExt === 'webp' ? 'image/webp' : 'image/jpeg');
 
-  // 1. Upload langsung ke Supabase Storage bucket aktif ('bukti-transfer' / fallback 'bukti_transfer' jika belum dibuat)
+  // 1. Upload langsung ke Supabase Storage bucket utama ('bukti_transfer', fallback 'bukti-transfer' hanya jika perlu)
   if (client) {
-    const primaryBucket = await resolveActiveBucket();
-    const bucketsToTry = Array.from(new Set([primaryBucket, BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET]));
+    const bucketsToTry = Array.from(new Set([BUKTI_TRANSFER_BUCKET, LEGACY_BUKTI_BUCKET]));
     for (const targetBucket of bucketsToTry) {
       try {
         const uploadRes = await client.storage
@@ -1374,12 +1382,12 @@ export async function uploadMemberProof(
 
   return {
     success: false,
-    error: 'Gagal mengunggah berkas ke Supabase Storage (bucket bukti-transfer). Pastikan Anda sudah login dan policy Storage aktif.',
+    error: 'Gagal mengunggah berkas ke Supabase Storage (bucket bukti_transfer). Pastikan Anda sudah login dan policy Storage aktif.',
   };
 }
 
 /**
- * Upload bukti transfer pendaftaran anggota baru ke bucket bukti-transfer
+ * Upload bukti transfer pendaftaran anggota baru ke bucket bukti_transfer
  */
 export async function uploadPublicRegistrationProof(
   file: File | Blob,

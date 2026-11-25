@@ -202,15 +202,15 @@ async function runE2ECriticalFlows() {
 
   // Server-only storage & bukti_url enforcement
   assert(
-    BUKTI_TRANSFER_BUCKET === 'bukti-transfer',
-    'Bucket utama penyimpanan bukti transfer ditetapkan sebagai bukti-transfer'
+    BUKTI_TRANSFER_BUCKET === 'bukti_transfer',
+    'Bucket utama penyimpanan bukti transfer ditetapkan sebagai bukti_transfer'
   );
   const fakeBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
   assert(
     getPublicProofUrl(fakeBase64) === '',
     'getPublicProofUrl menolak URI base64 (data:) agar file tidak tersimpan di database/browser'
   );
-  const validBuktiTransferUrl = 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti-transfer/setoran/sample.webp';
+  const validBuktiTransferUrl = 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/setoran/sample.webp';
   const mappedBuktiRow = mapAndCleanTransactionRow({
     transaction_no: 'T261124001',
     transaction_date: '2026-11-24',

@@ -1058,7 +1058,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
       rawRef = resolveKnownStorageProofUrl(t.id);
     }
 
-    // 3. Fallback pencarian berkas fisik langsung di Supabase Storage bucket 'bukti-transfer'
+    // 3. Fallback pencarian berkas fisik langsung di Supabase Storage bucket 'bukti_transfer'
     if (!rawRef && t.id && !t.id.startsWith('REG-')) {
       try {
         if (canEdit) {
@@ -2108,7 +2108,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                 <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2">
                   <span className="text-stone-700 font-semibold flex items-center gap-1.5">
                     <Paperclip className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>10. Bukti Transaksi (Supabase Storage: bukti-transfer)</span>
+                    <span>10. Bukti Transaksi (Supabase Storage: bukti_transfer)</span>
                   </span>
                   
                   <div className="text-[10px] font-mono text-stone-600 bg-white p-2 rounded border border-stone-200 truncate">
@@ -2218,7 +2218,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                 {isLoadingQuickProof ? (
                   <div className="flex flex-col items-center gap-2 text-stone-400 py-12">
                     <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-                    <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti-transfer)...</span>
+                    <span className="text-xs">Memuat file bukti dari Supabase Storage (bukti_transfer)...</span>
                   </div>
                 ) : quickProofUrl ? (
                   isPdfFile(quickProofUrl) || isPdfFile(quickProofTrx.bukti_url || quickProofTrx.filelink) ? (
@@ -3247,7 +3247,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                     : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                 }`}
               >
-                2. Storage Bucket: bukti-transfer (RLS Authenticated)
+                2. Storage Bucket: bukti_transfer (RLS Authenticated)
               </button>
             </div>
 
@@ -3257,13 +3257,13 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                 <span>
                   {activeSqlTab === 'transactions'
                     ? 'Ketentuan RLS Tabel public.transactions'
-                    : 'Keamanan Bucket bukti-transfer (Authenticated Access & Upload)'}
+                    : 'Keamanan Bucket bukti_transfer (Authenticated Access & Upload)'}
                 </span>
               </div>
               <p className="text-[11px] text-emerald-800 leading-relaxed">
                 {activeSqlTab === 'transactions'
                   ? 'RLS mengamankan data tabel di tingkat baris (khusus pengguna login). Admin & Direktur melihat semua; Anggota hanya melihat miliknya.'
-                  : 'Objek lampiran bukti transfer disimpan pada bucket bukti-transfer (bukan base64 di database/browser).'}
+                  : 'Objek lampiran bukti transfer disimpan pada bucket bukti_transfer (bukan base64 di database/browser).'}
               </p>
             </div>
 
