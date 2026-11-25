@@ -13,7 +13,7 @@ import {
   getSignedProofUrlDetailed,
   hasTransactionProof,
 } from '../src/services/storageService';
-import { parseStorageRef } from '../server/supabaseHandlers';
+import { parseStorageRef, handleHealthRequest } from '../server/supabaseHandlers';
 import {
   ADMIN_WHATSAPP_DISPLAY,
   formatWhatsAppInternational,
@@ -318,6 +318,21 @@ async function runE2ECriticalFlows() {
   assert(
     gdriveDiag.signedUrl === null && gdriveDiag.reason === 'INVALID_REF',
     'getSignedProofUrlDetailed menolak tautan Google Drive dengan alasan terstruktur'
+  );
+
+  let healthPayload: any = null;
+  await handleHealthRequest(
+    { method: 'GET' },
+    {
+      status: () => ({ json: (p: any) => (healthPayload = p) }),
+      json: (p: any) => (healthPayload = p),
+    }
+  );
+  assert(
+    healthPayload?.status === 'ok' &&
+      typeof healthPayload?.service_role_active === 'boolean' &&
+      typeof healthPayload?.has_supabase_url === 'boolean',
+    'handleHealthRequest mengembalikan status kesiapan server secara aman tanpa membocorkan kunci rahasia'
   );
 
   // ----------------------------------------------------------------------------

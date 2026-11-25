@@ -7,6 +7,7 @@ import { getSupabaseClient } from '../../lib/supabase';
 import {
   getPublicProofUrl,
   getSignedProofUrl,
+  getSignedProofUrlDetailed,
   findProofInBucketByTransactionNo,
   isImageFile,
   isPdfFile,
@@ -497,14 +498,15 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
     }
 
     // 5. Buat Signed URL berjangka 1 jam (3600 detik) untuk bucket privat
-    const signedUrl = await getSignedProofUrl(rawStorageRef, {
+    const signedRes = await getSignedProofUrlDetailed(rawStorageRef, {
       expiresIn: 3600,
       memberNo,
       memberName: memberData?.nama || user?.name || '',
+      transactionNo: trxId,
     });
 
-    if (!signedUrl) {
-      console.error('[MemberPortalView] Gagal membuat Signed URL untuk bukti transaksi:', trxId, rawStorageRef);
+    if (!signedRes.signedUrl) {
+      console.error('[MemberPortalView] Gagal membuat Signed URL untuk bukti transaksi:', trxId, rawStorageRef, signedRes);
       setSelectedProof({
         url: null,
         originalPath: rawStorageRef,
@@ -513,13 +515,14 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
         isLoading: false,
         imageLoaded: false,
         imageError: true,
-        errorMessage: 'Bukti tidak dapat dimuat. Gagal memverifikasi akses lampiran di server.',
+        errorMessage:
+          signedRes.errorMessage || 'Bukti tidak dapat dimuat. Gagal memverifikasi akses lampiran di server.',
       });
       return;
     }
 
     setSelectedProof({
-      url: signedUrl,
+      url: signedRes.signedUrl,
       originalPath: rawStorageRef,
       title,
       trx,

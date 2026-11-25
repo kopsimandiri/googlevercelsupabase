@@ -6,6 +6,8 @@ function getSupabaseServerConfig(): {
   url: string;
   key: string;
   hasServiceRoleKey: boolean;
+  hasUrl: boolean;
+  hasAnonFallback: boolean;
 } {
   const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
@@ -20,7 +22,27 @@ function getSupabaseServerConfig(): {
     url,
     key,
     hasServiceRoleKey: Boolean(serviceKey),
+    hasUrl: Boolean(url && url !== 'https://your-project.supabase.co'),
+    hasAnonFallback: Boolean(fallbackAnonKey),
   };
+}
+
+export async function handleHealthRequest(req: any, res: any) {
+  if (req.method && req.method !== 'GET') {
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
+  }
+  const cfg = getSupabaseServerConfig();
+  const { client } = getSupabaseAdminClient();
+  return res.json({
+    status: 'ok',
+    app: 'KOPSIM Mandiri Platform',
+    version: '2.5.0',
+    supabase_connected: Boolean(client),
+    has_supabase_url: cfg.hasUrl,
+    service_role_active: cfg.hasServiceRoleKey,
+    has_anon_fallback: cfg.hasAnonFallback,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 export function getSupabaseAdminClient(): {
@@ -298,11 +320,28 @@ export async function handleSignedUrlRequest(req: any, res: any) {
       const normObj = normalizePathRef(obj);
 
       if (jwtMemberNo && requestedMemberNo && jwtMemberNo !== requestedMemberNo) {
-        return res.status(403).json({
-          success: false,
-          code: 'FORBIDDEN',
-          error: 'Akses ditolak: Identitas anggota tidak sesuai dengan sesi login.',
-        });
+        // Izinkan jika requestedMemberNo merupakan primary key (members.id) milik jwtMemberNo tersebut
+        let isSameMemberAlias = false;
+        try {
+          const { data: aliasRow } = await supabaseAdmin
+            .from('members')
+            .select('id, member_no')
+            .ilike('member_no', jwtMemberNo)
+            .limit(1)
+            .maybeSingle();
+          if (aliasRow && String(aliasRow.id || '').trim().toLowerCase() === requestedMemberNo) {
+            isSameMemberAlias = true;
+          }
+        } catch {
+          isSameMemberAlias = false;
+        }
+        if (!isSameMemberAlias) {
+          return res.status(403).json({
+            success: false,
+            code: 'FORBIDDEN',
+            error: 'Akses ditolak: Identitas anggota tidak sesuai dengan sesi login.',
+          });
+        }
       }
 
       if (!cleanMemberNo && !cleanMemberName) {
@@ -537,6 +576,7 @@ export async function handleMemberEnsureAuthRequest(req: any, res: any) {
       return res.status(400).json({ success: false, error: 'Username dan password wajib diisi.' });
     }
 
+    let verifiedMember: any = null;
     const { data: verifyData, error: verifyErr } = await supabaseAdmin.rpc(
       'verify_member_login',
       {
@@ -545,27 +585,83 @@ export async function handleMemberEnsureAuthRequest(req: any, res: any) {
       }
     );
 
-    if (verifyErr || !verifyData?.success || !verifyData?.member) {
+    if (!verifyErr && verifyData?.success && verifyData?.member) {
+      verifiedMember = verifyData.member;
+    } else {
+      // Fallback query langsung ke public.members apabila RPC belum tersedia atau berbeda format match
+      const isNumeric = /^\d+$/.test(cleanUser);
+      let memberQuery = supabaseAdmin
+        .from('members')
+        .select('id, member_no, full_name, username, legacy_password_hash, status');
+      if (isNumeric) {
+        memberQuery = memberQuery.or(
+          `username.ilike.${cleanUser},member_no.ilike.${cleanUser},nik.eq.${cleanUser},id.eq.${cleanUser}`
+        );
+      } else {
+        memberQuery = memberQuery.or(
+          `username.ilike.${cleanUser},member_no.ilike.${cleanUser},nik.eq.${cleanUser}`
+        );
+      }
+      const { data: memberRows } = await memberQuery.limit(5);
+      const target = cleanUser.toLowerCase();
+      const matched = (memberRows || []).find((row: any) => {
+        const u = String(row.username || '').trim().toLowerCase();
+        const n = String(row.member_no || '').trim().toLowerCase();
+        const i = String(row.id || '').trim().toLowerCase();
+        return u === target || n === target || i === target;
+      });
+      if (
+        matched &&
+        matched.status !== 'NONAKTIF' &&
+        matched.status !== 'SUSPENDED' &&
+        String(matched.legacy_password_hash || '').trim() !== '' &&
+        String(matched.legacy_password_hash || '').trim() === cleanPass
+      ) {
+        verifiedMember = matched;
+      }
+    }
+
+    if (!verifiedMember) {
       return res.status(401).json({ success: false, error: 'Kredensial anggota tidak valid.' });
     }
 
-    const m = verifyData.member;
+    const m = verifiedMember;
     const memberNo = String(m.member_no || m.id || cleanUser).trim();
     const memberEmail = `${memberNo.toLowerCase()}@anggota.kopsim.id`;
 
     let existingUser: any = null;
-    for (let page = 1; page <= 5; page++) {
-      const { data: existingList } = await supabaseAdmin.auth.admin.listUsers({
-        page,
-        perPage: 1000,
-      });
-      const usersArr: any[] = Array.isArray((existingList as any)?.users)
-        ? (existingList as any).users
-        : [];
-      existingUser = usersArr.find(
-        (u: any) => String(u?.email || '').toLowerCase() === memberEmail
-      );
-      if (existingUser || usersArr.length < 1000) break;
+    // Cek cepat melalui public.profiles terlebih dahulu (O(1))
+    try {
+      const { data: profileRow } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .ilike('member_id', memberNo)
+        .limit(1)
+        .maybeSingle();
+      if (profileRow?.id) {
+        const { data: byIdData } = await supabaseAdmin.auth.admin.getUserById(profileRow.id);
+        if (byIdData?.user) {
+          existingUser = byIdData.user;
+        }
+      }
+    } catch {
+      // lanjut ke listUsers
+    }
+
+    if (!existingUser) {
+      for (let page = 1; page <= 5; page++) {
+        const { data: existingList } = await supabaseAdmin.auth.admin.listUsers({
+          page,
+          perPage: 1000,
+        });
+        const usersArr: any[] = Array.isArray((existingList as any)?.users)
+          ? (existingList as any).users
+          : [];
+        existingUser = usersArr.find(
+          (u: any) => String(u?.email || '').toLowerCase() === memberEmail
+        );
+        if (existingUser || usersArr.length < 1000) break;
+      }
     }
 
     if (!existingUser) {
@@ -585,7 +681,7 @@ export async function handleMemberEnsureAuthRequest(req: any, res: any) {
         },
       });
       if (createErr) {
-        return res.json({ success: false, error: createErr.message });
+        return res.status(500).json({ success: false, error: createErr.message });
       }
       if (created?.user?.id) {
         await supabaseAdmin.from('profiles').upsert({
@@ -599,6 +695,7 @@ export async function handleMemberEnsureAuthRequest(req: any, res: any) {
     } else {
       await supabaseAdmin.auth.admin.updateUserById(existingUser.id, {
         password: cleanPass,
+        email_confirm: true,
         user_metadata: {
           ...(existingUser.user_metadata || {}),
           role: 'ANGGOTA',

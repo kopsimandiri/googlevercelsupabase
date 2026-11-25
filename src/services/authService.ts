@@ -13,6 +13,56 @@ function isUuidLike(val?: string | null): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
 }
 
+async function ensureMemberSupabaseSession(
+  client: any,
+  memberEmail: string,
+  cleanUsername: string,
+  cleanPassword: string
+): Promise<boolean> {
+  if (!client || !memberEmail || !cleanPassword) return false;
+  try {
+    const { data: firstAuth, error: authErr } = await client.auth.signInWithPassword({
+      email: memberEmail,
+      password: cleanPassword,
+    });
+    if (!authErr && firstAuth?.session) {
+      return true;
+    }
+
+    if (typeof fetch !== 'undefined' && typeof window !== 'undefined') {
+      const syncResp = await fetch('/api/auth/member-ensure-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
+      }).catch((err) => {
+        console.warn('[Auth] Gagal menghubungi /api/auth/member-ensure-auth:', err);
+        return null;
+      });
+
+      if (syncResp?.ok) {
+        const syncJson = await syncResp.json().catch(() => null);
+        if (syncJson?.success && syncJson?.email) {
+          const { data: retryAuth, error: retryErr } = await client.auth.signInWithPassword({
+            email: syncJson.email,
+            password: cleanPassword,
+          });
+          if (!retryErr && retryAuth?.session) {
+            return true;
+          }
+          console.warn('[Auth] Retry signInWithPassword anggota setelah sync gagal:', retryErr?.message);
+        } else if (syncJson?.skipped) {
+          console.warn('[Auth] Sinkronisasi Supabase Auth anggota dilewati (SUPABASE_SERVICE_ROLE_KEY belum aktif di server).');
+        }
+      } else if (syncResp) {
+        console.warn('[Auth] /api/auth/member-ensure-auth merespons HTTP', syncResp.status);
+      }
+    }
+  } catch (err) {
+    console.warn('[Auth] Sinkronisasi sesi Supabase Auth anggota tidak dapat diselesaikan:', err);
+  }
+  return false;
+}
+
 /**
  * Resolves user profile and role details securely from Supabase database tables (profiles, user_roles, roles)
  * Role resolution authority grants full administrative privileges for authorized admin accounts (e.g. koperasi.simandiri@gmail.com).
@@ -322,30 +372,7 @@ export const authService = {
             inMemoryMemberSession = memberSession;
 
             // Sinkronisasi sesi Supabase Auth agar anggota memperoleh JWT authenticated untuk RLS & Signed URL
-            try {
-              const { error: authErr } = await client.auth.signInWithPassword({
-                email: memberSession.email,
-                password: cleanPassword,
-              });
-              if (authErr && typeof fetch !== 'undefined' && typeof window !== 'undefined') {
-                const syncResp = await fetch('/api/auth/member-ensure-auth', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
-                }).catch(() => null);
-                if (syncResp?.ok) {
-                  const syncJson = await syncResp.json().catch(() => null);
-                  if (syncJson?.success && syncJson?.email) {
-                    await client.auth.signInWithPassword({
-                      email: syncJson.email,
-                      password: cleanPassword,
-                    });
-                  }
-                }
-              }
-            } catch {
-              // Tetap berjalan via RPC session + server signed-url endpoint jika belum terhubung ke auth.users
-            }
+            await ensureMemberSupabaseSession(client, memberSession.email, cleanUsername, cleanPassword);
 
             return memberSession;
           }
@@ -434,30 +461,7 @@ export const authService = {
 
               inMemoryMemberSession = memberSession;
               lastResolvedSession = memberSession;
-              try {
-                const { error: authErr } = await client.auth.signInWithPassword({
-                  email: memberSession.email,
-                  password: cleanPassword,
-                });
-                if (authErr && typeof fetch !== 'undefined' && typeof window !== 'undefined') {
-                  const syncResp = await fetch('/api/auth/member-ensure-auth', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
-                  }).catch(() => null);
-                  if (syncResp?.ok) {
-                    const syncJson = await syncResp.json().catch(() => null);
-                    if (syncJson?.success && syncJson?.email) {
-                      await client.auth.signInWithPassword({
-                        email: syncJson.email,
-                        password: cleanPassword,
-                      });
-                    }
-                  }
-                }
-              } catch {
-                // Abaikan jika member belum terhubung ke auth.users
-              }
+              await ensureMemberSupabaseSession(client, memberSession.email, cleanUsername, cleanPassword);
 
               return memberSession;
             } else {

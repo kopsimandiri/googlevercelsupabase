@@ -1018,8 +1018,8 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
       setViewingProofErrorMsg(null);
       const signedRes = await getSignedProofUrlDetailed(rawRef, {
         expiresIn: 3600,
-        memberNo: viewingTrx.member_id || effectiveMemberNo,
-        memberName: viewingTrx.akun || effectiveMemberName,
+        memberNo: effectiveMemberNo || viewingTrx.member_id,
+        memberName: effectiveMemberName || viewingTrx.akun,
         transactionNo: viewingTrx.id,
       });
 
@@ -1102,8 +1102,8 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
     // 5. Buat Signed URL berjangka 1 jam (3600 detik) untuk bucket privat
     const signedRes = await getSignedProofUrlDetailed(rawRef, {
       expiresIn: 3600,
-      memberNo: t.member_id || effectiveMemberNo,
-      memberName: t.akun || effectiveMemberName,
+      memberNo: effectiveMemberNo || t.member_id,
+      memberName: effectiveMemberName || t.akun,
       transactionNo: t.id,
     });
 

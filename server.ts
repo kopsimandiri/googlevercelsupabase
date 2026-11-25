@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
+  handleHealthRequest,
   handleMemberEnsureAuthRequest,
   handleSignedUrlRequest,
   handleUploadProofRequest,
@@ -279,16 +280,7 @@ async function processPaymentPosting(payment: ServerPaymentRecord, signatureToVe
 // ==============================================================================
 
 // 1. Health Check
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    app: 'KOPSIM Mandiri Platform',
-    version: '2.5.0',
-    supabase_connected: Boolean(supabaseAdmin),
-    service_role_active: hasServiceRoleKey,
-    timestamp: new Date().toISOString(),
-  });
-});
+app.get('/api/health', handleHealthRequest);
 
 // 1B. Controlled Server-Side Storage Upload Fallback for Member Proofs
 app.post('/api/storage/upload-proof', handleUploadProofRequest);

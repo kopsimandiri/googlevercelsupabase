@@ -1143,9 +1143,23 @@ export async function getSignedProofUrlDetailed(
         }),
       });
       if (resp.ok) {
-        const json = await resp.json();
+        const respText = await resp.text().catch(() => '');
+        let json: any = null;
+        try {
+          json = respText ? JSON.parse(respText) : null;
+        } catch {
+          json = null;
+        }
         if (json?.success && json?.signedUrl) {
           return { signedUrl: json.signedUrl };
+        }
+        if (!json) {
+          serverReason = 'API_UNAVAILABLE';
+          serverErrorMsg =
+            'Endpoint /api/storage/signed-url mengembalikan respons non-JSON (kemungkinan halaman SPA HTML, bukan fungsi API server). Periksa /api/health dan konfigurasi Vercel.';
+        } else if (json?.error) {
+          serverReason = 'API_UNAVAILABLE';
+          serverErrorMsg = String(json.error);
         }
       } else {
         const errText = await resp.text().catch(() => '');
@@ -1167,12 +1181,31 @@ export async function getSignedProofUrlDetailed(
         } else if (code === 'NOT_FOUND') {
           serverReason = 'NOT_FOUND';
           serverErrorMsg = errJson?.error || 'Berkas bukti tidak ditemukan di bucket Supabase Storage.';
-        } else if (resp.status === 404 && !errJson) {
+        } else if (code === 'INVALID_REF' || resp.status === 400) {
+          serverReason = 'INVALID_REF';
+          serverErrorMsg = errJson?.error || 'Referensi berkas bukti storage tidak valid.';
+        } else if (resp.status === 404) {
           serverReason = 'API_UNAVAILABLE';
-          serverErrorMsg = 'Endpoint API /api/storage/signed-url tidak aktif pada deployment saat ini.';
+          serverErrorMsg =
+            errJson?.error || 'Endpoint API /api/storage/signed-url tidak aktif pada deployment saat ini (404).';
+        } else if (code === 'API_UNAVAILABLE' || resp.status === 503) {
+          serverReason = 'API_UNAVAILABLE';
+          serverErrorMsg =
+            errJson?.error ||
+            'Layanan Supabase server belum terkonfigurasi (SUPABASE_URL / key kosong di server). Periksa /api/health.';
+        } else if (code === 'SERVER_ERROR' || resp.status >= 500) {
+          serverReason = 'API_UNAVAILABLE';
+          serverErrorMsg =
+            errJson?.error ||
+            `Terjadi kesalahan server saat membuat Signed URL (HTTP ${resp.status}). Periksa log server/Vercel dan /api/health.`;
         } else if (code === 'UNAUTHORIZED' || resp.status === 401) {
           serverReason = hasClientSession ? 'RLS_DENIED' : 'NO_SESSION';
           serverErrorMsg = errJson?.error || 'Sesi autentikasi Supabase Auth belum aktif.';
+        } else {
+          serverReason = hasClientSession ? 'API_UNAVAILABLE' : 'NO_SESSION';
+          serverErrorMsg =
+            errJson?.error ||
+            `Layanan Signed URL gagal merespons (HTTP ${resp.status}). Pastikan /api/health aktif dan SUPABASE_SERVICE_ROLE_KEY terisi.`;
         }
       }
     } catch (apiErr) {
