@@ -195,7 +195,8 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
     (!isUuidString(user?.id) ? user?.id : '') ||
     ''
   ).trim();
-  const memberUuidPk = isUuidString(user?.memberId) ? user!.memberId!.trim() : '';
+  const memberRawPk = (user?.memberId || '').trim();
+  const memberUsername = (user?.username || '').trim();
 
   useEffect(() => {
     let isMounted = true;
@@ -204,7 +205,7 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
     if (isAuthLoading) {
       return;
     }
-    if (!isAuthenticated || (!memberNo && !user?.name)) {
+    if (!isAuthenticated || (!memberNo && !memberRawPk && !memberUsername && !user?.name)) {
       setIsLoading(false);
       return;
     }
@@ -215,7 +216,7 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
         const memberName = user?.name || '';
 
         // 1. Fetch real member data from Supabase public.members via memberService (self-lookup)
-        let found = await memberService.getMemberById(memberNo || memberUuidPk);
+        let found = await memberService.getMemberById(memberNo || memberRawPk || memberUsername);
         if (!found && memberName) {
           found = await memberService.getMemberById(memberName);
         }
@@ -320,10 +321,15 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
           if (isMounted) setMemberData(fallbackMember);
         }
 
+        const resolvedPk = (memberRawPk || found?.rawId || '').trim();
+        const resolvedUsername = (memberUsername || found?.username || '').trim();
+
         // 2. Query aggregate savings directly matching user SQL requirement:
         const savingsRes = await transactionService.getMemberSavingsSummary(
           memberName || found?.nama || '',
-          memberNo
+          memberNo || found?.id || '',
+          resolvedPk || undefined,
+          resolvedUsername || undefined
         );
 
         if (isMounted) {
@@ -377,8 +383,9 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
         // 3. Query member transactions
         const realTrx = await transactionService.getMemberTransactions(
           memberName || found?.nama || '',
-          memberNo,
-          memberUuidPk || undefined
+          memberNo || found?.id || '',
+          resolvedPk || undefined,
+          resolvedUsername || undefined
         );
 
         if (isMounted) {
@@ -396,7 +403,7 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
     return () => {
       isMounted = false;
     };
-  }, [isAuthLoading, isAuthenticated, role, memberNo, memberUuidPk, user]);
+  }, [isAuthLoading, isAuthenticated, role, memberNo, memberRawPk, memberUsername, user]);
 
   const memberTabs: TabItem<MemberTabType>[] = [
     { id: 'SIMPANAN', label: 'Buku Simpanan', icon: <Coins className="w-4 h-4" /> },
@@ -912,9 +919,10 @@ export const MemberPortalView: React.FC<MemberPortalViewProps> = ({ initialTab }
           <TransactionModule
             viewOnly
             scopedMember={{
-              memberNo,
+              memberNo: memberNo || memberData?.id || '',
               memberName: memberData?.nama || user?.name || '',
-              memberId: memberUuidPk || undefined,
+              memberId: (memberRawPk || memberData?.rawId || '').trim() || undefined,
+              memberUsername: (memberUsername || memberData?.username || '').trim() || undefined,
               defaultProofUrl:
                 getPublicProofUrl(memberData?.transfer_proof_url) ||
                 getPublicProofUrl(user?.transferProofUrl) ||

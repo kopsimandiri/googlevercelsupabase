@@ -3,6 +3,9 @@ import {
   transactionService,
   mapAndCleanTransactionRow,
   doesTransactionBelongToMember,
+  buildPostgrestOrSearchFilter,
+  quotePostgrestFilterValue,
+  matchesTransactionSearchQuery,
 } from '../src/services/transactionService';
 import { paymentService } from '../src/services/paymentService';
 import { notificationService } from '../src/services/notificationService';
@@ -343,14 +346,84 @@ async function runE2ECriticalFlows() {
   // FLOW 12: Strict Member Transaction Isolation & Member Proof Ownership
   // ----------------------------------------------------------------------------
   console.log('\n[FLOW 12] Strict Member Transaction Isolation & Session Consistency');
-  const alvinMember = { memberName: 'Alvin Azhar, S.E., M.M.', memberNo: '1225-02001', memberId: '42' };
+  const alvinMember = {
+    memberName: 'Alvin Azhar, S.E., M.M.',
+    memberNo: '1225-02001',
+    memberId: '24',
+    memberUsername: 'alvinazhar',
+  };
+  const imamMember = {
+    memberName: 'Prof. Dr. H. Imam Ghozali, M.Si., Akt.',
+    memberNo: '1225-03002',
+    memberId: '25',
+    memberUsername: 'imamghozali',
+  };
 
   assert(
     doesTransactionBelongToMember(
       { transaction_no: 'T260220001', member_id: '1225-02001', account_name_legacy: 'ALVIN AZHAR SE,MM' },
       alvinMember
     ) === true,
-    'Transaksi milik Alvin Azhar dengan member_id cocok teridentifikasi sebagai milik sendiri'
+    'Transaksi milik Alvin Azhar dengan member_id NRA cocok teridentifikasi sebagai milik sendiri'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      { transaction_no: 'T260220010', member_id: '24', customer_name: '', account_name_legacy: 'Bank BSI' },
+      alvinMember
+    ) === true,
+    'Transaksi dengan numeric non-UUID member_id ("24") cocok dengan members.id Alvin Azhar'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      { transaction_no: 'T260220011', member_id: 'alvinazhar', account_name_legacy: 'Bank BSI' },
+      alvinMember
+    ) === true,
+    'Transaksi dengan member_id berisi username ("alvinazhar") cocok sebagai milik anggota'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220012',
+        member_id: '',
+        account_name_legacy: 'ALVIN AZHAR SE.MM',
+        description: 'Simpanan Wajib',
+      },
+      alvinMember
+    ) === true,
+    'Pencocokan nama legacy menangani variasi titik gelar (S.E., M.M. vs SE.MM)'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220013',
+        member_id: 'NON-ANGGOTA',
+        account_name_legacy: 'Bank BSI',
+        description: 'Setoran Simpanan Manasuka a.n. Alvin Azhar',
+      },
+      alvinMember
+    ) === true,
+    'Placeholder member_id ("NON-ANGGOTA") tetap cocok melalui nama inti pada deskripsi'
+  );
+  assert(
+    doesTransactionBelongToMember(
+      {
+        transaction_no: 'T260220014',
+        member_id: '25',
+        customer_name: 'Imam Ghozali',
+        account_name_legacy: 'Bank Mandiri',
+      },
+      imamMember
+    ) === true &&
+      doesTransactionBelongToMember(
+        {
+          transaction_no: 'T260220015',
+          member_id: '',
+          account_name_legacy: 'IMAM GHOZALI',
+          description: 'Simpanan Sukarela',
+        },
+        imamMember
+      ) === true,
+    'Transaksi Imam Ghozali terbaca baik lewat numeric member_id ("25") maupun nama inti tanpa gelar'
   );
   assert(
     doesTransactionBelongToMember(
@@ -372,9 +445,9 @@ async function runE2ECriticalFlows() {
         account_name_legacy: 'Bank BSI',
         description: 'Transaksi Syariah Koperasi Pusat',
       },
-      { memberName: 'Ari', memberNo: '1225-09999', memberId: '99' }
+      { memberName: 'Dr. Ari', memberNo: '1225-09999', memberId: '99' }
     ) === false,
-    'Nama pendek ("Ari") TIDAK cocok dengan kata biasa ("Syariah") pada baris legacy'
+    'Nama pendek bergelar ("Dr. Ari") TIDAK cocok dengan kata biasa ("Syariah") pada baris legacy'
   );
   assert(
     doesTransactionBelongToMember(
@@ -408,6 +481,61 @@ async function runE2ECriticalFlows() {
     'authService.getCurrentUser() langsung sinkron dengan role ANGGOTA setelah loginMember'
   );
   await authService.signOut();
+
+  // ----------------------------------------------------------------------------
+  // FLOW 13: Grid Multi-Column Search (ID, Akun, Produk) & PostgREST Escaping
+  // ----------------------------------------------------------------------------
+  console.log('\n[FLOW 13] Grid Search Filter Safety (ID, Akun, Produk)');
+  const idSearchFilter = buildPostgrestOrSearchFilter('T260220001', { includeNumericIdEq: true });
+  assert(
+    !(/(^|,)id\.ilike\./.test(idSearchFilter)) &&
+      idSearchFilter.includes('transaction_no.ilike."%T260220001%"'),
+    'buildPostgrestOrSearchFilter tidak pernah memakai id.ilike (aman untuk BIGINT/UUID) dan mencari di transaction_no'
+  );
+
+  const commaAccountFilter = buildPostgrestOrSearchFilter('ALVIN AZHAR SE,MM');
+  assert(
+    commaAccountFilter.includes('account_name_legacy.ilike."%ALVIN AZHAR SE,MM%"') &&
+      commaAccountFilter.includes('product_name.ilike."%ALVIN AZHAR SE,MM%"'),
+    'Kata kunci dengan koma ("ALVIN AZHAR SE,MM") terbungkus tanda kutip PostgREST sehingga tidak merusak .or()'
+  );
+
+  const numericIdFilter = buildPostgrestOrSearchFilter('42', { includeNumericIdEq: true });
+  assert(
+    numericIdFilter.startsWith('id.eq.42,') && !(/(^|,)id\.ilike\./.test(numericIdFilter)),
+    'Pencarian angka memakai id.eq.42 tanpa operator id.ilike'
+  );
+
+  assert(
+    quotePostgrestFilterValue('Kas (Non-Anggota) "Utama"') === '"Kas (Non-Anggota) \\"Utama\\""',
+    'quotePostgrestFilterValue meng-escape tanda kutip dan membungkus karakter kurung dengan aman'
+  );
+
+  const sampleSearchRow = {
+    id: 'T260220001',
+    tanggal: '2026-02-20',
+    referal: 'PROJECT' as const,
+    plantation: 'DISTRIBUTOR MEATSHOP',
+    jenis: 'MASUK' as const,
+    kategori: 'Penjualan Komoditas',
+    sku_name: 'Daging Sapi Prime Cut Halal Segar',
+    metode_bayar: 'Bank Mandiri',
+    qty: 10,
+    jumlah: 1250000,
+    area_jenis: 'PROJECT' as const,
+    akun: 'ALVIN AZHAR SE,MM',
+    customer_name: 'Alvin Azhar, S.E., M.M.',
+    member_id: '1225-02001',
+    keterangan: 'Pengiriman Meatshop batch 1',
+  };
+  assert(
+    matchesTransactionSearchQuery(sampleSearchRow, 'T260220001') === true &&
+      matchesTransactionSearchQuery(sampleSearchRow, 'alvin azhar se mm') === true &&
+      matchesTransactionSearchQuery(sampleSearchRow, 'Prime Cut') === true &&
+      matchesTransactionSearchQuery(sampleSearchRow, '1225-02001') === true &&
+      matchesTransactionSearchQuery(sampleSearchRow, 'Produk Tidak Ada') === false,
+    'matchesTransactionSearchQuery menemukan transaksi berdasarkan ID, akun (toleran koma/titik), produk, dan member_id'
+  );
 
   // ----------------------------------------------------------------------------
   // SUMMARY

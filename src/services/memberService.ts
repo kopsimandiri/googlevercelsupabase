@@ -176,6 +176,7 @@ export function mapSupabaseMemberRowToMemberRecord(row: any): MemberRecord {
 
   return {
     id: memberNo || String(row.id || ''),
+    rawId: row.id !== undefined && row.id !== null ? String(row.id) : undefined,
     tgl_reg: tglReg,
     nama,
     gender,
@@ -761,25 +762,25 @@ export const memberService = {
     const client = getSupabaseClient();
     if (client) {
       try {
-        // Direct query to Supabase public.members by member_no, username, full_name, or numeric ID
-        let query = client.from(MEMBERS_TABLE_NAME).select('*');
-        if (/^\d+$/.test(cleanId)) {
-          query = query.or(`member_no.ilike.%${cleanId}%,username.ilike.%${cleanId}%,full_name.ilike.%${cleanId}%,id.eq.${cleanId}`);
-        } else {
-          query = query.or(`member_no.ilike.%${cleanId}%,username.ilike.%${cleanId}%,full_name.ilike.%${cleanId}%`);
-        }
-        const { data, error } = await query.limit(1);
-
-        if (!error && data && data.length > 0) {
-          return mapSupabaseMemberRowToMemberRecord(data[0]);
-        }
-
-        // Fallback aman via SECURITY DEFINER RPC (untuk sesi anggota tanpa JWT GoTrue)
+        // 1. Prioritas: gunakan SECURITY DEFINER RPC get_member_profile_self (exact match member_no/id/username/full_name)
         const { data: rpcProf, error: rpcErr } = await client.rpc('get_member_profile_self', {
           p_identifier: cleanId,
         });
         if (!rpcErr && rpcProf && typeof rpcProf === 'object') {
           return mapSupabaseMemberRowToMemberRecord(rpcProf);
+        }
+
+        // 2. Fallback: exact query to Supabase public.members by member_no, username, or numeric ID
+        let query = client.from(MEMBERS_TABLE_NAME).select('*');
+        if (/^\d+$/.test(cleanId)) {
+          query = query.or(`member_no.ilike.${cleanId},username.ilike.${cleanId},id.eq.${cleanId}`);
+        } else {
+          query = query.or(`member_no.ilike.${cleanId},username.ilike.${cleanId},full_name.ilike.${cleanId}`);
+        }
+        const { data, error } = await query.limit(1);
+
+        if (!error && data && data.length > 0) {
+          return mapSupabaseMemberRowToMemberRecord(data[0]);
         }
       } catch (err) {
         console.warn('[memberService] Direct single member query fallback:', err);
@@ -792,9 +793,11 @@ export const memberService = {
       members.find(
         (m) =>
           (m.id && m.id.toLowerCase() === target) ||
-          (m.nama && m.nama.toLowerCase() === target) ||
-          (m.nama && m.nama.toLowerCase().includes(target))
-      ) || null
+          (m.username && m.username.toLowerCase() === target) ||
+          (m.nama && m.nama.toLowerCase() === target)
+      ) ||
+      members.find((m) => m.nama && m.nama.toLowerCase().includes(target)) ||
+      null
     );
   },
 

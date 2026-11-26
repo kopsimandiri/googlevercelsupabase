@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { transactionService, TransactionsMetaResult, TRANSACTIONS_SQL_DDL, SplitCategoryItem } from '../../services/transactionService';
+import {
+  transactionService,
+  TransactionsMetaResult,
+  TRANSACTIONS_SQL_DDL,
+  SplitCategoryItem,
+  matchesTransactionSearchQuery,
+} from '../../services/transactionService';
 import { masterDataService } from '../../services/masterDataService';
 import { memberService } from '../../services/memberService';
 import { productService, ProductItem } from '../../services/productService';
@@ -77,6 +83,7 @@ export interface MemberTransactionScope {
   memberNo: string;
   memberName?: string;
   memberId?: string;
+  memberUsername?: string;
   defaultProofUrl?: string;
   registeredAt?: string;
   plantation?: string;
@@ -130,6 +137,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
 
   const searchRequestIdRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const memberRowsCacheRef = useRef<{ key: string; rows: TransactionRecord[] } | null>(null);
 
   // Modals state
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
@@ -271,7 +279,12 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
   const effectiveMemberName = (scopedMember?.memberName || user?.name || '').trim();
   const effectiveMemberId = (
     scopedMember?.memberId ||
-    (isUuidString(user?.memberId) ? user?.memberId : '') ||
+    user?.memberId ||
+    ''
+  ).trim();
+  const effectiveMemberUsername = (
+    scopedMember?.memberUsername ||
+    user?.username ||
     ''
   ).trim();
   const effectiveDefaultProofUrl = (
@@ -403,7 +416,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const executeSearch = async (showInitialLoading = false) => {
+  const executeSearch = async (showInitialLoading = false, forceRefresh = false) => {
     if (showInitialLoading) setIsLoading(true);
     setIsSearching(true);
     setSearchError(null);
@@ -428,60 +441,80 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
 
     try {
       if (isMemberScope) {
-        const rawMemberRows = await transactionService.getMemberTransactions(
-          effectiveMemberName,
+        const memberCacheKey = [
           effectiveMemberNo,
-          effectiveMemberId
-        );
+          effectiveMemberName,
+          effectiveMemberId,
+          effectiveMemberUsername,
+          effectiveDefaultProofUrl,
+        ].join('|');
 
-        if (currentReqId !== searchRequestIdRef.current) {
-          return;
-        }
+        let enrichedRows: TransactionRecord[];
+        const canUseCache =
+          !forceRefresh &&
+          memberRowsCacheRef.current &&
+          memberRowsCacheRef.current.key === memberCacheKey;
 
-        let enrichedRows = rawMemberRows.map((row) => {
-          const existingProof =
-            getPublicProofUrl(row.bukti_url || row.filelink) ||
-            resolveKnownStorageProofUrl(row.id);
-          if (existingProof) {
-            return {
-              ...row,
-              bukti_url: row.bukti_url || existingProof,
-              filelink: row.filelink || existingProof,
-            };
+        if (canUseCache) {
+          enrichedRows = memberRowsCacheRef.current!.rows;
+        } else {
+          const rawMemberRows = await transactionService.getMemberTransactions(
+            effectiveMemberName,
+            effectiveMemberNo,
+            effectiveMemberId,
+            effectiveMemberUsername
+          );
+
+          if (currentReqId !== searchRequestIdRef.current) {
+            return;
           }
-          if (effectiveDefaultProofUrl && isRegistrationOrPokokRow(row)) {
-            return {
-              ...row,
-              bukti_url: effectiveDefaultProofUrl,
-              filelink: effectiveDefaultProofUrl,
-            };
+
+          enrichedRows = rawMemberRows.map((row) => {
+            const existingProof =
+              getPublicProofUrl(row.bukti_url || row.filelink) ||
+              resolveKnownStorageProofUrl(row.id);
+            if (existingProof) {
+              return {
+                ...row,
+                bukti_url: row.bukti_url || existingProof,
+                filelink: row.filelink || existingProof,
+              };
+            }
+            if (effectiveDefaultProofUrl && isRegistrationOrPokokRow(row)) {
+              return {
+                ...row,
+                bukti_url: effectiveDefaultProofUrl,
+                filelink: effectiveDefaultProofUrl,
+              };
+            }
+            return row;
+          });
+
+          if (enrichedRows.length === 0 && effectiveDefaultProofUrl) {
+            enrichedRows = [
+              {
+                id: `REG-${effectiveMemberNo || 'ANGGOTA'}`,
+                tanggal: scopedMember?.registeredAt || user?.registeredAt || new Date().toISOString().split('T')[0],
+                referal: 'KOPERASI',
+                plantation: scopedMember?.plantation || user?.workArea || 'PUSAT JAKARTA',
+                jenis: 'MASUK',
+                kategori: 'Simpanan Pokok & Pendaftaran',
+                metode_bayar: 'Bank Transfer BSI',
+                qty: 1,
+                jumlah: scopedMember?.nominalPokok || 500000,
+                area_jenis: 'KOPERASI PUSAT',
+                filelink: effectiveDefaultProofUrl,
+                bukti_url: effectiveDefaultProofUrl,
+                akun: effectiveMemberName || 'Anggota Koperasi',
+                member_id: effectiveMemberNo,
+                keterangan: 'Setoran Awal & Bukti Transfer Keanggotaan Terverifikasi',
+              } as TransactionRecord,
+            ];
           }
-          return row;
-        });
 
-        if (enrichedRows.length === 0 && effectiveDefaultProofUrl) {
-          enrichedRows = [
-            {
-              id: `REG-${effectiveMemberNo || 'ANGGOTA'}`,
-              tanggal: scopedMember?.registeredAt || user?.registeredAt || new Date().toISOString().split('T')[0],
-              referal: 'KOPERASI',
-              plantation: scopedMember?.plantation || user?.workArea || 'PUSAT JAKARTA',
-              jenis: 'MASUK',
-              kategori: 'Simpanan Pokok & Pendaftaran',
-              metode_bayar: 'Bank Transfer BSI',
-              qty: 1,
-              jumlah: scopedMember?.nominalPokok || 500000,
-              area_jenis: 'KOPERASI PUSAT',
-              filelink: effectiveDefaultProofUrl,
-              bukti_url: effectiveDefaultProofUrl,
-              akun: effectiveMemberName || 'Anggota Koperasi',
-              member_id: effectiveMemberNo,
-              keterangan: 'Setoran Awal & Bukti Transfer Keanggotaan Terverifikasi',
-            } as TransactionRecord,
-          ];
+          memberRowsCacheRef.current = { key: memberCacheKey, rows: enrichedRows };
+          onTransactionsLoaded?.(enrichedRows);
         }
-
-        onTransactionsLoaded?.(enrichedRows);
 
         const filtered = enrichedRows.filter((t) => {
           const areaUpper = (t.area_jenis || t.plantation || '').toUpperCase();
@@ -489,17 +522,8 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
           if (activeTab === 'CABANG' && !areaUpper.includes('CABANG')) return false;
           if (activeTab === 'PROJECT' && t.referal !== 'PROJECT' && !areaUpper.includes('PROJECT')) return false;
           if (jenisFilter !== 'ALL' && t.jenis !== jenisFilter) return false;
-          if (debouncedSearchQuery.length > 0) {
-            const q = debouncedSearchQuery.toLowerCase();
-            const match =
-              (t.id && t.id.toLowerCase().includes(q)) ||
-              (t.plantation && t.plantation.toLowerCase().includes(q)) ||
-              (t.kategori && t.kategori.toLowerCase().includes(q)) ||
-              (t.akun && t.akun.toLowerCase().includes(q)) ||
-              (t.sku_name && t.sku_name.toLowerCase().includes(q)) ||
-              (t.metode_bayar && t.metode_bayar.toLowerCase().includes(q)) ||
-              (t.keterangan && t.keterangan.toLowerCase().includes(q));
-            if (!match) return false;
+          if (debouncedSearchQuery.length > 0 && !matchesTransactionSearchQuery(t, debouncedSearchQuery)) {
+            return false;
           }
           return true;
         });
@@ -528,49 +552,65 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
         setMetaInfo(null);
 
         // Read-only enrichment: cari berkas fisik di bucket 'bukti_transfer' untuk baris transaksi anggota yang DB-nya belum terisi file_url/bukti_url
-        const rowsMissingProof = pagedRows
-          .filter((row) => {
-            const existing =
-              getPublicProofUrl(row.bukti_url || row.filelink) ||
-              resolveKnownStorageProofUrl(row.id) ||
-              (effectiveDefaultProofUrl && isRegistrationOrPokokRow(row) ? effectiveDefaultProofUrl : '');
-            return !existing && Boolean(row.id) && !row.id.startsWith('REG-');
-          })
-          .slice(0, 10);
-
-        if (rowsMissingProof.length > 0) {
-          Promise.all(
-            rowsMissingProof.map(async (row) => {
-              try {
-                const matched = await findProofInBucketByTransactionNo(row.id, row.tanggal);
-                if (matched.found && matched.publicUrl) {
-                  return { id: row.id, publicUrl: matched.publicUrl };
-                }
-              } catch {
-                // ignore read-only discovery error
-              }
-              return null;
+        if (!canUseCache) {
+          const rowsMissingProof = pagedRows
+            .filter((row) => {
+              const existing =
+                getPublicProofUrl(row.bukti_url || row.filelink) ||
+                resolveKnownStorageProofUrl(row.id) ||
+                (effectiveDefaultProofUrl && isRegistrationOrPokokRow(row) ? effectiveDefaultProofUrl : '');
+              return !existing && Boolean(row.id) && !row.id.startsWith('REG-');
             })
-          ).then((discoveries) => {
-            if (currentReqId !== searchRequestIdRef.current) return;
-            const foundMap = new Map<string, string>();
-            discoveries.forEach((d) => {
-              if (d?.id && d?.publicUrl) foundMap.set(d.id, d.publicUrl);
-            });
-            if (foundMap.size > 0) {
-              setTransactions((prev) =>
-                prev.map((row) => {
-                  const discovered = foundMap.get(row.id);
-                  if (!discovered) return row;
-                  return {
-                    ...row,
-                    bukti_url: row.bukti_url || discovered,
-                    filelink: row.filelink || discovered,
+            .slice(0, 10);
+
+          if (rowsMissingProof.length > 0) {
+            Promise.all(
+              rowsMissingProof.map(async (row) => {
+                try {
+                  const matched = await findProofInBucketByTransactionNo(row.id, row.tanggal);
+                  if (matched.found && matched.publicUrl) {
+                    return { id: row.id, publicUrl: matched.publicUrl };
+                  }
+                } catch {
+                  // ignore read-only discovery error
+                }
+                return null;
+              })
+            ).then((discoveries) => {
+              if (currentReqId !== searchRequestIdRef.current) return;
+              const foundMap = new Map<string, string>();
+              discoveries.forEach((d) => {
+                if (d?.id && d?.publicUrl) foundMap.set(d.id, d.publicUrl);
+              });
+              if (foundMap.size > 0) {
+                if (memberRowsCacheRef.current?.key === memberCacheKey) {
+                  memberRowsCacheRef.current = {
+                    key: memberCacheKey,
+                    rows: memberRowsCacheRef.current.rows.map((row) => {
+                      const discovered = foundMap.get(row.id);
+                      if (!discovered) return row;
+                      return {
+                        ...row,
+                        bukti_url: row.bukti_url || discovered,
+                        filelink: row.filelink || discovered,
+                      };
+                    }),
                   };
-                })
-              );
-            }
-          });
+                }
+                setTransactions((prev) =>
+                  prev.map((row) => {
+                    const discovered = foundMap.get(row.id);
+                    if (!discovered) return row;
+                    return {
+                      ...row,
+                      bukti_url: row.bukti_url || discovered,
+                      filelink: row.filelink || discovered,
+                    };
+                  })
+                );
+              }
+            });
+          }
         }
         return;
       }
@@ -597,6 +637,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
         totalKeluar: res.totalKeluar,
         netBalance: res.netBalance,
       });
+      setSearchError(res.errorMessage || null);
       setMetaInfo((prev) => ({
         data: res.data,
         source: res.source,
@@ -634,6 +675,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
     effectiveMemberNo,
     effectiveMemberName,
     effectiveMemberId,
+    effectiveMemberUsername,
     effectiveDefaultProofUrl,
     debouncedSearchQuery,
     activeTab,
@@ -1645,7 +1687,7 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => executeSearch(true)}
+            onClick={() => executeSearch(true, true)}
             isLoading={isLoading}
             leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
           >

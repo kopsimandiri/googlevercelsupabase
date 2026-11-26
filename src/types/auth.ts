@@ -7,6 +7,7 @@ export interface UserSession {
   role: UserRole;
   memberId?: string;
   memberNo?: string;
+  username?: string;
   workArea?: string;
   nikMasked?: string;
   gender?: string;

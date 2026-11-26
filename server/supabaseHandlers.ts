@@ -84,13 +84,59 @@ function isUuidLike(val: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
 }
 
+const GENERIC_PLACEHOLDER_MEMBER_IDS = new Set([
+  'member',
+  'all',
+  'non-anggota',
+  'non anggota',
+  'umum',
+  'null',
+  'none',
+  '-',
+  '0',
+  'na',
+  'n/a',
+]);
+
+const INDONESIAN_NAME_PREFIXES = new Set([
+  'h', 'hj', 'dr', 'drs', 'dra', 'ir', 'prof', 'kh', 'ust', 'ustadz', 'ustadzah', 'bpk', 'bp', 'ibu',
+]);
+
+const INDONESIAN_NAME_SUFFIXES = new Set([
+  'se', 'mm', 'semm', 'sh', 'mh', 'msi', 'mpd', 'spd', 'sag', 'skom', 'mkom', 'st', 'mt',
+  'ssos', 'sip', 'skm', 'mak', 'ma', 'msc', 'phd', 'imd', 'amd', 'ak', 'akt', 'ca', 'mba',
+  'ssi', 'stp', 'spt', 'apt', 'sp', 'spi', 'shut', 'skep', 'mkep', 'mked', 'sked', 'skh',
+  'drh', 'spsi', 'mpsi', 'llm', 'bsc', 'ba', 'med', 'lc',
+]);
+
 function normalizePersonName(val: unknown): string {
   return String(val || '')
     .toLowerCase()
-    .replace(/\./g, '')
-    .replace(/[,;:/\\-]+/g, ' ')
+    .replace(/[.,;:/\\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b(s)\s+(e|h|t|p|d|pd|ag|ip|km|kom|sos|psi|si|tp|pt|pi|kep|ked|hut|kh)\b/g, '$1$2')
+    .replace(/\b(m)\s+(m|h|pd|si|ag|kom|ak|sc|ba|kes|hum|kn|ed|psi|kep|ked)\b/g, '$1$2')
+    .replace(/\b(a)\s+(md)\b/g, '$1$2')
+    .replace(/\b(ph)\s+(d)\b/g, '$1$2')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function extractCorePersonName(val: unknown): string {
+  const norm = normalizePersonName(val);
+  if (!norm) return '';
+  const words = norm.split(' ').filter(Boolean);
+  while (words.length > 1 && INDONESIAN_NAME_PREFIXES.has(words[0])) {
+    words.shift();
+  }
+  while (words.length > 1 && INDONESIAN_NAME_SUFFIXES.has(words[words.length - 1])) {
+    words.pop();
+  }
+  const core = words.join(' ').trim();
+  if (words.length >= 2 || core.length >= 6) {
+    return core;
+  }
+  return norm;
 }
 
 function normalizePathRef(val: unknown): string {
@@ -392,7 +438,44 @@ export async function handleSignedUrlRequest(req: any, res: any) {
           owned = true;
         }
 
-        if (!owned && (cleanMemberNo || cleanMemberName)) {
+        const allowedMemberIds = new Set<string>();
+        if (cleanMemberNo) allowedMemberIds.add(cleanMemberNo);
+        const allowedNameForms = new Set<string>();
+        if (normMemberName.length >= 4) allowedNameForms.add(normMemberName);
+        const coreMemberName = extractCorePersonName(memberName);
+        if (coreMemberName.length >= 4) allowedNameForms.add(coreMemberName);
+
+        try {
+          let memberRow: any = null;
+          if (cleanMemberNo) {
+            const isNumOrUuid = isUuidLike(cleanMemberNo) || /^\d+$/.test(cleanMemberNo);
+            const { data } = await supabaseAdmin
+              .from('members')
+              .select('id, member_no, username, full_name')
+              .or(
+                isNumOrUuid
+                  ? `id.eq.${cleanMemberNo},member_no.ilike.${cleanMemberNo},username.ilike.${cleanMemberNo}`
+                  : `member_no.ilike.${cleanMemberNo},username.ilike.${cleanMemberNo}`
+              )
+              .limit(1)
+              .maybeSingle();
+            memberRow = data;
+          }
+          if (memberRow) {
+            [memberRow.id, memberRow.member_no, memberRow.username]
+              .map((v) => String(v || '').trim().toLowerCase())
+              .filter(Boolean)
+              .forEach((v) => allowedMemberIds.add(v));
+            const dbNorm = normalizePersonName(memberRow.full_name);
+            const dbCore = extractCorePersonName(memberRow.full_name);
+            if (dbNorm.length >= 4) allowedNameForms.add(dbNorm);
+            if (dbCore.length >= 4) allowedNameForms.add(dbCore);
+          }
+        } catch {
+          // ignore lookup failure; retain session cleanMemberNo
+        }
+
+        if (!owned && (allowedMemberIds.size > 0 || allowedNameForms.size > 0)) {
           let trxRows: any[] | null = null;
           const { data: rpcRows, error: rpcErr } = await supabaseAdmin.rpc('get_member_portal_transactions', {
             p_member_no: cleanMemberNo,
@@ -400,11 +483,11 @@ export async function handleSignedUrlRequest(req: any, res: any) {
           });
           if (!rpcErr && Array.isArray(rpcRows)) {
             trxRows = rpcRows;
-          } else if (cleanMemberNo) {
+          } else if (allowedMemberIds.size > 0) {
             const { data: directRows } = await supabaseAdmin
               .from('transactions')
               .select('transaction_no, member_id, customer_name, account_name_legacy, description, bukti_url, file_url')
-              .eq('member_id', cleanMemberNo)
+              .in('member_id', Array.from(allowedMemberIds))
               .limit(200);
             if (Array.isArray(directRows)) {
               trxRows = directRows;
@@ -425,7 +508,10 @@ export async function handleSignedUrlRequest(req: any, res: any) {
             Array.isArray(trxRows) &&
             trxRows.some((r: any) => {
               const rowMemberId = String(r?.member_id || '').trim().toLowerCase();
-              if (rowMemberId && cleanMemberNo && rowMemberId !== cleanMemberNo) {
+              const isRealRowMemberId = Boolean(
+                rowMemberId && !GENERIC_PLACEHOLDER_MEMBER_IDS.has(rowMemberId)
+              );
+              if (isRealRowMemberId && allowedMemberIds.size > 0 && !allowedMemberIds.has(rowMemberId)) {
                 return false;
               }
               const bUrl = normalizePathRef(r?.bukti_url);
@@ -435,11 +521,20 @@ export async function handleSignedUrlRequest(req: any, res: any) {
               }
               const rowTrxNo = String(r?.transaction_no || r?.id || '').trim().toLowerCase();
               const normCust = normalizePersonName(r?.customer_name);
+              const coreCust = extractCorePersonName(r?.customer_name);
               const normAcc = normalizePersonName(r?.account_name_legacy);
-              const nameMatchesRow =
-                normMemberName.length >= 4 &&
-                ((normCust.length >= 4 && normCust === normMemberName) ||
-                  (normAcc.length >= 4 && !genericAccounts.has(normAcc) && normAcc === normMemberName));
+              const coreAcc = extractCorePersonName(r?.account_name_legacy);
+              const nameMatchesRow = Array.from(allowedNameForms).some((target) => {
+                if (normCust.length >= 4 && (normCust === target || coreCust === target)) return true;
+                if (
+                  normAcc.length >= 4 &&
+                  !genericAccounts.has(normAcc) &&
+                  (normAcc === target || coreAcc === target)
+                ) {
+                  return true;
+                }
+                return false;
+              });
 
               const matchesFileByTrxNo =
                 rowTrxNo.length >= 6 &&
@@ -452,9 +547,9 @@ export async function handleSignedUrlRequest(req: any, res: any) {
 
               if (matchesFileByTrxNo) {
                 return Boolean(
-                  (rowMemberId && cleanMemberNo && rowMemberId === cleanMemberNo) ||
+                  (isRealRowMemberId && allowedMemberIds.has(rowMemberId)) ||
                     nameMatchesRow ||
-                    (cleanMemberNo && !rowMemberId)
+                    (cleanMemberNo && !isRealRowMemberId)
                 );
               }
               return false;

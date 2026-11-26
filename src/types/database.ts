@@ -26,6 +26,7 @@ export interface TransactionRecord {
 
 export interface MemberRecord {
   id: string;
+  rawId?: string;
   tgl_reg: string;
   nama: string;
   gender: 'L' | 'P';

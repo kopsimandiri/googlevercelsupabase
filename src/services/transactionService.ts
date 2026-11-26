@@ -549,13 +549,114 @@ const GENERIC_LEDGER_ACCOUNT_NAMES = new Set([
   'pusat jakarta',
 ]);
 
+const GENERIC_PLACEHOLDER_MEMBER_IDS = new Set([
+  'member',
+  'all',
+  'non-anggota',
+  'non anggota',
+  'umum',
+  'null',
+  'none',
+  '-',
+  '0',
+  'na',
+  'n/a',
+]);
+
+const INDONESIAN_NAME_PREFIXES = new Set([
+  'h',
+  'hj',
+  'dr',
+  'drs',
+  'dra',
+  'ir',
+  'prof',
+  'kh',
+  'ust',
+  'ustadz',
+  'ustadzah',
+  'bpk',
+  'bp',
+  'ibu',
+]);
+
+const INDONESIAN_NAME_SUFFIXES = new Set([
+  'se',
+  'mm',
+  'semm',
+  'sh',
+  'mh',
+  'msi',
+  'mpd',
+  'spd',
+  'sag',
+  'skom',
+  'mkom',
+  'st',
+  'mt',
+  'ssos',
+  'sip',
+  'skm',
+  'mak',
+  'ma',
+  'msc',
+  'phd',
+  'imd',
+  'amd',
+  'ak',
+  'akt',
+  'ca',
+  'mba',
+  'ssi',
+  'stp',
+  'spt',
+  'apt',
+  'sp',
+  'spi',
+  'shut',
+  'skep',
+  'mkep',
+  'mked',
+  'sked',
+  'skh',
+  'drh',
+  'spsi',
+  'mpsi',
+  'llm',
+  'bsc',
+  'ba',
+  'med',
+  'lc',
+]);
+
 export function normalizePersonIdentity(value: unknown): string {
   return String(value || '')
     .toLowerCase()
-    .replace(/\./g, '')
-    .replace(/[,;:/\\-]+/g, ' ')
+    .replace(/[.,;:/\\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b(s)\s+(e|h|t|p|d|pd|ag|ip|km|kom|sos|psi|si|tp|pt|pi|kep|ked|hut|kh)\b/g, '$1$2')
+    .replace(/\b(m)\s+(m|h|pd|si|ag|kom|ak|sc|ba|kes|hum|kn|ed|psi|kep|ked)\b/g, '$1$2')
+    .replace(/\b(a)\s+(md)\b/g, '$1$2')
+    .replace(/\b(ph)\s+(d)\b/g, '$1$2')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function extractCorePersonName(value: unknown): string {
+  const norm = normalizePersonIdentity(value);
+  if (!norm) return '';
+  const words = norm.split(' ').filter(Boolean);
+  while (words.length > 1 && INDONESIAN_NAME_PREFIXES.has(words[0])) {
+    words.shift();
+  }
+  while (words.length > 1 && INDONESIAN_NAME_SUFFIXES.has(words[words.length - 1])) {
+    words.pop();
+  }
+  const core = words.join(' ').trim();
+  if (words.length >= 2 || core.length >= 6) {
+    return core;
+  }
+  return norm;
 }
 
 function escapeRegexLiteral(text: string): string {
@@ -571,21 +672,30 @@ function hasWordBoundaryPhrase(haystack: string, needle: string): boolean {
 /**
  * Strict ownership verification for member-scoped transaction queries.
  * - Rejects rows explicitly stamped with another member's member_id.
+ * - Treats generic placeholder member_id ('MEMBER', 'ALL', '-', '0') as unlinked legacy rows.
+ * - Supports Indonesian academic/religious title normalization (e.g. "Alvin Azhar, S.E., M.M." vs "ALVIN AZHAR SE.MM" / "Alvin Azhar").
  * - Avoids short substring false positives (e.g. "Ari" in "Syariah").
  */
 export function doesTransactionBelongToMember(
   row: any,
-  member: { memberName?: string; memberNo?: string; memberId?: string }
+  member: { memberName?: string; memberNo?: string; memberId?: string; memberUsername?: string }
 ): boolean {
   if (!row) return false;
   const cleanNo = (member.memberNo || '').trim().toLowerCase();
   const cleanPk = (member.memberId || '').trim().toLowerCase();
+  const cleanUsername = (member.memberUsername || '').trim().toLowerCase();
   const normTargetName = normalizePersonIdentity(member.memberName || '');
+  const coreTargetName = extractCorePersonName(member.memberName || '');
+  const nameCandidates = Array.from(
+    new Set([normTargetName, coreTargetName].filter((n) => n.length >= 4))
+  );
 
   const rowMemberId = String(row.member_id || '').trim().toLowerCase();
-  if (rowMemberId) {
+  const isRealRowMemberId = Boolean(rowMemberId && !GENERIC_PLACEHOLDER_MEMBER_IDS.has(rowMemberId));
+  if (isRealRowMemberId) {
     if (cleanNo && rowMemberId === cleanNo) return true;
     if (cleanPk && rowMemberId === cleanPk) return true;
+    if (cleanUsername && rowMemberId === cleanUsername) return true;
     return false;
   }
 
@@ -607,39 +717,65 @@ export function doesTransactionBelongToMember(
     }
   }
 
-  if (cleanPk.length >= 3 && cleanPk !== cleanNo) {
+  if (cleanUsername.length >= 4 && cleanUsername !== cleanNo) {
+    if (
+      rawCustomerId === cleanUsername ||
+      hasWordBoundaryPhrase(rawCustomerName, cleanUsername) ||
+      hasWordBoundaryPhrase(rawAccount, cleanUsername) ||
+      hasWordBoundaryPhrase(rawDesc, cleanUsername)
+    ) {
+      return true;
+    }
+  }
+
+  if (cleanPk.length >= 3 && !/^\d+$/.test(cleanPk) && cleanPk !== cleanNo) {
     if (rawCustomerId === cleanPk) {
       return true;
     }
   }
 
-  if (normTargetName.length < 4) {
+  if (nameCandidates.length === 0) {
     return false;
   }
 
   const normCust = normalizePersonIdentity(row.customer_name);
+  const coreCust = extractCorePersonName(row.customer_name);
   const normAcc = normalizePersonIdentity(row.account_name_legacy ?? row.akun);
+  const coreAcc = extractCorePersonName(row.account_name_legacy ?? row.akun);
   const normDesc = normalizePersonIdentity(row.description ?? row.keterangan);
   const isAccGeneric = GENERIC_LEDGER_ACCOUNT_NAMES.has(normAcc);
-  const targetWordCount = normTargetName.split(' ').filter(Boolean).length;
+  const coreCustWords = coreCust.split(' ').filter(Boolean).length;
+  const coreAccWords = coreAcc.split(' ').filter(Boolean).length;
 
-  if (normCust && (normCust === normTargetName || (normTargetName.length >= 5 && hasWordBoundaryPhrase(normCust, normTargetName)))) {
-    return true;
-  }
+  for (const candidate of nameCandidates) {
+    const candidateWordCount = candidate.split(' ').filter(Boolean).length;
 
-  if (normAcc && !isAccGeneric) {
-    if (normAcc === normTargetName) return true;
-    if (normTargetName.length >= 5 && hasWordBoundaryPhrase(normAcc, normTargetName)) return true;
-    // Allow matching full title name ("Alvin Azhar, S.E., M.M.") to stored name without academic titles ("Alvin Azhar")
-    const accWordCount = normAcc.split(' ').filter(Boolean).length;
-    if (normAcc.length >= 5 && accWordCount >= 2 && hasWordBoundaryPhrase(normTargetName, normAcc)) {
-      return true;
+    if (normCust) {
+      if (
+        normCust === candidate ||
+        coreCust === candidate ||
+        (candidate.length >= 5 && hasWordBoundaryPhrase(normCust, candidate)) ||
+        (coreCust.length >= 5 && (coreCustWords >= 2 || coreCust.length >= 6) && hasWordBoundaryPhrase(candidate, coreCust))
+      ) {
+        return true;
+      }
     }
-  }
 
-  if ((normTargetName.length >= 6 || targetWordCount >= 2) && normDesc) {
-    if (hasWordBoundaryPhrase(normDesc, normTargetName)) {
-      return true;
+    if (normAcc && !isAccGeneric) {
+      if (
+        normAcc === candidate ||
+        coreAcc === candidate ||
+        (candidate.length >= 5 && hasWordBoundaryPhrase(normAcc, candidate)) ||
+        (coreAcc.length >= 5 && (coreAccWords >= 2 || coreAcc.length >= 6) && hasWordBoundaryPhrase(candidate, coreAcc))
+      ) {
+        return true;
+      }
+    }
+
+    if ((candidate.length >= 6 || candidateWordCount >= 2) && normDesc) {
+      if (hasWordBoundaryPhrase(normDesc, candidate)) {
+        return true;
+      }
     }
   }
 
@@ -682,6 +818,114 @@ export interface TransactionSearchResult {
   totalMasuk: number;
   totalKeluar: number;
   netBalance: number;
+}
+
+export function quotePostgrestFilterValue(value: string): string {
+  const sanitized = String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+  return `"${sanitized}"`;
+}
+
+export function buildPostgrestOrSearchFilter(
+  rawQuery: string,
+  options?: { includeNumericIdEq?: boolean; minimalColumnsOnly?: boolean }
+): string {
+  const cleanQ = String(rawQuery || '').trim();
+  if (!cleanQ) return '';
+
+  const includeNumericIdEq = options?.includeNumericIdEq ?? false;
+  const minimalColumnsOnly = options?.minimalColumnsOnly ?? false;
+  const quotedLike = quotePostgrestFilterValue(`%${cleanQ}%`);
+
+  const textColumns = minimalColumnsOnly
+    ? [
+        'transaction_no',
+        'account_name_legacy',
+        'product_name',
+        'customer_name',
+        'description',
+        'category_name',
+        'area_name',
+        'payment_method',
+      ]
+    : [
+        'transaction_no',
+        'account_name_legacy',
+        'product_name',
+        'customer_name',
+        'description',
+        'category_name',
+        'area_name',
+        'payment_method',
+        'supplier_name',
+        'member_id',
+        'referral_type',
+      ];
+
+  const clauses = textColumns.map((col) => `${col}.ilike.${quotedLike}`);
+
+  // Toleransi tanda baca/spasi (mis. ketik "alvin azhar se mm" -> cocok "ALVIN AZHAR SE,MM")
+  const alnumCount = cleanQ.replace(/[^a-zA-Z0-9]/g, '').length;
+  if (alnumCount >= 4 && /[.,;:\s()/-]/.test(cleanQ)) {
+    const fuzzyTokenPattern = cleanQ
+      .replace(/[.,;:\s()/-]+/g, '%')
+      .replace(/^%+|%+$/g, '');
+    if (fuzzyTokenPattern && fuzzyTokenPattern !== cleanQ && !fuzzyTokenPattern.includes('%%')) {
+      const quotedFuzzy = quotePostgrestFilterValue(`%${fuzzyTokenPattern}%`);
+      clauses.push(
+        `account_name_legacy.ilike.${quotedFuzzy}`,
+        `customer_name.ilike.${quotedFuzzy}`,
+        `product_name.ilike.${quotedFuzzy}`
+      );
+    }
+  }
+
+  // Jangan pernah memakai id.ilike karena public.transactions.id bisa bertipe BIGINT/UUID.
+  // Hanya gunakan id.eq bila kata kunci berupa angka bulat murni atau UUID valid.
+  if (includeNumericIdEq && /^\d{1,15}$/.test(cleanQ)) {
+    clauses.unshift(`id.eq.${cleanQ}`);
+  } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanQ)) {
+    clauses.unshift(`id.eq.${cleanQ}`);
+  }
+
+  return clauses.join(',');
+}
+
+export function matchesTransactionSearchQuery(t: TransactionRecord, rawQuery: string): boolean {
+  const cleanQ = String(rawQuery || '').trim();
+  if (!cleanQ) return true;
+
+  const q = cleanQ.toLowerCase();
+  const fields = [
+    t.id,
+    t.member_id,
+    t.akun,
+    t.customer_name,
+    t.customer_id,
+    t.sku_name,
+    t.supplier_name,
+    t.supplier_id,
+    t.kategori,
+    t.plantation,
+    t.referal,
+    t.metode_bayar,
+    t.keterangan,
+  ];
+
+  if (fields.some((val) => Boolean(val && String(val).toLowerCase().includes(q)))) {
+    return true;
+  }
+
+  const normQ = normalizePersonIdentity(cleanQ);
+  if (normQ.length >= 2) {
+    const normFields = [t.akun, t.customer_name, t.sku_name, t.supplier_name, t.keterangan, t.kategori, t.plantation];
+    if (normFields.some((val) => Boolean(val && normalizePersonIdentity(val).includes(normQ)))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 let inMemoryTransactions: TransactionRecord[] | null = null;
@@ -891,20 +1135,99 @@ export const transactionService = {
           }
         }
 
-        // C. Multi-column Search Query
-        if (cleanQ.length > 0) {
-          query = query.or(
-            `id.ilike.%${cleanQ}%,transaction_no.ilike.%${cleanQ}%,description.ilike.%${cleanQ}%,account_name_legacy.ilike.%${cleanQ}%,product_name.ilike.%${cleanQ}%,supplier_name.ilike.%${cleanQ}%,customer_name.ilike.%${cleanQ}%,category_name.ilike.%${cleanQ}%,area_name.ilike.%${cleanQ}%,payment_method.ilike.%${cleanQ}%`
-          );
+        // C & D. Helper builder query agar bisa retry otomatis bila skema id UUID / kolom opsional berbeda
+        const buildAndRunQuery = async (orFilterStr: string) => {
+          let q = client.from(TRANSACTIONS_TABLE_NAME).select('*', { count: 'exact' });
+
+          if (signal) {
+            q = q.abortSignal(signal);
+          }
+
+          if (tabFilter === 'PUSAT') {
+            q = q.ilike('area_name', '%PUSAT%');
+          } else if (tabFilter === 'CABANG') {
+            q = q.ilike('area_name', '%CABANG%');
+          } else if (tabFilter === 'PROJECT') {
+            q = q.eq('referral_type', 'PROJECT');
+          }
+
+          if (jenisFilter !== 'ALL') {
+            q = q.eq('transaction_type', jenisFilter);
+          }
+
+          if (effectiveScope) {
+            const scopeClauses: string[] = [];
+            const sNo = (effectiveScope.memberNo || '').trim();
+            const sId = (effectiveScope.memberId || '').trim();
+            const sName = (effectiveScope.memberName || '').trim();
+            if (sNo.length >= 3) {
+              const qNo = quotePostgrestFilterValue(`%${sNo}%`);
+              scopeClauses.push(
+                `member_id.eq.${quotePostgrestFilterValue(sNo)}`,
+                `customer_name.ilike.${qNo}`,
+                `account_name_legacy.ilike.${qNo}`,
+                `description.ilike.${qNo}`
+              );
+            }
+            if (sId && sId !== sNo) {
+              scopeClauses.push(`member_id.eq.${quotePostgrestFilterValue(sId)}`);
+            }
+            if (sName.length >= 3) {
+              const qName = quotePostgrestFilterValue(`%${sName}%`);
+              scopeClauses.push(
+                `customer_name.ilike.${qName}`,
+                `account_name_legacy.ilike.${qName}`,
+                `description.ilike.${qName}`
+              );
+            }
+            if (scopeClauses.length > 0) {
+              q = q.or(scopeClauses.join(','));
+            }
+          }
+
+          if (orFilterStr) {
+            q = q.or(orFilterStr);
+          }
+
+          q = q.order('transaction_date', { ascending: false });
+          const fromIndex = (page - 1) * pageSize;
+          const toIndex = fromIndex + pageSize - 1;
+          q = q.range(fromIndex, toIndex);
+
+          return await q;
+        };
+
+        const primaryOrFilter = buildPostgrestOrSearchFilter(cleanQ, {
+          includeNumericIdEq: /^\d{1,15}$/.test(cleanQ),
+          minimalColumnsOnly: false,
+        });
+
+        let { data, error, count } = await buildAndRunQuery(primaryOrFilter);
+
+        if (error && cleanQ.length > 0) {
+          const errMsg = String(error.message || '').toLowerCase();
+          const errCode = String((error as any)?.code || '');
+          const isSchemaOrTypeMismatch =
+            errCode === '42703' ||
+            errCode === '42883' ||
+            errCode === '22P02' ||
+            errCode === 'PGRST204' ||
+            errMsg.includes('does not exist') ||
+            errMsg.includes('invalid input syntax') ||
+            errMsg.includes('schema cache');
+
+          if (isSchemaOrTypeMismatch) {
+            const safeFallbackFilter = buildPostgrestOrSearchFilter(cleanQ, {
+              includeNumericIdEq: false,
+              minimalColumnsOnly: true,
+            });
+            const retryRes = await buildAndRunQuery(safeFallbackFilter);
+            data = retryRes.data;
+            error = retryRes.error;
+            count = retryRes.count;
+          }
         }
 
-        // D. Sorting & Pagination
-        query = query.order('transaction_date', { ascending: false });
-        const fromIndex = (page - 1) * pageSize;
-        const toIndex = fromIndex + pageSize - 1;
-        query = query.range(fromIndex, toIndex);
-
-        const { data, error, count } = await query;
         const latencyMs = Math.round(performance.now() - startTime);
 
         if (!error && data) {
@@ -971,8 +1294,19 @@ export const transactionService = {
     }
 
     // 2. Sandbox / Test Mode (hanya jika Supabase belum dikonfigurasi)
+    const activeUser = authService.getCurrentUser();
+    const effectiveScope =
+      params.memberScope ||
+      (activeUser?.role === 'ANGGOTA'
+        ? { memberNo: activeUser.memberNo || activeUser.username, memberName: activeUser.name, memberId: activeUser.id }
+        : undefined);
+
     const local = this.getStoredTransactions();
     const filtered = local.filter((t) => {
+      if (effectiveScope && !doesTransactionBelongToMember(t, effectiveScope)) {
+        return false;
+      }
+
       // Tab filter
       if (tabFilter === 'PUSAT' && !t.area_jenis.includes('PUSAT')) return false;
       if (tabFilter === 'CABANG' && !t.area_jenis.includes('CABANG')) return false;
@@ -982,19 +1316,8 @@ export const transactionService = {
       if (jenisFilter !== 'ALL' && t.jenis !== jenisFilter) return false;
 
       // Search Query
-      if (cleanQ.length > 0) {
-        const q = cleanQ.toLowerCase();
-        const match =
-          (t.id && t.id.toLowerCase().includes(q)) ||
-          (t.plantation && t.plantation.toLowerCase().includes(q)) ||
-          (t.kategori && t.kategori.toLowerCase().includes(q)) ||
-          (t.akun && t.akun.toLowerCase().includes(q)) ||
-          (t.sku_name && t.sku_name.toLowerCase().includes(q)) ||
-          (t.customer_id && t.customer_id.toLowerCase().includes(q)) ||
-          (t.supplier_id && t.supplier_id.toLowerCase().includes(q)) ||
-          (t.metode_bayar && t.metode_bayar.toLowerCase().includes(q)) ||
-          (t.keterangan && t.keterangan.toLowerCase().includes(q));
-        if (!match) return false;
+      if (cleanQ.length > 0 && !matchesTransactionSearchQuery(t, cleanQ)) {
+        return false;
       }
       return true;
     });
@@ -1702,7 +2025,9 @@ export const transactionService = {
    */
   async getMemberSavingsSummary(
     memberName: string,
-    memberNo?: string
+    memberNo?: string,
+    memberId?: string,
+    memberUsername?: string
   ): Promise<{
     hasTrx: boolean;
     simpananPokok: number;
@@ -1714,6 +2039,9 @@ export const transactionService = {
   }> {
     const cleanName = (memberName || '').trim();
     const cleanNo = (memberNo || '').trim();
+    const cleanPk = (memberId || '').trim();
+    const cleanUsername = (memberUsername || '').trim();
+    const coreQueryName = extractCorePersonName(cleanName);
     const client = getSupabaseClient();
 
     let pokok = 500000;
@@ -1725,11 +2053,11 @@ export const transactionService = {
     let transactionsList: any[] = [];
     let supabaseQueriedSuccessfully = false;
 
-    if (client && (cleanName.length >= 2 || cleanNo.length >= 2)) {
+    if (client && (cleanName.length >= 2 || cleanNo.length >= 2 || cleanPk.length >= 1 || cleanUsername.length >= 2)) {
       // 1. Prioritas: SECURITY DEFINER RPC agar aman di portal anggota lintas perangkat (tanpa terhalang RLS anon)
       try {
         const { data: rpcRows, error: rpcErr } = await client.rpc('get_member_portal_transactions', {
-          p_member_no: cleanNo,
+          p_member_no: cleanNo || cleanPk || cleanUsername,
           p_member_name: cleanName,
         });
         if (!rpcErr && Array.isArray(rpcRows)) {
@@ -1744,12 +2072,17 @@ export const transactionService = {
       if (!supabaseQueriedSuccessfully) {
         try {
           const orClauses: string[] = [];
-          if (cleanName.length >= 3) {
+          const queryNames = Array.from(
+            new Set([cleanName, coreQueryName].filter((v) => v && v.length >= 4))
+          );
+          for (const qn of queryNames) {
             orClauses.push(
-              `account_name_legacy.ilike.%${cleanName}%`,
-              `description.ilike.%${cleanName}%`,
-              `customer_name.ilike.%${cleanName}%`
+              `account_name_legacy.ilike.%${qn}%`,
+              `customer_name.ilike.%${qn}%`
             );
+            if (qn.length >= 6 || qn.includes(' ')) {
+              orClauses.push(`description.ilike.%${qn}%`);
+            }
           }
           if (cleanNo.length >= 3) {
             orClauses.push(
@@ -1759,15 +2092,27 @@ export const transactionService = {
               `description.ilike.%${cleanNo}%`
             );
           }
+          if (cleanPk.length >= 1 && cleanPk !== cleanNo) {
+            orClauses.push(`member_id.eq.${cleanPk}`);
+          }
+          if (cleanUsername.length >= 4 && cleanUsername !== cleanNo) {
+            orClauses.push(
+              `member_id.eq.${cleanUsername}`,
+              `customer_name.ilike.%${cleanUsername}%`,
+              `account_name_legacy.ilike.%${cleanUsername}%`
+            );
+          }
 
-          const { data, error } = await client
-            .from(TRANSACTIONS_TABLE_NAME)
-            .select('account_name_legacy, category_name, transaction_type, amount, description, customer_name, member_id')
-            .or(orClauses.join(','));
+          if (orClauses.length > 0) {
+            const { data, error } = await client
+              .from(TRANSACTIONS_TABLE_NAME)
+              .select('account_name_legacy, category_name, transaction_type, amount, description, customer_name, member_id')
+              .or(orClauses.join(','));
 
-          if (!error && Array.isArray(data)) {
-            transactionsList = data;
-            supabaseQueriedSuccessfully = true;
+            if (!error && Array.isArray(data)) {
+              transactionsList = data;
+              supabaseQueriedSuccessfully = true;
+            }
           }
         } catch (err) {
           console.warn('getMemberSavingsSummary Supabase query error:', err);
@@ -1776,33 +2121,8 @@ export const transactionService = {
     }
 
     // Fallback in-memory HANYA jika Supabase belum dikonfigurasi (offline / test mode)
-    if ((!isSupabaseConfigured || !client) && !supabaseQueriedSuccessfully && (cleanName.length >= 3 || cleanNo.length >= 3)) {
-      const localTrx = this.getStoredTransactions();
-      transactionsList = localTrx.filter((t) => {
-        const desc = (t.keterangan || '').toLowerCase();
-        const cust = (t.customer_id || '').toLowerCase();
-        const custName = (t.customer_name || '').toLowerCase();
-        const memberId = (t.member_id || '').toLowerCase();
-        const acc = (t.akun || '').toLowerCase();
-        const targetName = cleanName.toLowerCase();
-        const targetNo = cleanNo.toLowerCase();
-
-        const matchNo =
-          targetNo.length >= 3 &&
-          (memberId.includes(targetNo) ||
-            cust.includes(targetNo) ||
-            custName.includes(targetNo) ||
-            desc.includes(targetNo) ||
-            acc.includes(targetNo));
-        const matchName =
-          targetName.length >= 3 &&
-          (custName.includes(targetName) ||
-            cust.includes(targetName) ||
-            desc.includes(targetName) ||
-            acc.includes(targetName));
-
-        return matchNo || matchName;
-      });
+    if ((!isSupabaseConfigured || !client) && !supabaseQueriedSuccessfully && (cleanName.length >= 3 || cleanNo.length >= 3 || cleanPk.length >= 1)) {
+      transactionsList = this.getStoredTransactions();
     }
 
     if (transactionsList.length > 0) {
@@ -1810,6 +2130,8 @@ export const transactionService = {
         doesTransactionBelongToMember(row, {
           memberName: cleanName,
           memberNo: cleanNo,
+          memberId: cleanPk,
+          memberUsername: cleanUsername,
         })
       );
     }
@@ -1869,11 +2191,14 @@ export const transactionService = {
   async getMemberTransactions(
     memberName: string,
     memberNo?: string,
-    memberId?: string
+    memberId?: string,
+    memberUsername?: string
   ): Promise<TransactionRecord[]> {
     const cleanName = (memberName || '').trim();
     const cleanNo = (memberNo || '').trim();
     const cleanPk = (memberId || '').trim();
+    const cleanUsername = (memberUsername || '').trim();
+    const coreQueryName = extractCorePersonName(cleanName);
     const client = getSupabaseClient();
 
     const dedupeAndSort = (rows: TransactionRecord[]): TransactionRecord[] => {
@@ -1903,14 +2228,15 @@ export const transactionService = {
           memberName: cleanName,
           memberNo: cleanNo,
           memberId: cleanPk,
+          memberUsername: cleanUsername,
         })
       );
 
-    if (client && (cleanName.length >= 2 || cleanNo.length >= 2 || cleanPk.length >= 2)) {
+    if (client && (cleanName.length >= 2 || cleanNo.length >= 2 || cleanPk.length >= 1 || cleanUsername.length >= 2)) {
       // 1. Prioritas: gunakan SECURITY DEFINER RPC get_member_portal_transactions agar lintas perangkat tetap dapat membaca bukti_url & file_url
       try {
         const { data: rpcRows, error: rpcErr } = await client.rpc('get_member_portal_transactions', {
-          p_member_no: cleanNo || cleanPk,
+          p_member_no: cleanNo || cleanPk || cleanUsername,
           p_member_name: cleanName,
         });
         if (!rpcErr && Array.isArray(rpcRows)) {
@@ -1923,13 +2249,16 @@ export const transactionService = {
       // 2. Fallback query langsung jika RPC belum dipasang
       try {
         const orClauses: string[] = [];
-        if (cleanName.length >= 4) {
+        const queryNames = Array.from(
+          new Set([cleanName, coreQueryName].filter((v) => v && v.length >= 4))
+        );
+        for (const qn of queryNames) {
           orClauses.push(
-            `account_name_legacy.ilike.%${cleanName}%`,
-            `customer_name.ilike.%${cleanName}%`
+            `account_name_legacy.ilike.%${qn}%`,
+            `customer_name.ilike.%${qn}%`
           );
-          if (cleanName.length >= 6) {
-            orClauses.push(`description.ilike.%${cleanName}%`);
+          if (qn.length >= 6 || qn.includes(' ')) {
+            orClauses.push(`description.ilike.%${qn}%`);
           }
         }
         if (cleanNo.length >= 3) {
@@ -1940,8 +2269,15 @@ export const transactionService = {
             `description.ilike.%${cleanNo}%`
           );
         }
-        if (cleanPk.length >= 3 && cleanPk !== cleanNo) {
+        if (cleanPk.length >= 1 && cleanPk !== cleanNo) {
           orClauses.push(`member_id.eq.${cleanPk}`);
+        }
+        if (cleanUsername.length >= 4 && cleanUsername !== cleanNo) {
+          orClauses.push(
+            `member_id.eq.${cleanUsername}`,
+            `customer_name.ilike.%${cleanUsername}%`,
+            `account_name_legacy.ilike.%${cleanUsername}%`
+          );
         }
 
         if (orClauses.length > 0) {
