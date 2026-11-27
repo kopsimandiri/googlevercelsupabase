@@ -74,6 +74,36 @@ const NotificationCenterModule = lazy(() =>
 const PaymentGatewayModule = lazy(() =>
   import('./components/payments/PaymentGatewayModule').then((m) => ({ default: m.PaymentGatewayModule }))
 );
+const InventoryDashboardModule = lazy(() =>
+  import('./components/operations/InventoryDashboardModule').then((m) => ({ default: m.InventoryDashboardModule }))
+);
+const FishProductMasterModule = lazy(() =>
+  import('./components/operations/FishProductMasterModule').then((m) => ({ default: m.FishProductMasterModule }))
+);
+const InboundReceivingModule = lazy(() =>
+  import('./components/operations/InboundReceivingModule').then((m) => ({ default: m.InboundReceivingModule }))
+);
+const WarehouseStockModule = lazy(() =>
+  import('./components/operations/WarehouseStockModule').then((m) => ({ default: m.WarehouseStockModule }))
+);
+const BarcodeLabelModule = lazy(() =>
+  import('./components/operations/BarcodeLabelModule').then((m) => ({ default: m.BarcodeLabelModule }))
+);
+const StockTransferModule = lazy(() =>
+  import('./components/operations/StockTransferModule').then((m) => ({ default: m.StockTransferModule }))
+);
+const SalesControlModule = lazy(() =>
+  import('./components/operations/SalesControlModule').then((m) => ({ default: m.SalesControlModule }))
+);
+const OutboundDispatchModule = lazy(() =>
+  import('./components/operations/OutboundDispatchModule').then((m) => ({ default: m.OutboundDispatchModule }))
+);
+const StockOpnameModule = lazy(() =>
+  import('./components/operations/StockOpnameModule').then((m) => ({ default: m.StockOpnameModule }))
+);
+const InventoryReportsModule = lazy(() =>
+  import('./components/operations/InventoryReportsModule').then((m) => ({ default: m.InventoryReportsModule }))
+);
 
 import {
   Lock,
@@ -1008,6 +1038,192 @@ function AppContent() {
             idPrefix="payments-view-page"
           >
             {renderModuleWithSuspense(<PaymentGatewayModule />, 'Gerbang Pembayaran')}
+          </PageContainer>
+        );
+
+      // =========================================================================
+      // BOUNDARY 4: OPERASIONAL BISNIS — INVENTORY PERIKANAN AMBON
+      // =========================================================================
+      case 'OPS_INVENTORY_DASHBOARD':
+        return (
+          <PageContainer
+            title="Inventory Dashboard — Operasional Perikanan Ambon"
+            subtitle="Ringkasan stok cold storage PPN Tantui Ambon, barang masuk/keluar, penjualan, dan peringatan batas persediaan"
+            breadcrumbs={['Operasional Bisnis', '1. Inventory Dashboard']}
+            idPrefix="ops-inventory-dashboard"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(
+                <InventoryDashboardModule onNavigate={(p) => handleNavigate(p)} />,
+                'Inventory Dashboard'
+              )}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_FISH_PRODUCTS':
+        return (
+          <PageContainer
+            title="Master Produk & Jenis Ikan Ambon"
+            subtitle="Pengelolaan SKU komoditas ikan pelagis & demersal, grade mutu, suhu simpan, dan barcode standar"
+            breadcrumbs={['Operasional Bisnis', '2. Master Produk & Jenis Ikan']}
+            idPrefix="ops-fish-products"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<FishProductMasterModule />, 'Master Produk & Jenis Ikan')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_INBOUND':
+        return (
+          <PageContainer
+            title="Penerimaan Barang (Inbound Perikanan)"
+            subtitle="Pencatatan ikan masuk dari nelayan & armada kapal beserta verifikasi QC, suhu, dan batch lot"
+            breadcrumbs={['Operasional Bisnis', '3. Penerimaan Barang (Inbound)']}
+            idPrefix="ops-inbound"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<InboundReceivingModule />, 'Penerimaan Barang')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_WAREHOUSE_STOCK':
+        return (
+          <PageContainer
+            title="Inventory / Stok Gudang & Cold Storage"
+            subtitle="Posisi saldo stok per gudang, nomor batch, nilai HPP rata-rata, dan kartu riwayat mutasi"
+            breadcrumbs={['Operasional Bisnis', '4. Inventory / Stok Gudang']}
+            idPrefix="ops-warehouse-stock"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<WarehouseStockModule />, 'Stok Gudang')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_BARCODE':
+        return (
+          <PageContainer
+            title="Barcode Scanner & Label Printing"
+            subtitle="Pemindaian USB/kamera dan cetak label thermal/PDF kemasan batch ikan KOPSIM Ambon"
+            breadcrumbs={['Operasional Bisnis', '5. Barcode Scanner & Label']}
+            idPrefix="ops-barcode"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<BarcodeLabelModule />, 'Barcode & Label Printing')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_TRANSFER':
+        return (
+          <PageContainer
+            title="Mutasi Barang Antar Gudang"
+            subtitle="Pemindahan stok terkendali antar ruang Chiller, Air Blast Freezer (ABF), dan Cold Storage Utama"
+            breadcrumbs={['Operasional Bisnis', '6. Mutasi Barang']}
+            idPrefix="ops-transfer"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<StockTransferModule />, 'Mutasi Barang')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_SALES':
+        return (
+          <PageContainer
+            title="Penjualan (Sales Control) Perikanan"
+            subtitle="Kontrol pesanan buyer B2B, ekspor, MBG, dan integrasi idempoten ke Buku Transaksi 20 Kolom"
+            breadcrumbs={['Operasional Bisnis', '7. Penjualan (Sales Control)']}
+            idPrefix="ops-sales"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<SalesControlModule />, 'Penjualan & Sales Control')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_OUTBOUND':
+        return (
+          <PageContainer
+            title="Pengeluaran Barang (Outbound)"
+            subtitle="Surat jalan pengiriman penjualan, sample QC, dan pencatatan penyusutan cold storage"
+            breadcrumbs={['Operasional Bisnis', '8. Pengeluaran Barang (Outbound)']}
+            idPrefix="ops-outbound"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<OutboundDispatchModule />, 'Pengeluaran Barang')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_OPNAME':
+        return (
+          <PageContainer
+            title="Stock Opname & Rekonsiliasi Fisik"
+            subtitle="Audit kesesuaian stok sistem dengan hasil timbang fisik cold storage beserta approval penyesuaian"
+            breadcrumbs={['Operasional Bisnis', '9. Stock Opname']}
+            idPrefix="ops-opname"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<StockOpnameModule />, 'Stock Opname')}
+            </RoleGuard>
+          </PageContainer>
+        );
+
+      case 'OPS_INVENTORY_REPORTS':
+        return (
+          <PageContainer
+            title="Laporan Inventory Operasional Bisnis"
+            subtitle="Laporan posisi stok, kartu mutasi ledger, rekap penjualan, dan berita acara stock opname (CSV & PDF)"
+            breadcrumbs={['Operasional Bisnis', '10. Laporan Inventory']}
+            idPrefix="ops-inventory-reports"
+          >
+            <RoleGuard
+              allowedRoles={['ADMIN', 'DIRECTOR']}
+              onRequestLogin={() => setShowLoginModal(true)}
+              onGoHome={() => handleNavigate('HOME')}
+            >
+              {renderModuleWithSuspense(<InventoryReportsModule />, 'Laporan Inventory')}
+            </RoleGuard>
           </PageContainer>
         );
 

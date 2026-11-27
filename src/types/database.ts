@@ -316,6 +316,13 @@ export interface ProductDbRecord {
   default_price?: number;
   price?: number;
   unit?: string;
+  fish_species?: string;
+  fish_category?: string;
+  storage_type?: 'FRESH' | 'CHILLED' | 'FROZEN' | 'DRY' | string;
+  barcode?: string;
+  min_stock_qty?: number;
+  origin_region?: string;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string;
 }

@@ -48,6 +48,18 @@ export const ROUTE_DEFINITIONS: RouteMapping[] = [
   { path: '/admin/projects', page: 'PROJECT', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/audit', page: 'DATABASE_AUDIT', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
   { path: '/admin/news', page: 'NEWS_ADMIN', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+
+  // ADMIN / MANAGEMENT — OPERASIONAL BISNIS (PERIKANAN AMBON)
+  { path: '/admin/operasional/dashboard', page: 'OPS_INVENTORY_DASHBOARD', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/produk', page: 'OPS_FISH_PRODUCTS', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/inbound', page: 'OPS_INBOUND', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/stok', page: 'OPS_WAREHOUSE_STOCK', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/barcode', page: 'OPS_BARCODE', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/mutasi', page: 'OPS_TRANSFER', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/penjualan', page: 'OPS_SALES', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/outbound', page: 'OPS_OUTBOUND', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/opname', page: 'OPS_OPNAME', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
+  { path: '/admin/operasional/laporan', page: 'OPS_INVENTORY_REPORTS', boundary: 'ADMIN', requiresAuth: true, requiredRoles: ['ADMIN', 'DIRECTOR'] },
 ];
 
 export function pageToPath(page: ActivePage, subTab?: string): string {
@@ -98,6 +110,26 @@ export function pageToPath(page: ActivePage, subTab?: string): string {
       return '/admin/audit';
     case 'NEWS_ADMIN':
       return '/admin/news';
+    case 'OPS_INVENTORY_DASHBOARD':
+      return '/admin/operasional/dashboard';
+    case 'OPS_FISH_PRODUCTS':
+      return '/admin/operasional/produk';
+    case 'OPS_INBOUND':
+      return '/admin/operasional/inbound';
+    case 'OPS_WAREHOUSE_STOCK':
+      return '/admin/operasional/stok';
+    case 'OPS_BARCODE':
+      return '/admin/operasional/barcode';
+    case 'OPS_TRANSFER':
+      return '/admin/operasional/mutasi';
+    case 'OPS_SALES':
+      return '/admin/operasional/penjualan';
+    case 'OPS_OUTBOUND':
+      return '/admin/operasional/outbound';
+    case 'OPS_OPNAME':
+      return '/admin/operasional/opname';
+    case 'OPS_INVENTORY_REPORTS':
+      return '/admin/operasional/laporan';
     default:
       return '/';
   }

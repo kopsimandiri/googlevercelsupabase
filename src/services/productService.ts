@@ -1,5 +1,5 @@
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
-import { ProductDbRecord } from '../types/database';
+import { auditService } from './auditService';
 
 export interface ProductItem {
   id: string;
@@ -16,12 +16,206 @@ export interface ProductItem {
   supply_capacity: string;
   defaultPrice: number;
   unit: string;
+  fish_species?: string;
+  fish_category?: string;
+  storage_type?: 'FRESH' | 'CHILLED' | 'FROZEN' | 'DRY';
+  barcode?: string;
+  min_stock_qty?: number;
+  origin_region?: string;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
 const PRODUCTS_TABLE_NAME = 'products';
 let inMemoryProducts: ProductItem[] | null = null;
+
+export const AMBON_FISHERY_PRODUCTS: ProductItem[] = [
+  {
+    id: 'PRD-AMB-01',
+    sku_code: 'SKU-AMB-TUNA-YL',
+    sku_name: 'Tuna Sirip Kuning Loin Beku (Yellowfin Loin)',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Pelagis Besar',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Grade A Sashimi',
+    packaging: 'Vacuum Pack Carton 20kg',
+    availability: 'Tersedia',
+    moq: 20,
+    supply_capacity: '25 Ton / Bulan',
+    defaultPrice: 82000,
+    unit: 'Kg',
+    fish_species: 'Thunnus albacares (Yellowfin Tuna)',
+    fish_category: 'Pelagis Besar',
+    storage_type: 'FROZEN',
+    barcode: '8997001001014',
+    min_stock_qty: 250,
+    origin_region: 'Pelabuhan Perikanan Nusantara Ambon',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-02',
+    sku_code: 'SKU-AMB-CAKALANG',
+    sku_name: 'Ikan Cakalang Beku Utuh (Skipjack Whole Round)',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Pelagis',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Export Grade A',
+    packaging: 'Blok Karung / Master Box 25kg',
+    availability: 'Tersedia',
+    moq: 50,
+    supply_capacity: '40 Ton / Bulan',
+    defaultPrice: 28500,
+    unit: 'Kg',
+    fish_species: 'Katsuwonus pelamis (Cakalang)',
+    fish_category: 'Pelagis',
+    storage_type: 'FROZEN',
+    barcode: '8997001001021',
+    min_stock_qty: 500,
+    origin_region: 'Laut Banda / Ambon',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-03',
+    sku_code: 'SKU-AMB-TONGKOL',
+    sku_name: 'Ikan Tongkol Komo Beku (Eastern Little Tuna)',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Pelagis',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Grade A',
+    packaging: 'Master Box 20kg',
+    availability: 'Tersedia',
+    moq: 40,
+    supply_capacity: '30 Ton / Bulan',
+    defaultPrice: 24000,
+    unit: 'Kg',
+    fish_species: 'Euthynnus affinis (Tongkol)',
+    fish_category: 'Pelagis',
+    storage_type: 'FROZEN',
+    barcode: '8997001001038',
+    min_stock_qty: 400,
+    origin_region: 'Perairan Ambon & Seram',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-04',
+    sku_code: 'SKU-AMB-KAKAP',
+    sku_name: 'Kakap Merah Ambon Utuh / Fillet (Red Snapper)',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Demersal / Karang',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Super Export',
+    packaging: 'Vacuum IQF 10kg',
+    availability: 'Tersedia',
+    moq: 20,
+    supply_capacity: '12 Ton / Bulan',
+    defaultPrice: 95000,
+    unit: 'Kg',
+    fish_species: 'Lutjanus malabaricus (Kakap Merah)',
+    fish_category: 'Demersal & Karang',
+    storage_type: 'FROZEN',
+    barcode: '8997001001045',
+    min_stock_qty: 150,
+    origin_region: 'Pulau Ambon & Lease',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-05',
+    sku_code: 'SKU-AMB-KERAPU',
+    sku_name: 'Ikan Kerapu Sunu / Macan Segar Dingin',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Demersal / Karang',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Grade A Chilled',
+    packaging: 'Styrofoam Box + Ice 25kg',
+    availability: 'Tersedia',
+    moq: 25,
+    supply_capacity: '8 Ton / Bulan',
+    defaultPrice: 115000,
+    unit: 'Kg',
+    fish_species: 'Plectropomus leopardus (Kerapu)',
+    fish_category: 'Demersal & Karang',
+    storage_type: 'CHILLED',
+    barcode: '8997001001052',
+    min_stock_qty: 100,
+    origin_region: 'Teluk Ambon & Tulehu',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-06',
+    sku_code: 'SKU-AMB-LAYANG',
+    sku_name: 'Ikan Layang Benggol / Momar Ambon Beku',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Pelagis Kecil',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Grade A',
+    packaging: 'Karton Block 10kg',
+    availability: 'Tersedia',
+    moq: 50,
+    supply_capacity: '35 Ton / Bulan',
+    defaultPrice: 21000,
+    unit: 'Kg',
+    fish_species: 'Decapterus spp. (Layang / Momar)',
+    fish_category: 'Pelagis Kecil',
+    storage_type: 'FROZEN',
+    barcode: '8997001001069',
+    min_stock_qty: 500,
+    origin_region: 'Teluk Ambon',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-07',
+    sku_code: 'SKU-AMB-CUMI',
+    sku_name: 'Cumi-Cumi Loligo Maluku Beku (Whole Cleaned)',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Cephalopoda',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Export Grade',
+    packaging: 'Master Carton 10kg',
+    availability: 'Tersedia',
+    moq: 20,
+    supply_capacity: '15 Ton / Bulan',
+    defaultPrice: 78000,
+    unit: 'Kg',
+    fish_species: 'Loligo spp. (Cumi Maluku)',
+    fish_category: 'Cephalopoda',
+    storage_type: 'FROZEN',
+    barcode: '8997001001076',
+    min_stock_qty: 200,
+    origin_region: 'Laut Seram & Ambon',
+    is_active: true,
+  },
+  {
+    id: 'PRD-AMB-08',
+    sku_code: 'SKU-AMB-TENGGIRI',
+    sku_name: 'Ikan Tenggiri Papan Beku (Spanish Mackerel)',
+    group_id: 'GRP-IKAN',
+    group_name: 'TRADING IKAN',
+    subgroup: 'Ikan Pelagis Besar',
+    brand: 'Kopsim Bahari Ambon',
+    grade: 'Grade A',
+    packaging: 'Polybag + Karton 20kg',
+    availability: 'Tersedia',
+    moq: 20,
+    supply_capacity: '10 Ton / Bulan',
+    defaultPrice: 72000,
+    unit: 'Kg',
+    fish_species: 'Scomberomorus commerson (Tenggiri)',
+    fish_category: 'Pelagis Besar',
+    storage_type: 'FROZEN',
+    barcode: '8997001001083',
+    min_stock_qty: 150,
+    origin_region: 'Perairan Maluku Tengah',
+    is_active: true,
+  },
+];
 
 export const DEFAULT_PROJECT_PRODUCTS: ProductItem[] = [
   // 1. TRADING IKAN
@@ -477,6 +671,15 @@ export function mapSupabaseProductRow(row: any): ProductItem {
     supply_capacity,
     defaultPrice,
     unit,
+    fish_species: row.fish_species ? String(row.fish_species) : '',
+    fish_category: row.fish_category ? String(row.fish_category) : subgroup,
+    storage_type: (['FRESH', 'CHILLED', 'FROZEN', 'DRY'].includes(String(row.storage_type || '').toUpperCase())
+      ? String(row.storage_type).toUpperCase()
+      : 'FROZEN') as 'FRESH' | 'CHILLED' | 'FROZEN' | 'DRY',
+    barcode: row.barcode ? String(row.barcode) : '',
+    min_stock_qty: row.min_stock_qty !== undefined && row.min_stock_qty !== null ? Number(row.min_stock_qty) : 100,
+    origin_region: row.origin_region ? String(row.origin_region) : 'Ambon & Maluku',
+    is_active: row.is_active !== undefined ? Boolean(row.is_active) : availability !== 'Nonaktif',
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -488,7 +691,7 @@ export const productService = {
    */
   getStoredProducts(): ProductItem[] {
     if (!inMemoryProducts) {
-      inMemoryProducts = [...DEFAULT_PROJECT_PRODUCTS];
+      inMemoryProducts = [...AMBON_FISHERY_PRODUCTS, ...DEFAULT_PROJECT_PRODUCTS];
     }
     return inMemoryProducts;
   },
@@ -567,7 +770,7 @@ export const productService = {
       return { success: false, count: 0, error: 'Supabase client belum terhubung.' };
     }
 
-    const payload = DEFAULT_PROJECT_PRODUCTS.map((p) => ({
+    const payload = [...AMBON_FISHERY_PRODUCTS, ...DEFAULT_PROJECT_PRODUCTS].map((p) => ({
       id: p.id,
       sku_code: p.sku_code,
       sku_name: p.sku_name,
@@ -580,21 +783,148 @@ export const productService = {
       availability: p.availability,
       moq: p.moq,
       supply_capacity: p.supply_capacity,
+      unit: p.unit,
+      default_price: p.defaultPrice,
+      fish_species: p.fish_species || '',
+      fish_category: p.fish_category || p.subgroup,
+      storage_type: p.storage_type || 'FROZEN',
+      barcode: p.barcode || null,
+      min_stock_qty: p.min_stock_qty ?? 100,
+      origin_region: p.origin_region || 'Indonesia',
+      is_active: p.is_active !== false,
     }));
 
     try {
       const { error } = await client.from(PRODUCTS_TABLE_NAME).upsert(payload, { onConflict: 'sku_code' });
       if (error) {
-        // If conflict by sku_code fails, try conflict on id
         const retry = await client.from(PRODUCTS_TABLE_NAME).upsert(payload, { onConflict: 'id' });
         if (retry.error) {
           return { success: false, count: 0, error: retry.error.message };
         }
       }
-      this.saveStoredProducts(DEFAULT_PROJECT_PRODUCTS);
+      await auditService.logActivity('SEED_FISHERY_PRODUCTS', 'products', 'BATCH_SEED', null, {
+        count: payload.length,
+      });
+      this.saveStoredProducts([...AMBON_FISHERY_PRODUCTS, ...DEFAULT_PROJECT_PRODUCTS]);
       return { success: true, count: payload.length };
     } catch (err: any) {
       return { success: false, count: 0, error: err?.message || String(err) };
     }
+  },
+
+  /**
+   * Create or update a product SKU (supports Ambon Fishery Master Produk & Jenis Ikan)
+   */
+  async upsertFisheryProduct(input: Partial<ProductItem> & { sku_code: string; sku_name: string }): Promise<{
+    success: boolean;
+    data?: ProductItem;
+    error?: string;
+  }> {
+    const cleanSku = input.sku_code.trim().toUpperCase();
+    const cleanName = input.sku_name.trim();
+    if (!cleanSku || !cleanName) {
+      return { success: false, error: 'Kode SKU dan Nama Produk wajib diisi.' };
+    }
+
+    const normalized: ProductItem = {
+      id: input.id || `PRD-${cleanSku.replace(/[^A-Z0-9]/g, '')}`,
+      sku_code: cleanSku,
+      sku_name: cleanName,
+      group_id: input.group_id || 'GRP-IKAN',
+      group_name: (input.group_name || 'TRADING IKAN').toUpperCase(),
+      subgroup: input.subgroup || input.fish_category || 'Ikan Laut Ambon',
+      brand: input.brand || 'Kopsim Bahari Ambon',
+      grade: input.grade || 'Grade A',
+      packaging: input.packaging || 'Master Box 20kg',
+      availability: input.is_active === false ? 'Nonaktif' : (input.availability || 'Tersedia'),
+      moq: Number(input.moq) || 10,
+      supply_capacity: input.supply_capacity || '10 Ton / Bulan',
+      defaultPrice: Number(input.defaultPrice) || 0,
+      unit: input.unit || 'Kg',
+      fish_species: input.fish_species || '',
+      fish_category: input.fish_category || input.subgroup || 'Pelagis',
+      storage_type: input.storage_type || 'FROZEN',
+      barcode: input.barcode?.trim() || `8997001${Math.floor(100000 + Math.random() * 899999)}`,
+      min_stock_qty: Number(input.min_stock_qty ?? 100),
+      origin_region: input.origin_region || 'Ambon, Maluku',
+      is_active: input.is_active !== false,
+    };
+
+    const client = getSupabaseClient();
+    if (client && isSupabaseConfigured) {
+      const dbPayload: Record<string, any> = {
+        id: normalized.id,
+        sku_code: normalized.sku_code,
+        sku_name: normalized.sku_name,
+        group_id: normalized.group_id,
+        group_name: normalized.group_name,
+        subgroup: normalized.subgroup,
+        brand: normalized.brand,
+        grade: normalized.grade,
+        packaging: normalized.packaging,
+        availability: normalized.availability,
+        moq: normalized.moq,
+        supply_capacity: normalized.supply_capacity,
+        unit: normalized.unit,
+        default_price: normalized.defaultPrice,
+        fish_species: normalized.fish_species,
+        fish_category: normalized.fish_category,
+        storage_type: normalized.storage_type,
+        barcode: normalized.barcode || null,
+        min_stock_qty: normalized.min_stock_qty,
+        origin_region: normalized.origin_region,
+        is_active: normalized.is_active,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await client
+        .from(PRODUCTS_TABLE_NAME)
+        .upsert(dbPayload, { onConflict: 'sku_code' })
+        .select('*')
+        .maybeSingle();
+
+      if (error) {
+        return { success: false, error: `Gagal menyimpan master produk: ${error.message}` };
+      }
+
+      await auditService.logActivity('UPSERT_PRODUCT', 'products', normalized.sku_code, null, {
+        sku_name: normalized.sku_name,
+        fish_species: normalized.fish_species,
+        storage_type: normalized.storage_type,
+        defaultPrice: normalized.defaultPrice,
+      });
+
+      return { success: true, data: data ? mapSupabaseProductRow(data) : normalized };
+    }
+
+    const current = [...this.getStoredProducts()];
+    const existingIndex = current.findIndex((p) => p.sku_code === normalized.sku_code || p.id === normalized.id);
+    if (existingIndex >= 0) {
+      current[existingIndex] = { ...current[existingIndex], ...normalized };
+    } else {
+      current.unshift(normalized);
+    }
+    this.saveStoredProducts(current);
+
+    await auditService.logActivity('UPSERT_PRODUCT', 'products', normalized.sku_code, null, {
+      sku_name: normalized.sku_name,
+      fish_species: normalized.fish_species,
+    });
+
+    return { success: true, data: normalized };
+  },
+
+  async findProductByBarcodeOrSku(queryCode: string): Promise<ProductItem | null> {
+    const q = queryCode.trim().toUpperCase();
+    if (!q) return null;
+    const { data } = await this.getAllProducts();
+    return (
+      data.find(
+        (p) =>
+          p.sku_code.toUpperCase() === q ||
+          (p.barcode && p.barcode.toUpperCase() === q) ||
+          p.id.toUpperCase() === q
+      ) || null
+    );
   },
 };

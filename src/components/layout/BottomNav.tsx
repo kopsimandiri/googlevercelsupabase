@@ -25,7 +25,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     activePage === 'TRANSACTIONS' ||
     activePage === 'FINANCE' ||
     activePage === 'PROJECT' ||
-    activePage === 'REPORTS_KEUANGAN';
+    activePage === 'REPORTS_KEUANGAN' ||
+    activePage.startsWith('OPS_');
 
   return (
     <div

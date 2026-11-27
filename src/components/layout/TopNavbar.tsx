@@ -48,7 +48,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     activePage === 'FILES' ||
     activePage === 'DATABASE_AUDIT' ||
     activePage === 'NEWS_ADMIN' ||
-    activePage === 'MEMBER_PORTAL';
+    activePage === 'MEMBER_PORTAL' ||
+    activePage.startsWith('OPS_');
 
   const handleLogout = async () => {
     await logout();

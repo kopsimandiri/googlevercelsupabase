@@ -16,7 +16,8 @@ export type NavSection =
   | 'NEWS_LIST'
   | 'LOANS'
   | 'NOTIFICATIONS'
-  | 'PAYMENTS';
+  | 'PAYMENTS'
+  | 'OPS_INVENTORY';
 
 export type ReportSubSection =
   | 'DASHBOARD'
@@ -47,7 +48,17 @@ export type ActivePage =
   | 'NEWS_DETAIL'
   | 'LOANS'
   | 'NOTIFICATIONS'
-  | 'PAYMENTS';
+  | 'PAYMENTS'
+  | 'OPS_INVENTORY_DASHBOARD'
+  | 'OPS_FISH_PRODUCTS'
+  | 'OPS_INBOUND'
+  | 'OPS_WAREHOUSE_STOCK'
+  | 'OPS_BARCODE'
+  | 'OPS_TRANSFER'
+  | 'OPS_SALES'
+  | 'OPS_OUTBOUND'
+  | 'OPS_OPNAME'
+  | 'OPS_INVENTORY_REPORTS';
 
 export type UserRole = 'ADMIN' | 'DIRECTOR' | 'ANGGOTA';
 

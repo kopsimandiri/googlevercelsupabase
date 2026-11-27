@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Home,
   Building2,
@@ -22,12 +22,22 @@ import {
   UserPlus,
   Shield,
   ChevronRight,
+  ChevronDown,
   Database,
   Newspaper,
   Calculator,
   CreditCard,
   Bell,
   User,
+  Fish,
+  Warehouse,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ArrowLeftRight,
+  Barcode,
+  ShoppingCart,
+  ClipboardCheck,
+  BarChart3,
 } from 'lucide-react';
 import { ActivePage } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
@@ -53,11 +63,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenRegister,
 }) => {
   const { user, role, isAuthenticated, logout } = useAuth();
+  const [opsExpanded, setOpsExpanded] = useState<boolean>(true);
 
   const handleNavClick = (page: ActivePage, subTab?: string) => {
     onNavigate(page, subTab);
     onClose();
   };
+
+  const opsItems: Array<{ page: ActivePage; label: string; icon: React.ReactNode }> = [
+    { page: 'OPS_INVENTORY_DASHBOARD', label: '1. Inventory Dashboard', icon: <BarChart3 className="w-3.5 h-3.5 shrink-0 text-amber-300" /> },
+    { page: 'OPS_FISH_PRODUCTS', label: '2. Master Produk & Jenis Ikan', icon: <Fish className="w-3.5 h-3.5 shrink-0 text-emerald-300" /> },
+    { page: 'OPS_INBOUND', label: '3. Penerimaan Barang (Inbound)', icon: <ArrowDownToLine className="w-3.5 h-3.5 shrink-0 text-emerald-300" /> },
+    { page: 'OPS_WAREHOUSE_STOCK', label: '4. Inventory / Stok Gudang', icon: <Warehouse className="w-3.5 h-3.5 shrink-0 text-sky-300" /> },
+    { page: 'OPS_BARCODE', label: '5. Barcode Scanner & Label', icon: <Barcode className="w-3.5 h-3.5 shrink-0 text-amber-300" /> },
+    { page: 'OPS_TRANSFER', label: '6. Mutasi Barang', icon: <ArrowLeftRight className="w-3.5 h-3.5 shrink-0 text-sky-300" /> },
+    { page: 'OPS_SALES', label: '7. Penjualan (Sales Control)', icon: <ShoppingCart className="w-3.5 h-3.5 shrink-0 text-amber-300" /> },
+    { page: 'OPS_OUTBOUND', label: '8. Pengeluaran Barang (Outbound)', icon: <ArrowUpFromLine className="w-3.5 h-3.5 shrink-0 text-rose-300" /> },
+    { page: 'OPS_OPNAME', label: '9. Stock Opname', icon: <ClipboardCheck className="w-3.5 h-3.5 shrink-0 text-emerald-300" /> },
+    { page: 'OPS_INVENTORY_REPORTS', label: '10. Laporan Inventory', icon: <FileBarChart className="w-3.5 h-3.5 shrink-0 text-stone-200" /> },
+  ];
 
   return (
     <>
@@ -576,6 +600,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     Queue
                   </span>
                 </button>
+
+                {/* KELOMPOK MENU BARU: OPERASIONAL BISNIS (PERIKANAN AMBON) */}
+                <div className="pt-3 mt-3 border-t border-primary-800/80">
+                  <button
+                    type="button"
+                    id="sidebar-ops-bisnis-toggle"
+                    onClick={() => setOpsExpanded((prev) => !prev)}
+                    className="w-full flex items-center justify-between px-3 pb-1.5 text-[10px] font-bold tracking-wider text-accent-gold uppercase font-mono hover:text-amber-200 transition-colors"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Fish className="w-3.5 h-3.5 text-accent-gold" />
+                      <span>Operasional Bisnis</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-[9px] text-stone-300 font-normal">
+                      <span>Ambon</span>
+                      {opsExpanded ? (
+                        <ChevronDown className="w-3.5 h-3.5 text-accent-gold" />
+                      ) : (
+                        <ChevronRight className="w-3.5 h-3.5 text-stone-400" />
+                      )}
+                    </span>
+                  </button>
+
+                  {opsExpanded && (
+                    <div className="space-y-1 mt-1">
+                      {opsItems.map((item) => {
+                        const isActive = activePage === item.page;
+                        return (
+                          <button
+                            key={item.page}
+                            onClick={() => handleNavClick(item.page)}
+                            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all text-left ${
+                              isActive
+                                ? 'bg-primary-700 text-white font-semibold shadow-xs border-l-2 border-accent-gold'
+                                : 'text-stone-200 hover:bg-primary-800 hover:text-white'
+                            }`}
+                          >
+                            {item.icon}
+                            <span className="truncate">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
