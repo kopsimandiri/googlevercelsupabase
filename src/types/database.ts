@@ -1,5 +1,6 @@
 export interface TransactionRecord {
   id: string;
+  dbId?: string;
   tanggal: string;
   referal: 'KOPERASI' | 'PROJECT';
   plantation: string; // Entity or Project Name

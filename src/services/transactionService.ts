@@ -424,6 +424,12 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
   }
 
   const trxId = String(row.transaction_no || row.id || '').trim();
+  const rawDbId =
+    row.id !== undefined && row.id !== null && String(row.id).trim() !== ''
+      ? String(row.id).trim()
+      : row.dbId !== undefined && row.dbId !== null && String(row.dbId).trim() !== ''
+      ? String(row.dbId).trim()
+      : undefined;
   const rawFileUrl = String(row.bukti_url ?? row.file_url ?? row.filelink ?? '').trim();
   const resolvedDbProofUrl = getPublicProofUrl(rawFileUrl);
   let filelink = '';
@@ -444,6 +450,7 @@ export function mapAndCleanTransactionRow(row: any): TransactionRecord {
 
   return {
     id: trxId,
+    dbId: rawDbId,
     tanggal,
     referal,
     plantation: areaName,
@@ -782,6 +789,31 @@ export function doesTransactionBelongToMember(
   return false;
 }
 
+/**
+ * Deduplicate member transaction rows ONLY when sharing the exact same database PK (`dbId`).
+ * Rows that share the same `transaction_no` (e.g. split deposits for Pokok + Wajib under T260330005
+ * or multiple Wajib entries under T251229001) are preserved intact.
+ */
+export function dedupeAndSortMemberTransactions(rows: TransactionRecord[]): TransactionRecord[] {
+  const byKey = new Map<string, TransactionRecord>();
+  rows.forEach((row, idx) => {
+    const dbKey = row.dbId ? `db:${row.dbId}` : `row:${idx}:${(row.id || '').trim()}`;
+    const existing = byKey.get(dbKey);
+    if (!existing) {
+      byKey.set(dbKey, row);
+    } else {
+      const existingProof = existing.bukti_url || existing.filelink || '';
+      const newProof = row.bukti_url || row.filelink || '';
+      if (!existingProof && newProof) {
+        byKey.set(dbKey, row);
+      }
+    }
+  });
+  return Array.from(byKey.values()).sort((a, b) =>
+    String(b.tanggal || '').localeCompare(String(a.tanggal || ''))
+  );
+}
+
 export interface TransactionsMetaResult {
   data: TransactionRecord[];
   source: 'SUPABASE' | 'LOCAL';
@@ -1077,28 +1109,6 @@ export const transactionService = {
     // 1. If Supabase client is available and active
     if (client && isConfigured) {
       try {
-        let query = client
-          .from(TRANSACTIONS_TABLE_NAME)
-          .select('*', { count: 'exact' });
-
-        if (signal) {
-          query = query.abortSignal(signal);
-        }
-
-        // A. Tab Filter
-        if (tabFilter === 'PUSAT') {
-          query = query.ilike('area_name', '%PUSAT%');
-        } else if (tabFilter === 'CABANG') {
-          query = query.ilike('area_name', '%CABANG%');
-        } else if (tabFilter === 'PROJECT') {
-          query = query.eq('referral_type', 'PROJECT');
-        }
-
-        // B. Jenis Filter
-        if (jenisFilter !== 'ALL') {
-          query = query.eq('transaction_type', jenisFilter);
-        }
-
         // Defense-in-depth member scoping (ANGGOTA / scopedMember)
         const activeUser = authService.getCurrentUser();
         const effectiveScope =
@@ -1106,34 +1116,6 @@ export const transactionService = {
           (activeUser?.role === 'ANGGOTA'
             ? { memberNo: activeUser.memberNo || activeUser.username, memberName: activeUser.name, memberId: activeUser.id }
             : undefined);
-
-        if (effectiveScope) {
-          const scopeClauses: string[] = [];
-          const sNo = (effectiveScope.memberNo || '').trim();
-          const sId = (effectiveScope.memberId || '').trim();
-          const sName = (effectiveScope.memberName || '').trim();
-          if (sNo.length >= 3) {
-            scopeClauses.push(
-              `member_id.eq.${sNo}`,
-              `customer_name.ilike.%${sNo}%`,
-              `account_name_legacy.ilike.%${sNo}%`,
-              `description.ilike.%${sNo}%`
-            );
-          }
-          if (sId && sId !== sNo) {
-            scopeClauses.push(`member_id.eq.${sId}`);
-          }
-          if (sName.length >= 3) {
-            scopeClauses.push(
-              `customer_name.ilike.%${sName}%`,
-              `account_name_legacy.ilike.%${sName}%`,
-              `description.ilike.%${sName}%`
-            );
-          }
-          if (scopeClauses.length > 0) {
-            query = query.or(scopeClauses.join(','));
-          }
-        }
 
         // C & D. Helper builder query agar bisa retry otomatis bila skema id UUID / kolom opsional berbeda
         const buildAndRunQuery = async (orFilterStr: string) => {
@@ -2076,30 +2058,35 @@ export const transactionService = {
             new Set([cleanName, coreQueryName].filter((v) => v && v.length >= 4))
           );
           for (const qn of queryNames) {
+            const quotedNameLike = quotePostgrestFilterValue(`%${qn}%`);
             orClauses.push(
-              `account_name_legacy.ilike.%${qn}%`,
-              `customer_name.ilike.%${qn}%`
+              `account_name_legacy.ilike.${quotedNameLike}`,
+              `customer_name.ilike.${quotedNameLike}`
             );
             if (qn.length >= 6 || qn.includes(' ')) {
-              orClauses.push(`description.ilike.%${qn}%`);
+              orClauses.push(`description.ilike.${quotedNameLike}`);
             }
           }
           if (cleanNo.length >= 3) {
+            const quotedNoEq = quotePostgrestFilterValue(cleanNo);
+            const quotedNoLike = quotePostgrestFilterValue(`%${cleanNo}%`);
             orClauses.push(
-              `member_id.eq.${cleanNo}`,
-              `customer_name.ilike.%${cleanNo}%`,
-              `account_name_legacy.ilike.%${cleanNo}%`,
-              `description.ilike.%${cleanNo}%`
+              `member_id.eq.${quotedNoEq}`,
+              `customer_name.ilike.${quotedNoLike}`,
+              `account_name_legacy.ilike.${quotedNoLike}`,
+              `description.ilike.${quotedNoLike}`
             );
           }
           if (cleanPk.length >= 1 && cleanPk !== cleanNo) {
-            orClauses.push(`member_id.eq.${cleanPk}`);
+            orClauses.push(`member_id.eq.${quotePostgrestFilterValue(cleanPk)}`);
           }
           if (cleanUsername.length >= 4 && cleanUsername !== cleanNo) {
+            const quotedUserEq = quotePostgrestFilterValue(cleanUsername);
+            const quotedUserLike = quotePostgrestFilterValue(`%${cleanUsername}%`);
             orClauses.push(
-              `member_id.eq.${cleanUsername}`,
-              `customer_name.ilike.%${cleanUsername}%`,
-              `account_name_legacy.ilike.%${cleanUsername}%`
+              `member_id.eq.${quotedUserEq}`,
+              `customer_name.ilike.${quotedUserLike}`,
+              `account_name_legacy.ilike.${quotedUserLike}`
             );
           }
 
@@ -2201,26 +2188,7 @@ export const transactionService = {
     const coreQueryName = extractCorePersonName(cleanName);
     const client = getSupabaseClient();
 
-    const dedupeAndSort = (rows: TransactionRecord[]): TransactionRecord[] => {
-      const byId = new Map<string, TransactionRecord>();
-      for (const row of rows) {
-        const key = (row.id || `${row.tanggal}-${row.kategori}-${row.jumlah}`).trim();
-        const existing = byId.get(key);
-        if (!existing) {
-          byId.set(key, row);
-        } else {
-          // Prefer row with valid proof url
-          const existingProof = existing.bukti_url || existing.filelink || '';
-          const newProof = row.bukti_url || row.filelink || '';
-          if (!existingProof && newProof) {
-            byId.set(key, row);
-          }
-        }
-      }
-      return Array.from(byId.values()).sort((a, b) =>
-        String(b.tanggal || '').localeCompare(String(a.tanggal || ''))
-      );
-    };
+    const dedupeAndSort = dedupeAndSortMemberTransactions;
 
     const filterOwned = (rows: TransactionRecord[]): TransactionRecord[] =>
       rows.filter((row) =>
@@ -2253,30 +2221,35 @@ export const transactionService = {
           new Set([cleanName, coreQueryName].filter((v) => v && v.length >= 4))
         );
         for (const qn of queryNames) {
+          const quotedNameLike = quotePostgrestFilterValue(`%${qn}%`);
           orClauses.push(
-            `account_name_legacy.ilike.%${qn}%`,
-            `customer_name.ilike.%${qn}%`
+            `account_name_legacy.ilike.${quotedNameLike}`,
+            `customer_name.ilike.${quotedNameLike}`
           );
           if (qn.length >= 6 || qn.includes(' ')) {
-            orClauses.push(`description.ilike.%${qn}%`);
+            orClauses.push(`description.ilike.${quotedNameLike}`);
           }
         }
         if (cleanNo.length >= 3) {
+          const quotedNoEq = quotePostgrestFilterValue(cleanNo);
+          const quotedNoLike = quotePostgrestFilterValue(`%${cleanNo}%`);
           orClauses.push(
-            `member_id.eq.${cleanNo}`,
-            `customer_name.ilike.%${cleanNo}%`,
-            `account_name_legacy.ilike.%${cleanNo}%`,
-            `description.ilike.%${cleanNo}%`
+            `member_id.eq.${quotedNoEq}`,
+            `customer_name.ilike.${quotedNoLike}`,
+            `account_name_legacy.ilike.${quotedNoLike}`,
+            `description.ilike.${quotedNoLike}`
           );
         }
         if (cleanPk.length >= 1 && cleanPk !== cleanNo) {
-          orClauses.push(`member_id.eq.${cleanPk}`);
+          orClauses.push(`member_id.eq.${quotePostgrestFilterValue(cleanPk)}`);
         }
         if (cleanUsername.length >= 4 && cleanUsername !== cleanNo) {
+          const quotedUserEq = quotePostgrestFilterValue(cleanUsername);
+          const quotedUserLike = quotePostgrestFilterValue(`%${cleanUsername}%`);
           orClauses.push(
-            `member_id.eq.${cleanUsername}`,
-            `customer_name.ilike.%${cleanUsername}%`,
-            `account_name_legacy.ilike.%${cleanUsername}%`
+            `member_id.eq.${quotedUserEq}`,
+            `customer_name.ilike.${quotedUserLike}`,
+            `account_name_legacy.ilike.${quotedUserLike}`
           );
         }
 

@@ -1975,8 +1975,8 @@ export const TransactionModule: React.FC<TransactionModuleProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {transactions.map((t) => (
-                  <tr key={t.id} className="hover:bg-stone-50/70">
+                {transactions.map((t, rowIdx) => (
+                  <tr key={t.dbId ? `${t.id}-${t.dbId}` : `${t.id}-${rowIdx}`} className="hover:bg-stone-50/70">
                     <td className="py-3 px-3 font-mono font-bold text-emerald-950">
                       <div>{t.id}</div>
                       {/[-_.]\d+$/.test(t.id) && (

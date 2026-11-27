@@ -2,6 +2,7 @@ import { authService } from '../src/services/authService';
 import {
   transactionService,
   mapAndCleanTransactionRow,
+  dedupeAndSortMemberTransactions,
   doesTransactionBelongToMember,
   buildPostgrestOrSearchFilter,
   quotePostgrestFilterValue,
@@ -535,6 +536,78 @@ async function runE2ECriticalFlows() {
       matchesTransactionSearchQuery(sampleSearchRow, '1225-02001') === true &&
       matchesTransactionSearchQuery(sampleSearchRow, 'Produk Tidak Ada') === false,
     'matchesTransactionSearchQuery menemukan transaksi berdasarkan ID, akun (toleran koma/titik), produk, dan member_id'
+  );
+
+  // ----------------------------------------------------------------------------
+  // FLOW 14: Shared transaction_no Preservation (imamghozali 2 rows, alvinazhar 8 rows)
+  // ----------------------------------------------------------------------------
+  console.log('\n▶ [FLOW 14] Shared transaction_no Row Preservation & Member Portal Isolation');
+  const imamRawRows = [
+    {
+      id: 23,
+      transaction_no: 'T260330005',
+      transaction_date: '2026-03-30',
+      category_name: 'SIMPANAN WAJIB',
+      transaction_type: 'MASUK',
+      amount: 360000,
+      account_name_legacy: 'IMAM GHOZALI',
+      bukti_url: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/03/T260330005-vumfjf.webp',
+    },
+    {
+      id: 24,
+      transaction_no: 'T260330005',
+      transaction_date: '2026-03-30',
+      category_name: 'SIMPANAN POKOK',
+      transaction_type: 'MASUK',
+      amount: 500000,
+      account_name_legacy: 'IMAM GHOZALI',
+      bukti_url: 'https://iqamratpkvnyyayjpnsu.supabase.co/storage/v1/object/public/bukti_transfer/2026/03/T260330005-vumfjf.webp',
+    },
+  ];
+  const imamMapped = dedupeAndSortMemberTransactions(
+    imamRawRows
+      .map(mapAndCleanTransactionRow)
+      .filter((r) =>
+        doesTransactionBelongToMember(r, {
+          memberName: 'IMAM GHOZALI',
+          memberNo: '1225-03002',
+          memberId: '24',
+          memberUsername: 'imamghozali',
+        })
+      )
+  );
+  assert(
+    imamMapped.length === 2 && imamMapped[0].dbId !== imamMapped[1].dbId && imamMapped.every((r) => r.id === 'T260330005'),
+    'imamghozali mempertahankan 2 baris transaksi utuh meski berbagi transaction_no T260330005'
+  );
+
+  const alvinRawRows = [
+    { id: 1, transaction_no: 'T251229001', transaction_date: '2025-12-29', category_name: 'SIMPANAN WAJIB', transaction_type: 'MASUK', amount: 120000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 2, transaction_no: 'T251229001', transaction_date: '2025-12-29', category_name: 'SIMPANAN WAJIB', transaction_type: 'MASUK', amount: 120000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 3, transaction_no: 'T251229001', transaction_date: '2025-12-29', category_name: 'SIMPANAN POKOK', transaction_type: 'MASUK', amount: 500000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 4, transaction_no: 'T251229002', transaction_date: '2025-12-29', category_name: 'SIMPANAN MANASUKA', transaction_type: 'MASUK', amount: 100000000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 5, transaction_no: 'T251229003', transaction_date: '2025-12-29', category_name: 'SIMPANAN MANASUKA', transaction_type: 'MASUK', amount: 100000000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 6, transaction_no: 'T251229004', transaction_date: '2025-12-29', category_name: 'SIMPANAN MANASUKA', transaction_type: 'MASUK', amount: 50000000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 7, transaction_no: 'T260202001', transaction_date: '2026-02-02', category_name: 'SIMPANAN MANASUKA', transaction_type: 'MASUK', amount: 100000000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+    { id: 8, transaction_no: 'T260220001', transaction_date: '2026-02-20', category_name: 'SIMPANAN MANASUKA', transaction_type: 'MASUK', amount: 100000000, account_name_legacy: 'ALVIN AZHAR SE,MM' },
+  ];
+  const alvinMapped = dedupeAndSortMemberTransactions(
+    alvinRawRows
+      .map(mapAndCleanTransactionRow)
+      .filter((r) =>
+        doesTransactionBelongToMember(r, {
+          memberName: 'ALVIN AZHAR SE,MM',
+          memberNo: '1225-02001',
+          memberId: '22',
+          memberUsername: 'alvinazhar',
+        })
+      )
+  );
+  assert(
+    alvinMapped.length === 8 &&
+      alvinMapped.filter((r) => r.id === 'T251229001').length === 3 &&
+      quotePostgrestFilterValue('%ALVIN AZHAR SE,MM%') === '"%ALVIN AZHAR SE,MM%"',
+    'alvinazhar mempertahankan seluruh 8 baris (termasuk 3 baris identik transaction_no T251229001) & aman terhadap tanda koma'
   );
 
   // ----------------------------------------------------------------------------
